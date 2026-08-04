@@ -138,18 +138,18 @@ class Wallet(object):
             raise Exception('confirmations not set')
         if send is None:
             raise Exception('send not set')
-        tx, cashback, amount, fee = self.make_transaction(
+        tx, satoshi_cashback, satoshi_amount, satoshi_fee_used = self.make_transaction(
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee, confirmations=confirmations)
-        cashback = satoshi2btc(cashback)
-        amount = satoshi2btc(amount)
-        fee = satoshi2btc(fee)
+        cashback_btc = satoshi2btc(satoshi_cashback)
+        amount_btc = satoshi2btc(satoshi_amount)
+        fee_btc = satoshi2btc(satoshi_fee_used)
         rawtx = tx.serialize()
         if yesno(
             'send {:0.08f} BTC to {} (cashback={:0.08f}, fee={:0.08f}, txsize={})? '.format(
-                amount,
+                amount_btc,
                 dst,
-                cashback,
-                fee,
+                cashback_btc,
+                fee_btc,
                 len(rawtx))):
             print('id: {}'.format(tx.id().hex()))
             if send:
