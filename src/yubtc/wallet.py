@@ -7,9 +7,9 @@ class TPrivKey(object):
     def __init__(
             self,
             *args,
-            privkey: bytes = None,
-            seed: TSeed = None,
-            nonce: TNonce = None,
+            privkey: Optional[bytes] = None,
+            seed: Optional[TSeed] = None,
+            nonce: Optional[TNonce] = None,
             compressed: Optional[bool] = None):
         from yubtc.crypto import seed2privkey
         if args:
@@ -68,11 +68,11 @@ class Wallet(object):
     def __init__(
             self,
             *args,
-            privkey: bytes = None,
-            privwif: str = None,
-            seed: TSeed = None,
+            privkey: Optional[bytes] = None,
+            privwif: Optional[str] = None,
+            seed: Optional[TSeed] = None,
             compressed: Optional[bool] = None,
-            nonce: TNonce = None,
+            nonce: Optional[TNonce] = None,
             new_addresses: Optional[int] = None):
         from yubtc.crypto import privwif2privkey
         if args:

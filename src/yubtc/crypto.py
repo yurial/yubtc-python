@@ -139,7 +139,7 @@ def pubkey2pubwif(*args, pubkey: Optional[bytes] = None, compressed: Optional[bo
     return bytes([prefix]) + x
 
 
-def pubkey2addr(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> str:
+def pubkey2addr(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> bytes:
     if args:
         raise Exception('only kwargs allowed')
     if pubkey is None:
@@ -152,7 +152,7 @@ def pubkey2addr(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool
     return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubwif))
 
 
-def privkey2addr(*args, privkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> str:
+def privkey2addr(*args, privkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> bytes:
     if args:
         raise Exception('only kwargs allowed')
     if privkey is None:
