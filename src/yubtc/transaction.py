@@ -12,6 +12,8 @@ def script2pkh(script):
 def toVarInt(value):
     """Pack `value` into varint bytes"""
     from struct import pack
+    if value < 0:
+        raise ValueError('toVarInt value must be non-negative')
     buf = b''
     while True:
         towrite = value & 0x7f
@@ -28,11 +30,11 @@ class CIn(object):
         if len(txhash) != 32:
             raise Exception('txhash shoud be 32 bytes lenght')
         if n < 0:
-            raise Exception('n should be greater than 0')
+            raise Exception('n should be non-negative')
         if n > 0xffffffff:
             raise Exception('n should be less or equal than 0xffffffff')
         if sequence < 0:
-            raise Exception('sequence should be greater than 0')
+            raise Exception('sequence should be non-negative')
         if sequence > 0xffffffff:
             raise Exception('sequence should be less or equal than 0xffffffff')
         self.txhash = bytes(txhash)
@@ -59,7 +61,7 @@ class CIn(object):
 class COut(object):
     def __init__(self, amount, script):
         if amount < 0:
-            raise Exception('amount should be greater than 0')
+            raise Exception('amount should be non-negative')
         if amount > 0xffffffffffffffff:
             raise Exception('amount should be less or equal than 0xffffffffffffffff')
         self.amount = amount
