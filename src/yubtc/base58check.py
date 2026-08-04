@@ -1,37 +1,20 @@
 def base58CheckEncode(payload):
     from base58 import b58encode
     from yubtc.hash import sha256
-    def countLeadingZeroes(s):
-        count = 0
-        for c in s:
-            if c == '\0':
-                count += 1
-            else:
-                break
-        return count
-
+    # b58encode preserves leading zero bytes as '1' characters, so no
+    # manual prefix counting is needed.
     checksum = sha256(sha256(payload))[0:4]
-    result = payload + checksum
-    return b'1' * countLeadingZeroes(result) + b58encode(result)
+    return b58encode(payload + checksum)
+
 
 def base58CheckDecode(payload):
     from base58 import b58decode
     from yubtc.hash import sha256
-    def countLeadingOnes(s):
-        count = 0
-        for c in s:
-            if c == '1':
-                count += 1
-            else:
-                break
-        return count
-
-    nzeros = countLeadingOnes(payload)
-    payload = payload[nzeros:]
-    payload = b58decode(payload)
-    checksum = payload[-4:]
-    payload = b'\0' * nzeros + payload[:-4]
-    calculated_checksum = sha256(sha256(payload))[:4]
-    if checksum != calculated_checksum:
+    # b58decode maps each leading '1' to a 0x00 byte; the last 4 bytes
+    # are the checksum from the encoder.
+    decoded = b58decode(payload)
+    checksum = decoded[-4:]
+    payload = decoded[:-4]
+    if sha256(sha256(payload))[:4] != checksum:
         raise Exception('ivalid checksum')
     return payload
