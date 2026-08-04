@@ -98,31 +98,31 @@ TXHASH = b'\xab' * 32
 
 def test_cin_valid_construction():
     from yubtc.transaction import CIn
-    inp = CIn(TXHASH, 0, b'')
+    inp = CIn(TXHASH, 0, b'', sequence=0xffffffff)
     assert inp.txhash == TXHASH
     assert inp.n == 0
     assert inp.script == b''
-    assert inp.sequence == 0xffffffff  # default
+    assert inp.sequence == 0xffffffff  # explicit final
 
 
 def test_cin_txhash_must_be_32_bytes():
     from yubtc.transaction import CIn
     with pytest.raises(Exception):
-        CIn(b'\x00' * 31, 0, b'')
+        CIn(b'\x00' * 31, 0, b'', sequence=0xffffffff)
     with pytest.raises(Exception):
-        CIn(b'\x00' * 33, 0, b'')
+        CIn(b'\x00' * 33, 0, b'', sequence=0xffffffff)
 
 
 def test_cin_n_bounds():
     from yubtc.transaction import CIn
     # n=0 is allowed (first output of the referenced tx).
-    CIn(TXHASH, 0, b'')
+    CIn(TXHASH, 0, b'', sequence=0xffffffff)
     # n at the upper bound
-    CIn(TXHASH, 0xffffffff, b'')
+    CIn(TXHASH, 0xffffffff, b'', sequence=0xffffffff)
     with pytest.raises(Exception):
-        CIn(TXHASH, -1, b'')
+        CIn(TXHASH, -1, b'', sequence=0xffffffff)
     with pytest.raises(Exception):
-        CIn(TXHASH, 0x100000000, b'')
+        CIn(TXHASH, 0x100000000, b'', sequence=0xffffffff)
 
 
 def test_cin_sequence_bounds():
@@ -136,13 +136,22 @@ def test_cin_sequence_bounds():
         CIn(TXHASH, 0, b'', sequence=0x100000000)
 
 
+def test_cin_raises_when_sequence_missing():
+    """CIn's `sequence` is required -- callers must pass it explicitly."""
+    from yubtc.transaction import CIn
+    with pytest.raises(Exception, match='sequence not set'):
+        CIn(TXHASH, 0, b'')
+    with pytest.raises(Exception, match='sequence not set'):
+        CIn(TXHASH, 0, b'', sequence=None)
+
+
 def test_cin_serialize_known_answer():
     """Pin the exact byte layout of an input.
 
     32-byte txhash + 4-byte n (LE) + varint(len(script)) + script + 4-byte sequence (LE).
     """
     from yubtc.transaction import CIn
-    inp = CIn(TXHASH, 0, b'\x76\xa9')
+    inp = CIn(TXHASH, 0, b'\x76\xa9', sequence=0xffffffff)
     assert inp.serialize() == (
         TXHASH
         + b'\x00\x00\x00\x00'    # n=0
@@ -205,21 +214,30 @@ def test_cout_serialize_known_answer():
 def _example_tx():
     """A 1-input, 1-output transaction with a non-trivial locktime."""
     from yubtc.transaction import CIn, COut, CTransaction
-    inp = CIn(TXHASH, 0, b'\x76\xa9')
+    inp = CIn(TXHASH, 0, b'\x76\xa9', sequence=0xffffffff)
     out = COut(amount=100_000, script=b'\x76\xa9')
     return CTransaction(vin=[inp], vout=[out], locktime=0)
 
 
 def test_ctransaction_default_version_is_2():
     from yubtc.transaction import CTransaction
-    tx = CTransaction(vin=[], vout=[])
+    tx = CTransaction(vin=[], vout=[], locktime=0)
     assert tx.version == 2
 
 
 def test_ctransaction_default_locktime_is_0():
     from yubtc.transaction import CTransaction
-    tx = CTransaction(vin=[], vout=[])
+    tx = CTransaction(vin=[], vout=[], locktime=0)
     assert tx.locktime == 0
+
+
+def test_ctransaction_raises_when_locktime_missing():
+    """CTransaction's `locktime` is required -- callers must pass it explicitly."""
+    from yubtc.transaction import CTransaction
+    with pytest.raises(Exception, match='locktime not set'):
+        CTransaction(vin=[], vout=[])
+    with pytest.raises(Exception, match='locktime not set'):
+        CTransaction(vin=[], vout=[], locktime=None)
 
 
 def test_ctransaction_serialize_known_answer():
@@ -240,11 +258,11 @@ def test_ctransaction_serialize_known_answer():
 
 def test_ctransaction_serialize_with_multiple_inputs_and_outputs():
     from yubtc.transaction import CIn, COut, CTransaction
-    in1 = CIn(TXHASH, 0, b'')
-    in2 = CIn(TXHASH, 1, b'\xab')
+    in1 = CIn(TXHASH, 0, b'', sequence=0xffffffff)
+    in2 = CIn(TXHASH, 1, b'\xab', sequence=0xffffffff)
     out1 = COut(amount=1, script=b'')
     out2 = COut(amount=2, script=b'\x76')
-    tx = CTransaction(vin=[in1, in2], vout=[out1, out2])
+    tx = CTransaction(vin=[in1, in2], vout=[out1, out2], locktime=0)
     s = tx.serialize()
     # Each input = 32(txhash) + 4(n) + 1(varint) + len(script) + 4(sequence).
     # Each output = 8(amount) + 1(varint) + len(script).
@@ -280,11 +298,12 @@ def test_ctransaction_id_known_answer():
 def test_sign_populates_each_input_script():
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     pubwif = pubkey2pubwif(privkey2pubkey(privkey), compressed=True)
     tx = CTransaction(
-        vin=[CIn(TXHASH, 0, b''), CIn(TXHASH, 1, b'')],
+        vin=[CIn(TXHASH, 0, b'', sequence=0xffffffff), CIn(TXHASH, 1, b'', sequence=0xffffffff)],
         vout=[COut(amount=1000, script=b'\x76\xa9')],
+        locktime=0,
     )
     signed = tx.sign(privkey, pubwif)
     for i, vin in enumerate(signed.vin):
@@ -299,9 +318,11 @@ def test_sign_script_ends_with_pubwif():
     """
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     pubwif = pubkey2pubwif(privkey2pubkey(privkey), compressed=True)
-    tx = CTransaction(vin=[CIn(TXHASH, 0, b'')], vout=[COut(amount=1000, script=b'\x76\xa9')])
+    tx = CTransaction(
+        vin=[CIn(TXHASH, 0, b'', sequence=0xffffffff)],
+        vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
     signed = tx.sign(privkey, pubwif)
     assert signed.vin[0].script.endswith(pubwif)
 
@@ -313,9 +334,11 @@ def test_sign_changes_id():
     """
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     pubwif = pubkey2pubwif(privkey2pubkey(privkey), compressed=True)
-    tx = CTransaction(vin=[CIn(TXHASH, 0, b'')], vout=[COut(amount=1000, script=b'\x76\xa9')])
+    tx = CTransaction(
+        vin=[CIn(TXHASH, 0, b'', sequence=0xffffffff)],
+        vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
     signed = tx.sign(privkey, pubwif)
     assert signed.id() != tx.id()
 
@@ -325,9 +348,11 @@ def test_sign_does_not_mutate_original():
     empty signature scripts."""
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     pubwif = pubkey2pubwif(privkey2pubkey(privkey), compressed=True)
-    tx = CTransaction(vin=[CIn(TXHASH, 0, b'')], vout=[COut(amount=1000, script=b'\x76\xa9')])
+    tx = CTransaction(
+        vin=[CIn(TXHASH, 0, b'', sequence=0xffffffff)],
+        vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
     original_bytes = tx.serialize()
     tx.sign(privkey, pubwif)
     assert tx.serialize() == original_bytes

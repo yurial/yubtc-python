@@ -203,11 +203,12 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
     # Replace make_transaction with a stub that returns a known tx.
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     pubwif = pubkey2pubwif(privkey2pubkey(privkey), True)
     fake_tx = CTransaction(
-        vin=[CIn(b'\xab' * 32, 0, b'')],
+        vin=[CIn(b'\xab' * 32, 0, b'', sequence=0xffffffff)],
         vout=[COut(amount=50_000, script=b'\xac')],
+        locktime=0,
     ).sign(privkey, pubwif)
 
     def fake_make_transaction(self, **kwargs):
@@ -230,11 +231,12 @@ def test_send_amount_all_means_none(monkeypatch):
         captured['amount'] = kwargs['amount']
         from yubtc.transaction import CIn, COut, CTransaction
         from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-        privkey = seed2privkey('qwe')
+        privkey = seed2privkey('qwe', 0)
         pubwif = pubkey2pubwif(privkey2pubkey(privkey), True)
         tx = CTransaction(
-            vin=[CIn(b'\xab' * 32, 0, b'')],
+            vin=[CIn(b'\xab' * 32, 0, b'', sequence=0xffffffff)],
             vout=[COut(amount=0, script=b'\xac')],
+            locktime=0,
         ).sign(privkey, pubwif)
         return tx, 0, 0, 1_000
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
@@ -247,11 +249,12 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     pubwif = pubkey2pubwif(privkey2pubkey(privkey), True)
     fake_tx = CTransaction(
-        vin=[CIn(b'\xab' * 32, 0, b'')],
+        vin=[CIn(b'\xab' * 32, 0, b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
+        locktime=0,
     ).sign(privkey, pubwif)
 
     def fake_make_transaction(self, **kwargs):
@@ -270,11 +273,12 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     pubwif = pubkey2pubwif(privkey2pubkey(privkey), True)
     fake_tx = CTransaction(
-        vin=[CIn(b'\xab' * 32, 0, b'')],
+        vin=[CIn(b'\xab' * 32, 0, b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
+        locktime=0,
     ).sign(privkey, pubwif)
 
     def fake_make_transaction(self, **kwargs):

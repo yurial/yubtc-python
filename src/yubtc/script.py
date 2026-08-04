@@ -12,7 +12,7 @@ What the wallet actually uses:
   (the five opcodes that make up P2PKH and P2SH scripts).
 """
 
-from yubtc.fwd import EMPTY_SCRIPT
+from typing import Optional
 
 
 class CScriptOp(int):
@@ -170,7 +170,9 @@ class CScript(bytes):
     on `CIn` and `COut`. Construction accepts either bytes directly or an
     iterable of `CScriptOp` and bytes (the latter as inline PUSHDATA).
     """
-    def __new__(cls, value: object = EMPTY_SCRIPT) -> 'CScript':
+    def __new__(cls, value: Optional[object] = None) -> 'CScript':
+        if value is None:
+            raise Exception('value not set')
         if isinstance(value, (bytes, bytearray)):
             return super().__new__(cls, bytes(value))
         parts = []

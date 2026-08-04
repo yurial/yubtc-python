@@ -22,18 +22,18 @@ import pytest
 def test_generate_seed_default_count_is_15():
     """The CLI's default for `newseed` is 15 words; make sure it stays 15."""
     from yubtc.seed import _generate_seed
-    assert len(_generate_seed()) == 15
+    assert len(_generate_seed(count=15, allow_dups=True)) == 15
 
 
 def test_generate_seed_count_zero_returns_empty_list():
     from yubtc.seed import _generate_seed
-    assert _generate_seed(count=0) == []
+    assert _generate_seed(count=0, allow_dups=True) == []
 
 
 def test_generate_seed_count_respected():
     from yubtc.seed import _generate_seed
     for n in (1, 3, 12, 50):
-        assert len(_generate_seed(count=n)) == n
+        assert len(_generate_seed(count=n, allow_dups=True)) == n
 
 
 def test_generate_seed_uses_bip39_wordlist():
@@ -48,7 +48,7 @@ def test_generate_seed_uses_bip39_wordlist():
     # The full wordlist is the output of _generate_seed(2048, allow_dups=False).
     full = set(_generate_seed(count=2048, allow_dups=False))
     assert len(full) == 2048
-    drawn = _generate_seed(count=200)
+    drawn = _generate_seed(count=200, allow_dups=True)
     assert set(drawn) <= full
     # Anchor three known BIP-39 positions: first, last, and a memorable one.
     assert 'abandon' in full
@@ -91,7 +91,7 @@ def test_generate_seed_returns_single_space_joined_string(monkeypatch):
     from random import SystemRandom
     monkeypatch.setattr(SystemRandom, 'choices', lambda self, pop, k: ['abandon'] * k)
     from yubtc.seed import generate_seed
-    assert generate_seed(count=4) == 'abandon abandon abandon abandon'
+    assert generate_seed(count=4, allow_dups=True) == 'abandon abandon abandon abandon'
 
 
 def test_generate_seed_word_count_matches_param(monkeypatch):
@@ -99,7 +99,7 @@ def test_generate_seed_word_count_matches_param(monkeypatch):
     monkeypatch.setattr(SystemRandom, 'choices', lambda self, pop, k: ['abandon'] * k)
     from yubtc.seed import generate_seed
     for n in (1, 12, 15, 24, 50):
-        assert len(generate_seed(count=n).split()) == n
+        assert len(generate_seed(count=n, allow_dups=True).split()) == n
 
 
 def test_generate_seed_produces_a_usable_seed():
@@ -111,9 +111,33 @@ def test_generate_seed_produces_a_usable_seed():
     """
     from yubtc.seed import generate_seed
     from yubtc.crypto import seed2privkey
-    seed = generate_seed(count=12)
-    privkey = seed2privkey(seed)
+    seed = generate_seed(count=12, allow_dups=True)
+    privkey = seed2privkey(seed, nonce=0)
     assert len(privkey) == 32
+
+
+def test_generate_seed_raises_when_count_missing():
+    """generate_seed's count and allow_dups are required -- no silent defaults."""
+    from yubtc.seed import generate_seed
+    with pytest.raises(Exception, match='count not set'):
+        generate_seed()
+    with pytest.raises(Exception, match='count not set'):
+        generate_seed(count=None, allow_dups=True)
+    with pytest.raises(Exception, match='allow_dups not set'):
+        generate_seed(count=12)
+
+
+def test__generate_seed_raises_when_count_or_allow_dups_missing():
+    """The internal _generate_seed also enforces its required args."""
+    from yubtc.seed import _generate_seed
+    with pytest.raises(Exception, match='count not set'):
+        _generate_seed()
+    with pytest.raises(Exception, match='count not set'):
+        _generate_seed(count=None, allow_dups=True)
+    with pytest.raises(Exception, match='allow_dups not set'):
+        _generate_seed(count=5)
+    with pytest.raises(Exception, match='allow_dups not set'):
+        _generate_seed(count=5, allow_dups=None)
 
 
 # ---------------------------------------------------------------------------

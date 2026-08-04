@@ -34,11 +34,12 @@ def test_cscript_from_bytearray_passes_through():
     assert isinstance(out, CScript)
 
 
-def test_cscript_default_construction_is_empty():
-    """`CScript()` with no argument -> empty script."""
-    out = CScript()
-    assert bytes(out) == b''
-    assert isinstance(out, CScript)
+def test_cscript_default_construction_raises():
+    """`CScript()` with no argument raises -- callers must pass a value."""
+    with pytest.raises(Exception, match='value not set'):
+        CScript()
+    with pytest.raises(Exception, match='value not set'):
+        CScript(None)
 
 
 # ---------------------------------------------------------------------------

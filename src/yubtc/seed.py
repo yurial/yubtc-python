@@ -2,10 +2,14 @@
 # The BIP-39 wordlist has long words (up to 8 chars) packed densely per line;
 # splitting them differently would just shuffle E501 hits around without
 # improving readability. Suppress E501 for the whole file.
-from yubtc.fwd import DEFAULT_ALLOW_DUPS, DEFAULT_SEED_WORDS
+from typing import Optional
 
 
-def _generate_seed(count: int = DEFAULT_SEED_WORDS, allow_dups: bool = DEFAULT_ALLOW_DUPS) -> list:
+def _generate_seed(count: Optional[int] = None, allow_dups: Optional[bool] = None) -> list:
+    if count is None:
+        raise Exception('count not set')
+    if allow_dups is None:
+        raise Exception('allow_dups not set')
     wordList = ('abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract', 'absurd', 'abuse', 'access',
                 'accident', 'account', 'accuse', 'achieve', 'acid', 'acoustic', 'acquire', 'across', 'act', 'action',
                 'actor', 'actress', 'actual', 'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
@@ -203,7 +207,11 @@ def _generate_seed(count: int = DEFAULT_SEED_WORDS, allow_dups: bool = DEFAULT_A
     return [sysrandom.choice(wordList) for i in range(count)]
 
 
-def generate_seed(count: int = DEFAULT_SEED_WORDS, allow_dups: bool = DEFAULT_ALLOW_DUPS) -> str:
+def generate_seed(count: Optional[int] = None, allow_dups: Optional[bool] = None) -> str:
+    if count is None:
+        raise Exception('count not set')
+    if allow_dups is None:
+        raise Exception('allow_dups not set')
     return ' '.join(_generate_seed(count, allow_dups))
 
 

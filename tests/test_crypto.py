@@ -25,7 +25,7 @@ import pytest
                           ])
 def test(compressed, seed, privhex, privwif, address):
     from yubtc.crypto import seed2privkey, privkey2privwif, privkey2addr
-    privkey = seed2privkey(seed)
+    privkey = seed2privkey(seed, 0)
     assert privkey.hex() == privhex
     assert privkey2privwif(privkey, compressed) == privwif
     assert privkey2addr(privkey, compressed) == address
@@ -63,6 +63,24 @@ def test_seed2bin_nonce_changes_output():
     from yubtc.crypto import seed2bin
     assert seed2bin('qwe', 0) != seed2bin('qwe', 1)
     assert seed2bin('qwe', 0) != seed2bin('qwe', 7)
+
+
+def test_seed2bin_raises_when_nonce_missing():
+    """nonce=None must raise -- callers must pass it explicitly."""
+    from yubtc.crypto import seed2bin
+    with pytest.raises(Exception, match='nonce not set'):
+        seed2bin('qwe')
+    with pytest.raises(Exception, match='nonce not set'):
+        seed2bin('qwe', None)
+
+
+def test_seed2privkey_raises_when_nonce_missing():
+    """seed2privkey's nonce is also required."""
+    from yubtc.crypto import seed2privkey
+    with pytest.raises(Exception, match='nonce not set'):
+        seed2privkey('qwe')
+    with pytest.raises(Exception, match='nonce not set'):
+        seed2privkey('qwe', None)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +131,7 @@ def test_bin2privkey_preserves_middle_bits():
 def test_seed2privkey_equals_clamp_of_seed2bin():
     from yubtc.crypto import seed2bin, bin2privkey, seed2privkey
     for seed in ('qwe', '12345', '', 'a much longer seed phrase here'):
-        assert seed2privkey(seed) == bin2privkey(seed2bin(seed))
+        assert seed2privkey(seed, 0) == bin2privkey(seed2bin(seed, 0))
 
 
 def test_seed2privkey_nonce_changes_privkey():
@@ -140,11 +158,44 @@ def test_privwif_roundtrip(privkey):
         assert c == compressed
 
 
-def test_privwif_default_is_compressed():
-    """Bitcoin convention: privkey2privwif() with no `compressed` kwarg returns a compressed WIF (starts with K/L)."""
+def test_privwif_raises_when_compressed_missing():
+    """privkey2privwif's `compressed` is required -- callers must pass it."""
     from yubtc.crypto import privkey2privwif
     privkey = b'\x11' * 32
-    assert privkey2privwif(privkey)[:1] in (b'K', b'L')
+    with pytest.raises(Exception, match='compressed not set'):
+        privkey2privwif(privkey)
+    with pytest.raises(Exception, match='compressed not set'):
+        privkey2privwif(privkey, None)
+
+
+def test_privkey2addr_raises_when_compressed_missing():
+    """privkey2addr's `compressed` is required -- callers must pass it."""
+    from yubtc.crypto import privkey2addr, seed2privkey
+    privkey = seed2privkey('qwe', 0)
+    with pytest.raises(Exception, match='compressed not set'):
+        privkey2addr(privkey)
+    with pytest.raises(Exception, match='compressed not set'):
+        privkey2addr(privkey, None)
+
+
+def test_pubkey2pubwif_raises_when_compressed_missing():
+    """pubkey2pubwif's `compressed` is required -- callers must pass it."""
+    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    pubkey = privkey2pubkey(seed2privkey('qwe', 0))
+    with pytest.raises(Exception, match='compressed not set'):
+        pubkey2pubwif(pubkey)
+    with pytest.raises(Exception, match='compressed not set'):
+        pubkey2pubwif(pubkey, None)
+
+
+def test_pubkey2addr_raises_when_compressed_missing():
+    """pubkey2addr's `compressed` is required -- callers must pass it."""
+    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2addr
+    pubkey = privkey2pubkey(seed2privkey('qwe', 0))
+    with pytest.raises(Exception, match='compressed not set'):
+        pubkey2addr(pubkey)
+    with pytest.raises(Exception, match='compressed not set'):
+        pubkey2addr(pubkey, None)
 
 
 def test_privwif2privkey_rejects_bad_prefix():
@@ -162,7 +213,7 @@ def test_privwif2privkey_rejects_bad_prefix():
 def test_privkey2pubkey_length_and_determinism():
     """The pubkey is 64 bytes (uncompressed, no leading 0x04) and deterministic."""
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     a = privkey2pubkey(privkey)
     b = privkey2pubkey(privkey)
     assert len(a) == 64
@@ -173,7 +224,7 @@ def test_privkey2pubkey_known_answer():
     from yubtc.crypto import seed2privkey, privkey2pubkey
     expected = 'eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0' \
                '24d7de8d887bee3288e5afb66ff648f05f47cd6e6d21978c805a5cfe0983f301'
-    assert privkey2pubkey(seed2privkey('qwe')).hex() == expected
+    assert privkey2pubkey(seed2privkey('qwe', 0)).hex() == expected
 
 
 @pytest.mark.parametrize('compressed, expected', [
@@ -184,7 +235,7 @@ def test_privkey2pubkey_known_answer():
 def test_pubkey2pubwif_serialisation(compressed, expected):
     """Compressed: 33 bytes, prefix 0x02/0x03 by parity of y. Uncompressed: 65 bytes, prefix 0x04."""
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    pubkey = privkey2pubkey(seed2privkey('qwe'))
+    pubkey = privkey2pubkey(seed2privkey('qwe', 0))
     out = pubkey2pubwif(pubkey, compressed)
     assert len(out) == (33 if compressed else 65)
     assert out.hex() == expected
@@ -219,7 +270,7 @@ def test_sign_hash_is_der_canonical_low_s():
     """Every signature is DER-encoded, and the s component is in the lower half of the order."""
     from yubtc.crypto import seed2privkey, sign_hash
     import ecdsa
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     digest = b'\x42' * 32
     for _ in range(3):
         sig = sign_hash(privkey, digest)
@@ -237,7 +288,7 @@ def test_sign_hash_is_der_canonical_low_s():
 def test_sign_hash_verifies():
     from yubtc.crypto import seed2privkey, sign_hash
     import ecdsa
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     digest = b'\x42' * 32
     sig = sign_hash(privkey, digest)
     sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
@@ -249,7 +300,7 @@ def test_sign_data_verifies():
     from yubtc.crypto import seed2privkey, sign_data
     from yubtc.hash import sha256
     import ecdsa
-    privkey = seed2privkey('qwe')
+    privkey = seed2privkey('qwe', 0)
     sig = sign_data(privkey, b'abc')
     sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
     assert sk.verifying_key.verify_digest(
@@ -268,7 +319,7 @@ def test_sign_data_verifies():
 def test_make_lock_script_p2pkh():
     """A P2PKH address produces the standard OP_DUP OP_HASH160 <20B> OP_EQUALVERIFY OP_CHECKSIG."""
     from yubtc.crypto import make_lock_script, seed2privkey, privkey2addr
-    addr = privkey2addr(seed2privkey('qwe'), True)
+    addr = privkey2addr(seed2privkey('qwe', 0), True)
     # OP_DUP(0x76) OP_HASH160(0xa9) <20B> OP_EQUALVERIFY(0x88) OP_CHECKSIG(0xac)
     assert make_lock_script(addr).hex() == '76a914e96b5b4561e70170c16f51ca30a9429e3bede97788ac'
 
@@ -305,8 +356,8 @@ def test_make_lock_script_unknown_prefix_raises():
 def test_make_vout_drains_when_amount_is_none():
     """`amount=None` means "send everything available"."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(seed2privkey('qwe'), True)
-    dst = privkey2addr(seed2privkey('asdf'), True)
+    src = privkey2addr(seed2privkey('qwe', 0), True)
+    dst = privkey2addr(seed2privkey('asdf', 0), True)
     vouts, cashback, amount = make_vout(src, dst, 100_000, None, 1_000)
     assert cashback == 0
     assert amount == 99_000
@@ -319,8 +370,8 @@ def test_make_vout_drains_when_amount_is_none():
 def test_make_vout_drains_when_amount_plus_fee_equals_input():
     """`amount + fee == in_amount` is the explicit form of "send everything"."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(seed2privkey('qwe'), True)
-    dst = privkey2addr(seed2privkey('asdf'), True)
+    src = privkey2addr(seed2privkey('qwe', 0), True)
+    dst = privkey2addr(seed2privkey('asdf', 0), True)
     vouts, cashback, amount = make_vout(src, dst, 100_000, 99_000, 1_000)
     assert cashback == 0
     assert amount == 99_000
@@ -330,8 +381,8 @@ def test_make_vout_drains_when_amount_plus_fee_equals_input():
 def test_make_vout_sends_change_back_to_src():
     """Anything left over after amount+fee is routed back to the source address."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(seed2privkey('qwe'), True)
-    dst = privkey2addr(seed2privkey('asdf'), True)
+    src = privkey2addr(seed2privkey('qwe', 0), True)
+    dst = privkey2addr(seed2privkey('asdf', 0), True)
     vouts, cashback, amount = make_vout(src, dst, 100_000, 40_000, 1_000)
     assert cashback == 59_000
     assert amount == 40_000

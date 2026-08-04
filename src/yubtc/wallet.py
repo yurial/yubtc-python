@@ -1,11 +1,11 @@
 from typing import Optional
 
-from yubtc.fwd import DEFAULT_COMPRESSED, DEFAULT_CONFIRMATIONS, DEFAULT_NEW_ADDRESSES
 from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
 
 
 class TPrivKey(object):
-    def __init__(self, *args, privkey: bytes = None, seed: TSeed = None, nonce: TNonce = None):
+    def __init__(self, *args, privkey: bytes = None, seed: TSeed = None,
+                 nonce: TNonce = None, compressed: Optional[bool] = None):
         from yubtc.crypto import seed2privkey
         if args:
             raise Exception('only kwargs allowed')
@@ -17,31 +17,40 @@ class TPrivKey(object):
             if nonce is None:
                 raise Exception('nonce not set')
             self.privkey = seed2privkey(seed=seed, nonce=nonce)
+        if compressed is None:
+            raise Exception('compressed not set')
         self.nonce = nonce
+        self.compressed = compressed
         self._info = None
 
-    def get_privwif(self, compressed: bool = DEFAULT_COMPRESSED) -> str:
+    def get_privwif(self, compressed: Optional[bool] = None) -> str:
         from yubtc.crypto import privkey2privwif
+        if compressed is None:
+            compressed = self.compressed
         return privkey2privwif(privkey=self.privkey, compressed=compressed)
 
-    def get_p2pkh_address(self, compressed: bool = DEFAULT_COMPRESSED) -> bytes:
+    def get_p2pkh_address(self, compressed: Optional[bool] = None) -> bytes:
         from yubtc.crypto import privkey2addr
+        if compressed is None:
+            compressed = self.compressed
         return privkey2addr(privkey=self.privkey, compressed=compressed)
 
     def get_info(self) -> dict:
         from yubtc.misc import get_address_info
         if not self._info:
-            self._info = get_address_info(self.get_p2pkh_address())
+            self._info = get_address_info(self.get_p2pkh_address(self.compressed))
         return self._info
 
     def is_unused(self) -> bool:
         total_received = self.get_info()['total_received']
         return total_received == 0
 
-    def get_unspent(self, confirmations: int = DEFAULT_CONFIRMATIONS) -> list:
+    def get_unspent(self, confirmations: Optional[int] = None) -> list:
         from yubtc.misc import get_address_unspent
+        if confirmations is None:
+            raise Exception('confirmations not set')
         result = list()
-        for x in get_address_unspent(self.get_p2pkh_address()):
+        for x in get_address_unspent(self.get_p2pkh_address(self.compressed)):
             if x['confirmations'] >= confirmations:
                 result.append({'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
                               'amount': x['value'], 'script': x['script']})
@@ -55,27 +64,37 @@ class Wallet(object):
             privkey: bytes = None,
             privwif: str = None,
             seed: TSeed = None,
-            compressed: bool = DEFAULT_COMPRESSED,
+            compressed: Optional[bool] = None,
             nonce: TNonce = None,
-            new_addresses: int = DEFAULT_NEW_ADDRESSES):
+            new_addresses: Optional[int] = None):
         from yubtc.crypto import privwif2privkey
         if args:
             raise Exception('only kwargs allowed')
+        self.privkeys = None
         if privkey:
-            self.privkeys = [TPrivKey(privkey=privkey)]
+            if compressed is None:
+                raise Exception('compressed not set')
+            self.compressed = compressed
+            self.privkeys = [TPrivKey(privkey=privkey, compressed=compressed)]
         elif privwif:
             privkey, compressed = privwif2privkey(privwif)
-            self.privkeys = [TPrivKey(privkey=privkey)]
+            self.compressed = compressed
+            self.privkeys = [TPrivKey(privkey=privkey, compressed=compressed)]
         elif seed:
+            if compressed is None:
+                raise Exception('compressed not set')
+            if new_addresses is None:
+                raise Exception('new_addresses not set')
+            self.compressed = compressed
             self.privkeys = []
             while True:
-                privkey = TPrivKey(seed=seed, nonce=nonce)
+                privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
                 if privkey.is_unused():
                     break
                 self.privkeys.append(privkey)
                 nonce = nonce + 1
             for i in range(new_addresses):
-                privkey = TPrivKey(seed=seed, nonce=nonce)
+                privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
                 self.privkeys.append(privkey)
                 nonce = nonce + 1
 
@@ -92,11 +111,24 @@ class Wallet(object):
         from yubtc.net import sendTx
         if args:
             raise Exception('only kwargs allowed')
-        if amount is not None:
-            amount = btc2satoshi(amount)
-        fee = btc2satoshi(fee)
+        if dst is None:
+            raise Exception('dst not set')
+        # amount=None is a "drain" sentinel passed through to make_transaction.
+        if amount is None:
+            converted_amount = None
+        else:
+            converted_amount = btc2satoshi(amount)
+        if fee is None:
+            raise Exception('fee not set')
+        satoshi_fee = btc2satoshi(fee)
+        if feekb is None:
+            raise Exception('feekb not set')
+        if confirmations is None:
+            raise Exception('confirmations not set')
+        if send is None:
+            raise Exception('send not set')
         tx, cashback, amount, fee = self.make_transaction(
-            dst=dst, amount=amount, feekb=feekb, fee=fee, confirmations=confirmations)
+            dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee, confirmations=confirmations)
         cashback = satoshi2btc(cashback)
         amount = satoshi2btc(amount)
         fee = satoshi2btc(fee)
@@ -125,7 +157,8 @@ class Wallet(object):
             if required_hash != pubhash:
                 raise Exception('unknown pubkey required')
             txhash = bytes.fromhex(u['tx'])
-            vin.append(CIn(txhash=txhash, n=u['out_n'], script=tx_lock_script))
+            vin.append(CIn(txhash=txhash, n=u['out_n'], script=tx_lock_script,
+                       sequence=0xffffffff))
         return vin, in_amount
 
     def make_transaction(
@@ -139,17 +172,19 @@ class Wallet(object):
         from yubtc.crypto import privkey2pubkey, pubkey2pubwif, pubkey2addr, make_vout
         from yubtc.transaction import CTransaction
         if confirmations is None:
-            confirmations = DEFAULT_CONFIRMATIONS
+            raise Exception('confirmations not set')
+        if feekb is None:
+            raise Exception('feekb not set')
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
-        src = pubkey2addr(pubkey)
-        pubwif = pubkey2pubwif(pubkey)
+        src = pubkey2addr(pubkey, self.compressed)
+        pubwif = pubkey2pubwif(pubkey, self.compressed)
         pubhash = hash160(pubwif)
         unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
         vin, in_amount = self._make_vin(pubhash=pubhash, unspent=unspent)
         _fee = fee
         while True:
             vout, _cashback, _amount = make_vout(src, dst=dst, in_amount=in_amount, amount=amount, fee=_fee)
-            tx = CTransaction(vin=vin, vout=vout)
+            tx = CTransaction(vin=vin, vout=vout, locktime=0)
             stx = tx.sign(privkey=self.privkeys[0].privkey, pubwif=pubwif)
             if fee:
                 break

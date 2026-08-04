@@ -1,4 +1,4 @@
-from yubtc.fwd import DEFAULT_LOCKTIME, SEQUENCE_FINAL
+from typing import Optional
 
 
 def script2pkh(script: bytes) -> bytes:
@@ -31,7 +31,9 @@ def toVarInt(value: int) -> bytes:
 
 
 class CIn(object):
-    def __init__(self, txhash: bytes, n: int, script: bytes, sequence: int = SEQUENCE_FINAL):
+    def __init__(self, txhash: bytes, n: int, script: bytes, sequence: Optional[int] = None):
+        if sequence is None:
+            raise Exception('sequence not set')
         if len(txhash) != 32:
             raise Exception('txhash shoud be 32 bytes lenght')
         if n < 0:
@@ -91,7 +93,9 @@ class COut(object):
 
 
 class CTransaction(object):
-    def __init__(self, vin: list, vout: list, locktime: int = DEFAULT_LOCKTIME):
+    def __init__(self, vin: list, vout: list, locktime: Optional[int] = None):
+        if locktime is None:
+            raise Exception('locktime not set')
         self.version = 2
         self.vin = vin
         self.vout = vout
