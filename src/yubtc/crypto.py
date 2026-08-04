@@ -1,4 +1,9 @@
-from yubtc.fwd import TAddress, TNonce, TSatoshi
+from typing import TYPE_CHECKING
+
+from yubtc.fwd import TAddress, TNonce, TSatoshi, TSeed
+
+if TYPE_CHECKING:
+    from yubtc.script import CScript
 
 SUFFIX_PRIVKEY_COMPRESSED = 0x01
 PREFIX_P2PKH = 0x00  # Publick Key Hash
@@ -14,19 +19,26 @@ PREFIX_EXTPUBKEY = 0x0488B21E  # BIP-32
 # TODO: SEGWIT https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch07.asciidoc#segregated-witness
 
 
-def str2bytes(s): return s.encode('latin-1')
-def bytes2str(b): return ''.join(map(chr, b))
-def str2list(s): return [c for c in s]
+def str2bytes(s: str) -> bytes:
+    return s.encode('latin-1')
 
 
-def seed2bin(seed, nonce: TNonce = 0):
+def bytes2str(b: bytes) -> str:
+    return ''.join(map(chr, b))
+
+
+def str2list(s: str) -> list:
+    return [c for c in s]
+
+
+def seed2bin(seed: TSeed, nonce: TNonce = 0) -> bytes:
     from yubtc.hash import sha256, keccak256, blake2b256
     from struct import pack
     data = pack(">L", nonce) + str2bytes(seed)
     return sha256(keccak256(blake2b256(data)))
 
 
-def bin2privkey(data):
+def bin2privkey(data: bytes) -> bytes:
     privkey = bytearray(data)
     """
     Clamping the lower bits ensures the key is a multiple of the cofactor.
@@ -41,11 +53,11 @@ def bin2privkey(data):
     return bytes(privkey)
 
 
-def seed2privkey(seed, nonce: TNonce = 0):
+def seed2privkey(seed: TSeed, nonce: TNonce = 0) -> bytes:
     return bin2privkey(seed2bin(seed, nonce))
 
 
-def privkey2privwif(privkey, compressed=True):
+def privkey2privwif(privkey: bytes, compressed: bool = True) -> str:
     from yubtc.base58check import base58CheckEncode
     if compressed:
         # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
@@ -53,7 +65,7 @@ def privkey2privwif(privkey, compressed=True):
     return base58CheckEncode(bytes([PREFIX_PRIVKEY]) + privkey)
 
 
-def privwif2privkey(privwif):
+def privwif2privkey(privwif: str) -> tuple:
     from yubtc.base58check import base58CheckDecode
     privkey = base58CheckDecode(privwif)
     if privkey[0] != PREFIX_PRIVKEY:
@@ -65,25 +77,25 @@ def privwif2privkey(privwif):
     return (privkey, False)
 
 
-def privkey2pubkey(privkey):
+def privkey2pubkey(privkey: bytes) -> bytes:
     import ecdsa
     sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
     return sk.verifying_key.to_string()
 
 
-def sign_hash(privkey, datahash):
+def sign_hash(privkey: bytes, datahash: bytes) -> bytes:
     import ecdsa
     sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
     return sk.sign_digest(datahash, sigencode=ecdsa.util.sigencode_der_canonize)
 
 
-def sign_data(privkey, data):
+def sign_data(privkey: bytes, data: bytes) -> bytes:
     from yubtc.hash import sha256
     datahash = sha256(sha256(data))
     return sign_hash(privkey=privkey, datahash=datahash)
 
 
-def pubkey2pubwif(pubkey, compressed=True):
+def pubkey2pubwif(pubkey: bytes, compressed: bool = True) -> bytes:
     if not compressed:
         return bytes([PREFIX_PUBKEY_FULL]) + pubkey
     x, y = pubkey[:32], pubkey[32:]
@@ -91,14 +103,14 @@ def pubkey2pubwif(pubkey, compressed=True):
     return bytes([prefix]) + x
 
 
-def pubkey2addr(pubkey, compressed=True):
+def pubkey2addr(pubkey: bytes, compressed: bool = True) -> str:
     from yubtc.base58check import base58CheckEncode
     from yubtc.hash import hash160
     pubwif = pubkey2pubwif(pubkey, compressed)
     return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubwif))
 
 
-def privkey2addr(privkey, compressed=True):
+def privkey2addr(privkey: bytes, compressed: bool = True) -> str:
     return pubkey2addr(privkey2pubkey(privkey), compressed)
 
 
@@ -110,7 +122,7 @@ def privkey2addr(privkey, compressed=True):
 """
 
 
-def make_lock_script(address: TAddress):
+def make_lock_script(address: TAddress) -> 'CScript':
     from yubtc.script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_EQUAL
     from yubtc.crypto import PREFIX_P2PKH, PREFIX_P2SH
     from yubtc.misc import unpack_address
@@ -123,7 +135,7 @@ def make_lock_script(address: TAddress):
         raise Exception('address not supported')
 
 
-def make_vout(src: TAddress, dst: TAddress, in_amount: TSatoshi, amount: TSatoshi, fee: TSatoshi):
+def make_vout(src: TAddress, dst: TAddress, in_amount: TSatoshi, amount: TSatoshi, fee: TSatoshi) -> tuple:
     from yubtc.transaction import COut
     vout_script = make_lock_script(dst)
     if amount is None or (amount + fee == in_amount):

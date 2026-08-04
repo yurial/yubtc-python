@@ -1,4 +1,4 @@
-def base58CheckEncode(payload):
+def base58CheckEncode(payload: bytes) -> bytes:
     from base58 import b58encode
     from yubtc.hash import sha256
     # b58encode preserves leading zero bytes as '1' characters, so no
@@ -7,7 +7,7 @@ def base58CheckEncode(payload):
     return b58encode(payload + checksum)
 
 
-def base58CheckDecode(payload):
+def base58CheckDecode(payload: str) -> bytes:
     from base58 import b58decode
     from yubtc.hash import sha256
     # b58decode maps each leading '1' to a 0x00 byte; the last 4 bytes

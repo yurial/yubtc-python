@@ -168,7 +168,7 @@ class CScript(bytes):
     on `CIn` and `COut`. Construction accepts either bytes directly or an
     iterable of `CScriptOp` and bytes (the latter as inline PUSHDATA).
     """
-    def __new__(cls, value=b''):
+    def __new__(cls, value: object = b'') -> 'CScript':
         if isinstance(value, (bytes, bytearray)):
             return super().__new__(cls, bytes(value))
         parts = []

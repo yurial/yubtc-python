@@ -5,7 +5,7 @@ raw_input = input
 # Returns byte string value, not hex string
 
 
-def varint(n):
+def varint(n: int) -> bytes:
     from struct import pack
     if n < 0xfd:
         return pack('<B', n)
@@ -19,11 +19,11 @@ def varint(n):
 # Takes and returns byte string value, not hex string
 
 
-def varstr(s):
+def varstr(s: bytes) -> bytes:
     return varint(len(s)) + s
 
 
-def yesno(question):
+def yesno(question: str) -> bool:
     while True:
         choice = raw_input(question).lower()
         if choice[:1] == 'y':
@@ -42,7 +42,7 @@ def btc2satoshi(btc: TBTC) -> TSatoshi:
     return TSatoshi(btc * TBTC((0, (1,), 8)))
 
 
-def unpack_address(address: TAddress):
+def unpack_address(address: TAddress) -> tuple:
     from yubtc.base58check import base58CheckDecode
     data = base58CheckDecode(address)
     prefix = data[0]
@@ -50,7 +50,7 @@ def unpack_address(address: TAddress):
     return prefix, dsthash
 
 
-def get_address_unspent(address):
+def get_address_unspent(address: TAddress) -> list:
     import requests
     from json.decoder import JSONDecodeError
     address = address.decode('ascii')
@@ -62,7 +62,7 @@ def get_address_unspent(address):
     raise Exception('Unknown error')
 
 
-def get_address_info(address):
+def get_address_info(address: TAddress) -> dict:
     import requests
     from json.decoder import JSONDecodeError
     address = address.decode('ascii')

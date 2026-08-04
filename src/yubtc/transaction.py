@@ -1,4 +1,4 @@
-def script2pkh(script):
+def script2pkh(script: bytes) -> bytes:
     from yubtc.script import OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
     if (len(script) != 25
         or script[0] != OP_DUP
@@ -10,7 +10,7 @@ def script2pkh(script):
     return script[3:-2]
 
 
-def toVarInt(value):
+def toVarInt(value: int) -> bytes:
     """Pack `value` into varint bytes"""
     from struct import pack
     if value < 0:
@@ -28,7 +28,7 @@ def toVarInt(value):
 
 
 class CIn(object):
-    def __init__(self, txhash, n, script, sequence=0xffffffff):
+    def __init__(self, txhash: bytes, n: int, script: bytes, sequence: int = 0xffffffff):
         if len(txhash) != 32:
             raise Exception('txhash shoud be 32 bytes lenght')
         if n < 0:
@@ -44,7 +44,7 @@ class CIn(object):
         self.script = script
         self.sequence = sequence
 
-    def serialize(self):
+    def serialize(self) -> bytes:
         """
         32  hash                char[32]    The hash of the referenced transaction.
         4   index               uint32_t    The index of the specific output in the transaction.
@@ -65,7 +65,7 @@ class CIn(object):
 
 
 class COut(object):
-    def __init__(self, amount, script):
+    def __init__(self, amount: int, script: bytes):
         if amount < 0:
             raise Exception('amount should be non-negative')
         if amount > 0xffffffffffffffff:
@@ -73,7 +73,7 @@ class COut(object):
         self.amount = amount
         self.script = script
 
-    def serialize(self):
+    def serialize(self) -> bytes:
         """
         8   value               int64_t     Transaction Value
         1+  pk_script length    var_int     Length of the pk_script
@@ -88,13 +88,13 @@ class COut(object):
 
 
 class CTransaction(object):
-    def __init__(self, vin, vout, locktime=0):
+    def __init__(self, vin: list, vout: list, locktime: int = 0):
         self.version = 2
         self.vin = vin
         self.vout = vout
         self.locktime = locktime
 
-    def serialize(self):
+    def serialize(self) -> bytes:
         """
         4       version         int32_t     Transaction data format version (note, this is signed)
         0 or 2  flag            uint8_t[2]  Optional. If present, always 0001, and indicates
@@ -118,7 +118,7 @@ class CTransaction(object):
         result += pack(b"<L", self.locktime)
         return result
 
-    def sign(self, privkey, pubwif):
+    def sign(self, privkey: bytes, pubwif: bytes) -> 'CTransaction':
         from copy import deepcopy
         from yubtc.crypto import sign_data
         from yubtc.script import CScript
@@ -137,6 +137,6 @@ class CTransaction(object):
             tx.vin[i].script = scripts[i]
         return tx
 
-    def id(self):
+    def id(self) -> bytes:
         from yubtc.hash import sha256
         return sha256(sha256(self.serialize()))[::-1]

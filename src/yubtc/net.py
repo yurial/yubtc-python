@@ -6,7 +6,7 @@ submit it manually via a block explorer.
 """
 
 
-def sendTx(rawtxdata):
+def sendTx(rawtxdata: bytes) -> None:
     """Stub for broadcasting a transaction to the Bitcoin network.
 
     The actual broadcast endpoint is not wired up here. The wallet's

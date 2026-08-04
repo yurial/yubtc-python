@@ -1,3 +1,5 @@
+from typing import Optional
+
 from yubtc.fwd import DEFAULT_CONFIRMATIONS
 from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
 
@@ -18,25 +20,25 @@ class TPrivKey(object):
         self.nonce = nonce
         self._info = None
 
-    def get_privwif(self, compressed: bool = True):
+    def get_privwif(self, compressed: bool = True) -> str:
         from yubtc.crypto import privkey2privwif
         return privkey2privwif(privkey=self.privkey, compressed=compressed)
 
-    def get_p2pkh_address(self, compressed: bool = True):
+    def get_p2pkh_address(self, compressed: bool = True) -> bytes:
         from yubtc.crypto import privkey2addr
         return privkey2addr(privkey=self.privkey, compressed=compressed)
 
-    def get_info(self):
+    def get_info(self) -> dict:
         from yubtc.misc import get_address_info
         if not self._info:
             self._info = get_address_info(self.get_p2pkh_address())
         return self._info
 
-    def is_unused(self):
+    def is_unused(self) -> bool:
         total_received = self.get_info()['total_received']
         return total_received == 0
 
-    def get_unspent(self, confirmations: int = DEFAULT_CONFIRMATIONS):
+    def get_unspent(self, confirmations: int = DEFAULT_CONFIRMATIONS) -> list:
         from yubtc.misc import get_address_unspent
         result = list()
         for x in get_address_unspent(self.get_p2pkh_address()):
@@ -80,12 +82,12 @@ class Wallet(object):
     def send(
             self,
             *args,
-            dst: TAddress = None,
-            amount: TBTC = None,
-            feekb: TSatoshi = None,
-            fee: TBTC = None,
-            confirmations: int = None,
-            send: bool = None):
+            dst: Optional[TAddress] = None,
+            amount: Optional[TBTC] = None,
+            feekb: Optional[TSatoshi] = None,
+            fee: Optional[TBTC] = None,
+            confirmations: Optional[int] = None,
+            send: Optional[bool] = None) -> None:
         from yubtc.misc import yesno, satoshi2btc, btc2satoshi
         from yubtc.net import sendTx
         if args:
@@ -112,7 +114,7 @@ class Wallet(object):
             else:
                 print(rawtx.hex())
 
-    def _make_vin(self, pubhash, unspent):
+    def _make_vin(self, pubhash: bytes, unspent: list) -> tuple:
         from yubtc.transaction import script2pkh, CIn
         vin = list()
         in_amount = 0
@@ -130,9 +132,9 @@ class Wallet(object):
             self,
             dst: TAddress,
             amount: TBTC,
-            feekb: TBTC = None,
-            fee: TSatoshi = None,
-            confirmations: int = None):
+            feekb: Optional[TSatoshi] = None,
+            fee: Optional[TSatoshi] = None,
+            confirmations: Optional[int] = None) -> tuple:
         from yubtc.hash import hash160
         from yubtc.crypto import privkey2pubkey, pubkey2pubwif, pubkey2addr, make_vout
         from yubtc.transaction import CTransaction
