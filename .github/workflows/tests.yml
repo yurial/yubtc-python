@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: read
+  # `actions/upload-code-coverage@v1` needs to publish the report to
+  # GitHub's coverage graph (visible in PRs and Insights > Code coverage).
+  code-quality: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,8 +41,9 @@ jobs:
           pip install 'pytest>=7.0' pytest-cov
 
       # Coverage settings, including the fail_under gate, live in pyproject.toml.
+      # The xml report is consumed by actions/upload-code-coverage below.
       - name: Run tests
-        run: pytest --cov --cov-report=term-missing --cov-report=html
+        run: pytest --cov --cov-report=term-missing --cov-report=html --cov-report=xml:coverage.xml
 
       - name: Publish coverage summary
         if: always() && matrix.python-version == '3.12'
@@ -54,6 +58,19 @@ jobs:
           name: coverage-html
           path: htmlcov/
           retention-days: 14
+
+      # Push the Cobertura XML to GitHub's native coverage graph.
+      # One upload per CI is enough; pin it to the latest Python so the
+      # label is stable across the matrix. `fail-on-error: false` keeps
+      # the green/red status tied to the tests, not the network.
+      - name: Upload coverage to GitHub
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.xml
+          language: Python
+          label: code-coverage
+          fail-on-error: false
 
   lint:
     runs-on: ubuntu-latest

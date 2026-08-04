@@ -32,7 +32,10 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.coverage.run]
-source = ["yubtc"]
+# Pin the source to the package only. The CWD-relative "yubtc"
+# pick-up also matches the launcher script at the repo root (no .py
+# suffix), which produces a duplicate <source> entry in coverage.xml.
+source = ["src/yubtc"]
 branch = true
 
 [tool.coverage.report]
