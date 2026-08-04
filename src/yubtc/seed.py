@@ -2,7 +2,10 @@
 # The BIP-39 wordlist has long words (up to 8 chars) packed densely per line;
 # splitting them differently would just shuffle E501 hits around without
 # improving readability. Suppress E501 for the whole file.
-def _generate_seed(count: int = 15, allow_dups: bool = True) -> list:
+from yubtc.fwd import DEFAULT_ALLOW_DUPS, DEFAULT_SEED_WORDS
+
+
+def _generate_seed(count: int = DEFAULT_SEED_WORDS, allow_dups: bool = DEFAULT_ALLOW_DUPS) -> list:
     wordList = ('abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract', 'absurd', 'abuse', 'access',
                 'accident', 'account', 'accuse', 'achieve', 'acid', 'acoustic', 'acquire', 'across', 'act', 'action',
                 'actor', 'actress', 'actual', 'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
@@ -200,7 +203,7 @@ def _generate_seed(count: int = 15, allow_dups: bool = True) -> list:
     return [sysrandom.choice(wordList) for i in range(count)]
 
 
-def generate_seed(count: int = 15, allow_dups: bool = True) -> str:
+def generate_seed(count: int = DEFAULT_SEED_WORDS, allow_dups: bool = DEFAULT_ALLOW_DUPS) -> str:
     return ' '.join(_generate_seed(count, allow_dups))
 
 

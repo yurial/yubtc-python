@@ -2,36 +2,53 @@
 
 import click
 
-from yubtc.fwd import MINIMAL_FEE, TAddress, TAmount, TNonce, TSatoshi, TBTC
+from yubtc.fwd import (
+    DEFAULT_CLI_CONFIRMATIONS,
+    DEFAULT_FEE,
+    DEFAULT_NEW_ADDRESSES,
+    DEFAULT_NONCE,
+    DEFAULT_SEED_WORDS,
+    MINIMAL_FEE,
+    TAddress,
+    TAmount,
+    TNonce,
+    TSatoshi,
+    TBTC,
+)
 from yubtc.wallet import Wallet
 from yubtc.seed import generate_seed, get_seed
 
 
 @click.group()
-def cli():
+def cli() -> None:
     pass
 
 
 @cli.command('newseed', help='Generate new seed.')
-@click.option('-n', help='Count of words (default=15).', default=15, required=False, nargs=1, type=int)
-@click.option('-u', '--unique', help='Only unique words is seed.', default=False, required=False, is_flag=True)
+@click.option('-n', help='Count of words (default=15).',
+              default=DEFAULT_SEED_WORDS, required=False, nargs=1, type=int)
+@click.option('-u', '--unique', help='Only unique words is seed.',
+              default=False, required=False, is_flag=True)
 def newseed(n: int, unique: bool) -> None:
     seed = generate_seed(count=n, allow_dups=not unique)
-    wallet = Wallet(seed=seed, nonce=0)
+    wallet = Wallet(seed=seed, nonce=DEFAULT_NONCE)
     print('{seed}\r\nAddress: {address}'.format(seed=seed,
                                                 address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
 
 @cli.command('address', help='Show native (P2PKH) address and exit.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce', default=0, required=False, nargs=1, type=int)
-@click.option('--new', help='Count of new unused addresses', default=1, required=False, nargs=1, type=int)
+@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+              default=DEFAULT_NONCE, required=False, nargs=1, type=int)
+@click.option('--new', help='Count of new unused addresses',
+              default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
 def address(nonce: TNonce, new: int) -> None:
     wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
     print(wallet.privkeys[0].get_p2pkh_address().decode('ascii'))
 
 
 @cli.command('dumpprivkey', help='Show private key in WIF format and exit.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce', default=0, required=False, nargs=1, type=int)
+@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+              default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 def dumpprivkey(nonce: TNonce) -> None:
     wallet = Wallet(seed=get_seed(), nonce=nonce)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
@@ -39,15 +56,19 @@ def dumpprivkey(nonce: TNonce) -> None:
 
 
 @cli.command('balance', help='Show balance and exit.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce', default=0, required=False, nargs=1, type=int)
+@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+              default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('-c', '--confirmations', help='Minimal confirmations for inputs.',
-              default=6, required=False, nargs=1, type=int)
-@click.option('--new', help='Count of new unused addresses', default=1, required=False, nargs=1, type=int)
-@click.option('-e', '--empty', help='Show used empty addresses', default=False, required=False, is_flag=True)
-@click.option('-v', '--verbose', help='Print verbosity', default=False, required=False, is_flag=True)
+              default=DEFAULT_CLI_CONFIRMATIONS, required=False, nargs=1, type=int)
+@click.option('--new', help='Count of new unused addresses',
+              default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
+@click.option('-e', '--empty', help='Show used empty addresses',
+              default=False, required=False, is_flag=True)
+@click.option('-v', '--verbose', help='Print verbosity',
+              default=False, required=False, is_flag=True)
 def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: bool) -> None:
     from yubtc.misc import satoshi2btc
-    total = 0
+    total = TBTC(0)
     wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
     for privkey in wallet.privkeys:
         txs = privkey.get_unspent(confirmations=confirmations)
@@ -72,14 +93,16 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
 
 @cli.command('send', help='Send BTC to address. ADDRESS - Destination address. Only P2PKH or P2SH addresses supported. '
              'AMOUNT - value to send in decimal. Set "ALL" to send all available funds.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce', default=0, required=False, nargs=1, type=int)
+@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+              default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('-c', '--confirmations', help='Minimal confirmations for inputs.',
-              default=6, required=False, nargs=1, type=int)
+              default=DEFAULT_CLI_CONFIRMATIONS, required=False, nargs=1, type=int)
 @click.option('-f', '--fee', help='Set transaction fee. Value in decimal.',
-              default=TBTC(0), required=False, nargs=1, type=TBTC)
+              default=DEFAULT_FEE, required=False, nargs=1, type=TBTC)
 @click.option('-k', '--feekb', help='Set fee per kilobyte (1000 bytes). Value in satoshi.',
               default=MINIMAL_FEE, required=False, nargs=1, type=int)
-@click.option('--send', help='Send transaction to network, just print to console.', default=False, is_flag=True)
+@click.option('--send', help='Send transaction to network, just print to console.',
+              default=False, is_flag=True)
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
 def send(

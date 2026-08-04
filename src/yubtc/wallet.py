@@ -1,6 +1,6 @@
 from typing import Optional
 
-from yubtc.fwd import DEFAULT_CONFIRMATIONS
+from yubtc.fwd import DEFAULT_COMPRESSED, DEFAULT_CONFIRMATIONS, DEFAULT_NEW_ADDRESSES
 from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
 
 
@@ -20,11 +20,11 @@ class TPrivKey(object):
         self.nonce = nonce
         self._info = None
 
-    def get_privwif(self, compressed: bool = True) -> str:
+    def get_privwif(self, compressed: bool = DEFAULT_COMPRESSED) -> str:
         from yubtc.crypto import privkey2privwif
         return privkey2privwif(privkey=self.privkey, compressed=compressed)
 
-    def get_p2pkh_address(self, compressed: bool = True) -> bytes:
+    def get_p2pkh_address(self, compressed: bool = DEFAULT_COMPRESSED) -> bytes:
         from yubtc.crypto import privkey2addr
         return privkey2addr(privkey=self.privkey, compressed=compressed)
 
@@ -55,9 +55,9 @@ class Wallet(object):
             privkey: bytes = None,
             privwif: str = None,
             seed: TSeed = None,
-            compressed: bool = True,
+            compressed: bool = DEFAULT_COMPRESSED,
             nonce: TNonce = None,
-            new_addresses: int = 1):
+            new_addresses: int = DEFAULT_NEW_ADDRESSES):
         from yubtc.crypto import privwif2privkey
         if args:
             raise Exception('only kwargs allowed')

@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from yubtc.fwd import TAddress, TNonce, TSatoshi, TSeed
+from yubtc.fwd import DEFAULT_COMPRESSED, DEFAULT_NONCE, TAddress, TNonce, TSatoshi, TSeed
 
 if TYPE_CHECKING:
     from yubtc.script import CScript
@@ -31,7 +31,7 @@ def str2list(s: str) -> list:
     return [c for c in s]
 
 
-def seed2bin(seed: TSeed, nonce: TNonce = 0) -> bytes:
+def seed2bin(seed: TSeed, nonce: TNonce = DEFAULT_NONCE) -> bytes:
     from yubtc.hash import sha256, keccak256, blake2b256
     from struct import pack
     data = pack(">L", nonce) + str2bytes(seed)
@@ -53,11 +53,11 @@ def bin2privkey(data: bytes) -> bytes:
     return bytes(privkey)
 
 
-def seed2privkey(seed: TSeed, nonce: TNonce = 0) -> bytes:
+def seed2privkey(seed: TSeed, nonce: TNonce = DEFAULT_NONCE) -> bytes:
     return bin2privkey(seed2bin(seed, nonce))
 
 
-def privkey2privwif(privkey: bytes, compressed: bool = True) -> str:
+def privkey2privwif(privkey: bytes, compressed: bool = DEFAULT_COMPRESSED) -> str:
     from yubtc.base58check import base58CheckEncode
     if compressed:
         # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
@@ -95,7 +95,7 @@ def sign_data(privkey: bytes, data: bytes) -> bytes:
     return sign_hash(privkey=privkey, datahash=datahash)
 
 
-def pubkey2pubwif(pubkey: bytes, compressed: bool = True) -> bytes:
+def pubkey2pubwif(pubkey: bytes, compressed: bool = DEFAULT_COMPRESSED) -> bytes:
     if not compressed:
         return bytes([PREFIX_PUBKEY_FULL]) + pubkey
     x, y = pubkey[:32], pubkey[32:]
@@ -103,14 +103,14 @@ def pubkey2pubwif(pubkey: bytes, compressed: bool = True) -> bytes:
     return bytes([prefix]) + x
 
 
-def pubkey2addr(pubkey: bytes, compressed: bool = True) -> str:
+def pubkey2addr(pubkey: bytes, compressed: bool = DEFAULT_COMPRESSED) -> str:
     from yubtc.base58check import base58CheckEncode
     from yubtc.hash import hash160
     pubwif = pubkey2pubwif(pubkey, compressed)
     return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubwif))
 
 
-def privkey2addr(privkey: bytes, compressed: bool = True) -> str:
+def privkey2addr(privkey: bytes, compressed: bool = DEFAULT_COMPRESSED) -> str:
     return pubkey2addr(privkey2pubkey(privkey), compressed)
 
 

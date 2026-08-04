@@ -1,3 +1,6 @@
+from yubtc.fwd import DEFAULT_LOCKTIME, SEQUENCE_FINAL
+
+
 def script2pkh(script: bytes) -> bytes:
     from yubtc.script import OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
     if (len(script) != 25
@@ -28,7 +31,7 @@ def toVarInt(value: int) -> bytes:
 
 
 class CIn(object):
-    def __init__(self, txhash: bytes, n: int, script: bytes, sequence: int = 0xffffffff):
+    def __init__(self, txhash: bytes, n: int, script: bytes, sequence: int = SEQUENCE_FINAL):
         if len(txhash) != 32:
             raise Exception('txhash shoud be 32 bytes lenght')
         if n < 0:
@@ -88,7 +91,7 @@ class COut(object):
 
 
 class CTransaction(object):
-    def __init__(self, vin: list, vout: list, locktime: int = 0):
+    def __init__(self, vin: list, vout: list, locktime: int = DEFAULT_LOCKTIME):
         self.version = 2
         self.vin = vin
         self.vout = vout
