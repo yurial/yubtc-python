@@ -37,8 +37,7 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
-# Branch coverage is currently 9.5% (100 of 1053 points: 93 statements + 7
-# branches). This is a ratchet against regressions, not a target -- raise it as
-# tests land. Note the figure is lower than statement-only coverage (11%)
-# because the 182 branches inside untested modules count against the total.
-fail_under = 9
+# Branch coverage is currently 24.6%. This is a ratchet against regressions,
+# not a target -- raise it as tests land. Note the figure is held down by
+# script.py and transaction.py, which no test touches yet.
+fail_under = 24

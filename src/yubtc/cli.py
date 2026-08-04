@@ -16,22 +16,22 @@ def cli():
 @click.option('-u', '--unique', help='Only unique words is seed.', default=False, required=False, is_flag=True)
 def newseed(n: int, unique: bool):
     seed = generate_seed(count=n, allow_dups=not unique)
-    wallet = Wallet(seed=seed)
-    print('{seed}\r\nAddress: {address}'.format(seed=seed, address=wallet.adresses[0].get_p2pkh_address().decode('ascii')))
+    wallet = Wallet(seed=seed, nonce=0)
+    print('{seed}\r\nAddress: {address}'.format(seed=seed, address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
 @cli.command('address', help='Show native (P2PKH) address and exit.')
 @click.option('-n', '--nonce', help='Scan adresses from given nonce', default=0, required=False, nargs=1, type=int)
 @click.option('--new', help='Count of new unused addresses', default=1, required=False, nargs=1, type=int)
 def address(nonce: int, new: int):
     wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
-    print(wallet.adresses[0].get_p2pkh_address().decode('ascii'))
+    print(wallet.privkeys[0].get_p2pkh_address().decode('ascii'))
 
 @cli.command('dumpprivkey', help='Show private key in WIF format and exit.')
 @click.option('-n', '--nonce', help='Scan adresses from given nonce', default=0, required=False, nargs=1, type=int)
 def dumpprivkey(nonce: int):
     wallet = Wallet(seed=get_seed(), nonce=nonce)
-    print('Address: {address}'.format(address=wallet.adresses[0].get_p2pkh_address().decode('ascii')))
-    print(wallet.get_privwif().decode('ascii'))
+    print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
+    print(wallet.privkeys[0].get_privwif().decode('ascii'))
 
 @cli.command('balance', help='Show balance and exit.')
 @click.option('-n', '--nonce', help='Scan adresses from given nonce', default=0, required=False, nargs=1, type=int)
