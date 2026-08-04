@@ -23,7 +23,9 @@ SEQUENCE_FINAL: int = 0xffffffff
 EMPTY_SCRIPT: bytes = b''
 
 MINIMAL_FEE: TSatoshi = 2000
-DEFAULT_CONFIRMATIONS: int = 2
-# CLI surface defaults -- distinct from `DEFAULT_CONFIRMATIONS` because the
-# CLI shows a stricter confirmation count than the wallet's internal default.
-DEFAULT_CLI_CONFIRMATIONS: int = 6
+# Confirmation count the CLI requires before considering a UTXO spendable.
+DEFAULT_CONFIRMATIONS: int = 6
+# HTTP request timeout for blockchain.info calls (seconds). Long enough to
+# ride out a slow block-explorer; short enough that a hung server doesn't
+# freeze the wallet indefinitely.
+DEFAULT_TIMEOUT_HTTP: int = 180

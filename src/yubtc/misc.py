@@ -1,4 +1,4 @@
-from yubtc.fwd import TAddress, TSatoshi, TBTC
+from yubtc.fwd import TAddress, TSatoshi, TBTC, DEFAULT_TIMEOUT_HTTP
 
 raw_input = input
 
@@ -56,7 +56,7 @@ def get_address_unspent(address: TAddress) -> list:
     address = address.decode('ascii')
     try:
         url = 'https://blockchain.info/unspent?active={address}'.format(address=address)
-        return requests.get(url).json()['unspent_outputs']
+        return requests.get(url, timeout=DEFAULT_TIMEOUT_HTTP).json()['unspent_outputs']
     except JSONDecodeError:
         return []
 
@@ -67,7 +67,7 @@ def get_address_info(address: TAddress) -> dict:
     address = address.decode('ascii')
     try:
         url = 'https://blockchain.info/balance?active={address}'.format(address=address)
-        response = requests.get(url)
+        response = requests.get(url, timeout=DEFAULT_TIMEOUT_HTTP)
         return response.json()[address]
     except JSONDecodeError:
         return {'total_received': 0}

@@ -3,8 +3,8 @@
 import click
 
 from yubtc.fwd import (
-    DEFAULT_CLI_CONFIRMATIONS,
     DEFAULT_COMPRESSED,
+    DEFAULT_CONFIRMATIONS,
     DEFAULT_FEE,
     DEFAULT_NEW_ADDRESSES,
     DEFAULT_NONCE,
@@ -63,7 +63,7 @@ def dumpprivkey(nonce: TNonce) -> None:
 @click.option('-n', '--nonce', help='Scan adresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('-c', '--confirmations', help='Minimal confirmations for inputs.',
-              default=DEFAULT_CLI_CONFIRMATIONS, required=False, nargs=1, type=int)
+              default=DEFAULT_CONFIRMATIONS, required=False, nargs=1, type=int)
 @click.option('--new', help='Count of new unused addresses',
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
 @click.option('-e', '--empty', help='Show used empty addresses',
@@ -101,7 +101,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
 @click.option('-n', '--nonce', help='Scan adresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('-c', '--confirmations', help='Minimal confirmations for inputs.',
-              default=DEFAULT_CLI_CONFIRMATIONS, required=False, nargs=1, type=int)
+              default=DEFAULT_CONFIRMATIONS, required=False, nargs=1, type=int)
 @click.option('-f', '--fee', help='Set transaction fee. Value in decimal.',
               default=DEFAULT_FEE, required=False, nargs=1, type=TBTC)
 @click.option('-k', '--feekb', help='Set fee per kilobyte (1000 bytes). Value in satoshi.',
