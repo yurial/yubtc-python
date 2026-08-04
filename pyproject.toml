@@ -37,7 +37,7 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
-# Branch coverage is currently 24.6%. This is a ratchet against regressions,
-# not a target -- raise it as tests land. Note the figure is held down by
-# script.py and transaction.py, which no test touches yet.
-fail_under = 24
+# Raised alongside observed coverage. The 0.5pp buffer keeps the gate passing
+# while still catching bulk regressions. Hold-down files: net.py (untouched),
+# wallet.py, cli.py, script.py.
+fail_under = 65
