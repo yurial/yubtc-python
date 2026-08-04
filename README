@@ -10,17 +10,17 @@ YuBTC support next commands:
   send         Send BTC to address.
   dumpprivkey  Show private key in WIF format and exit.
 
-Install:
-$ pip install .
-
-To run straight from a checkout, without installing, use the ./yubtc launcher.
-It only needs the third-party dependencies, not YuBTC itself:
+Usage from a checkout (no installation needed):
 $ pip install -r requirements.txt
 $ ./yubtc newseed
 
-For development, install in editable mode and run the tests:
-$ pip install -e '.[test]'
+The ./yubtc launcher runs the code straight from src/, so only the third-party
+dependencies have to be installed, not YuBTC itself. Run the tests the same way:
+$ pip install 'pytest>=7.0'
 $ pytest
+
+Alternatively, install it as a real package to get a yubtc command on PATH:
+$ pip install .
 
 Examples:
 $ yubtc newseed
