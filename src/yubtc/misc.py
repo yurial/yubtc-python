@@ -1,4 +1,4 @@
-from fwd import TAddress, TSatoshi, TBTC
+from yubtc.fwd import TAddress, TSatoshi, TBTC
 
 if str != bytes:
     raw_input = input
@@ -36,7 +36,7 @@ def btc2satoshi(btc: TBTC) -> TSatoshi:
     return TSatoshi(btc * TBTC((0, (1,), 8)))
 
 def unpack_address(address: TAddress):
-    from base58check import base58CheckDecode
+    from yubtc.base58check import base58CheckDecode
     data = base58CheckDecode(address)
     prefix = data[0]
     dsthash = data[1:]

@@ -9,7 +9,7 @@ def makeMessage(magic, command, payload):
     ?   payload     uchar[]     The actual data
 """
     from struct import pack
-    from hash import sha256
+    from yubtc.hash import sha256
     checksum = sha256(sha256(payload))[0:4]
     return pack('<L12sL4s', magic, command, len(payload), checksum) + payload
 
@@ -46,7 +46,7 @@ def makeVersionMsg():
     from struct import pack
     from socket import inet_aton 
     from random import getrandbits
-    from misc import varstr
+    from yubtc.misc import varstr
     version = 70015
     services = 1
     timestamp = int(time())

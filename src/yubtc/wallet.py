@@ -1,12 +1,12 @@
 from typing import Union
 from collections import namedtuple
 
-from fwd import MINIMAL_FEE, DEFAULT_CONFIRMATIONS
-from fwd import TSatoshi, TBTC, TSeed, TAddress
+from yubtc.fwd import MINIMAL_FEE, DEFAULT_CONFIRMATIONS
+from yubtc.fwd import TSatoshi, TBTC, TSeed, TAddress
 
 class TPrivKey(object):
     def __init__(self, *args, privkey: bytes = None, seed: TSeed = None, nonce: int = None):
-        from crypto import privwif2privkey, seed2privkey
+        from yubtc.crypto import privwif2privkey, seed2privkey
         if args:
             raise Exception('only kwargs allowed')
         if privkey:
@@ -21,15 +21,15 @@ class TPrivKey(object):
         self._info = None
 
     def get_privwif(self, compressed: bool = True):
-        from crypto import privkey2privwif
+        from yubtc.crypto import privkey2privwif
         return privkey2privwif(privkey=self.privkey, compressed=compressed)
 
     def get_p2pkh_address(self, compressed: bool = True):
-        from crypto import privkey2addr
+        from yubtc.crypto import privkey2addr
         return privkey2addr(privkey=self.privkey, compressed=compressed)
 
     def get_info(self):
-        from misc import get_address_info
+        from yubtc.misc import get_address_info
         if not self._info:
             self._info = get_address_info(self.get_p2pkh_address())
         return self._info
@@ -39,7 +39,7 @@ class TPrivKey(object):
         return total_received == 0
 
     def get_unspent(self, confirmations: int = DEFAULT_CONFIRMATIONS):
-        from misc import get_address_unspent
+        from yubtc.misc import get_address_unspent
         result = list()
         for x in get_address_unspent(self.get_p2pkh_address()):
             if x['confirmations'] >= confirmations:
@@ -71,8 +71,8 @@ class Wallet(object):
                 nonce = nonce + 1
 
     def send(self, *args, dst: TAddress = None, amount: TBTC = None, feekb: TSatoshi = None, fee: TBTC = None, confirmations: int = None, send: bool = None):
-        from misc import yesno, satoshi2btc, btc2satoshi
-        from net import sendTx
+        from yubtc.misc import yesno, satoshi2btc, btc2satoshi
+        from yubtc.net import sendTx
         if args:
             raise Exception('only kwargs allowed')
         if amount is not None:
@@ -91,7 +91,7 @@ class Wallet(object):
                 print(rawtx.hex())
 
     def _make_vin(self, pubhash, unspent):
-        from transaction import script2pkh, CIn
+        from yubtc.transaction import script2pkh, CIn
         vin = list()
         in_amount = 0
         for u in unspent:
@@ -105,9 +105,9 @@ class Wallet(object):
         return vin, in_amount
 
     def make_transaction(self, dst: TAddress, amount: TBTC, feekb: TBTC = None, fee: TSatoshi = None, confirmations: int = None):
-        from hash import hash160
-        from crypto import privkey2pubkey, pubkey2pubwif, sign_data, pubkey2addr, make_vout
-        from transaction import CTransaction
+        from yubtc.hash import hash160
+        from yubtc.crypto import privkey2pubkey, pubkey2pubwif, sign_data, pubkey2addr, make_vout
+        from yubtc.transaction import CTransaction
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
         src = pubkey2addr(pubkey)
         pubwif = pubkey2pubwif(pubkey)

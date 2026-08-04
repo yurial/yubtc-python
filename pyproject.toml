@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yubtc"
+version = "0.1.0"
+description = "Console BTC client that stores nothing on disk; private keys are derived from a seed."
+readme = "README"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [{ name = "Yuri Dyachenko", email = "pub.yurial@gmail.com" }]
+dependencies = [
+    "requests",
+    "click",
+    "ecdsa",
+    "base58",
+    "safe-pysha3",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+yubtc = "yubtc.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

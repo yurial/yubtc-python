@@ -1,4 +1,4 @@
-from fwd import TAddress, TSatoshi, TBTC
+from yubtc.fwd import TAddress, TSatoshi, TBTC
 
 SUFFIX_PRIVKEY_COMPRESSED = 0x01
 PREFIX_P2PKH = 0x00 # Publick Key Hash
@@ -23,7 +23,7 @@ else:  # python3
     str2list = lambda s: [c for c in s]
 
 def seed2bin(seed, nonce=0):
-    from hash import sha256, keccak256, blake256
+    from yubtc.hash import sha256, keccak256, blake256
     from struct import pack
     data = pack(">L", nonce) + str2bytes(seed)
     return sha256(keccak256(blake256(data)))
@@ -43,13 +43,13 @@ def seed2privkey(seed, nonce=0):
     return bin2privkey(seed2bin(seed, nonce))
 
 def privkey2privwif(privkey, compressed=True):
-    from base58check import base58CheckEncode
+    from yubtc.base58check import base58CheckEncode
     if compressed:
         privkey += bytes([SUFFIX_PRIVKEY_COMPRESSED]) # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
     return base58CheckEncode(bytes([PREFIX_PRIVKEY]) + privkey)
 
 def privwif2privkey(privwif):
-    from base58check import base58CheckDecode
+    from yubtc.base58check import base58CheckDecode
     privkey = base58CheckDecode(privwif)
     if privkey[0] != PREFIX_PRIVKEY:
         raise Exception('prefix missmatch')
@@ -70,7 +70,7 @@ def sign_hash(privkey, datahash):
     return sk.sign_digest(datahash, sigencode=ecdsa.util.sigencode_der_canonize)
 
 def sign_data(privkey, data):
-    from hash import sha256
+    from yubtc.hash import sha256
     datahash = sha256(sha256(data))
     return sign_hash(privkey=privkey, datahash=datahash)
 
@@ -82,8 +82,8 @@ def pubkey2pubwif(pubkey, compressed=True):
     return bytes([prefix]) + x
 
 def pubkey2addr(pubkey, compressed=True):
-    from base58check import base58CheckEncode
-    from hash import hash160
+    from yubtc.base58check import base58CheckEncode
+    from yubtc.hash import hash160
     pubwif = pubkey2pubwif(pubkey, compressed)
     return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubwif))
 
@@ -98,9 +98,9 @@ def privkey2addr(privkey, compressed=True):
 """
 
 def make_lock_script(address: TAddress):
-    from script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_EQUAL
-    from crypto import PREFIX_P2PKH, PREFIX_P2SH
-    from misc import unpack_address
+    from yubtc.script import CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_EQUAL
+    from yubtc.crypto import PREFIX_P2PKH, PREFIX_P2SH
+    from yubtc.misc import unpack_address
     prefix, dsthash = unpack_address(address)
     if prefix == PREFIX_P2PKH:
         return CScript([OP_DUP, OP_HASH160, dsthash, OP_EQUALVERIFY, OP_CHECKSIG])
@@ -110,7 +110,7 @@ def make_lock_script(address: TAddress):
         raise Exception('address not supported')
 
 def make_vout(src: TAddress, dst: TAddress, in_amount: TSatoshi, amount: TSatoshi, fee: TSatoshi):
-    from transaction import COut
+    from yubtc.transaction import COut
     vout_script = make_lock_script(dst)
     if amount is None or (amount+fee == in_amount):
         amount = in_amount - fee

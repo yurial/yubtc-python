@@ -10,7 +10,7 @@ import pytest
         ]
     )
 def test(compressed, seed, privhex, privwif, address):
-    from crypto import seed2privkey, privkey2privwif, privkey2addr
+    from yubtc.crypto import seed2privkey, privkey2privwif, privkey2addr
     privkey = seed2privkey(seed)
     assert privkey.hex() == privhex
     assert privkey2privwif(privkey, compressed) == privwif
@@ -20,7 +20,7 @@ def test(compressed, seed, privhex, privwif, address):
 this test included in main test()
 def test_bin2privkey():
     import axolotl_curve25519 as curve
-    from crypto import seed2privkey, seed2bin
+    from yubtc.crypto import seed2privkey, seed2bin
     seed = 'my test seed'
     assert seed2privkey(seed) == curve.generatePrivateKey(seed2bin(seed))
 """

@@ -1,5 +1,5 @@
 def script2pkh(script):
-    from script import OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
+    from yubtc.script import OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
     if (len(script) != 25
         or script[0] != OP_DUP
         or script[1] != OP_HASH160
@@ -108,8 +108,8 @@ class CTransaction(object):
 
     def sign(self, privkey, pubwif):
         from copy import deepcopy
-        from crypto import sign_data
-        from script import CScript
+        from yubtc.crypto import sign_data
+        from yubtc.script import CScript
         from struct import pack
         tx = deepcopy(self)
         scripts = list()
@@ -126,5 +126,5 @@ class CTransaction(object):
         return tx
 
     def id(self):
-        from hash import sha256
+        from yubtc.hash import sha256
         return sha256(sha256(self.serialize()))[::-1]

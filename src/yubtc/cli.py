@@ -2,10 +2,10 @@
 
 import click
 
-from fwd import MINIMAL_FEE, DEFAULT_CONFIRMATIONS
-from fwd import TSatoshi, TBTC, TAmount
-from wallet import Wallet, MINIMAL_FEE
-from seed import generate_seed, get_seed
+from yubtc.fwd import MINIMAL_FEE, DEFAULT_CONFIRMATIONS
+from yubtc.fwd import TSatoshi, TBTC, TAmount
+from yubtc.wallet import Wallet, MINIMAL_FEE
+from yubtc.seed import generate_seed, get_seed
 
 @click.group()
 def cli():
@@ -40,7 +40,7 @@ def dumpprivkey(nonce: int):
 @click.option('-e', '--empty', help='Show used empty addresses', default=False, required=False, is_flag=True)
 @click.option('-v', '--verbose', help='Print verbosity', default=False, required=False, is_flag=True)
 def balance(nonce: int, confirmations: int, new: int, empty: bool, verbose: bool):
-    from misc import satoshi2btc
+    from yubtc.misc import satoshi2btc
     total = 0
     wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
     for privkey in wallet.privkeys:

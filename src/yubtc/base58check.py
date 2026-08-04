@@ -1,6 +1,6 @@
 def base58CheckEncode(payload):
     from base58 import b58encode
-    from hash import sha256
+    from yubtc.hash import sha256
     def countLeadingZeroes(s):
         count = 0
         for c in s:
@@ -16,7 +16,7 @@ def base58CheckEncode(payload):
 
 def base58CheckDecode(payload):
     from base58 import b58decode
-    from hash import sha256
+    from yubtc.hash import sha256
     def countLeadingOnes(s):
         count = 0
         for c in s:
