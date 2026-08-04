@@ -2,5 +2,4 @@ requests
 click
 ecdsa
 base58
-pyblake2
-pysha3
+safe-pysha3

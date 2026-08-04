@@ -12,7 +12,7 @@ def ripemd160(data):
     return hashlib.new('ripemd160', data).digest()
 
 def blake256(data):
-    from pyblake2 import blake2b
+    from hashlib import blake2b
     return blake2b(data, digest_size=32).digest()
 
 def hash160(data):
