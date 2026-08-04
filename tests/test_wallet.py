@@ -49,6 +49,13 @@ def test_TPrivKey_requires_seed():
         TPrivKey(nonce=0)
 
 
+def test_TPrivKey_rejects_empty_seed():
+    """An empty seed string is rejected -- it's distinct from "not set"."""
+    from yubtc.wallet import TPrivKey
+    with pytest.raises(Exception, match='seed cannot be empty'):
+        TPrivKey(seed='', nonce=0, compressed=True)
+
+
 def test_TPrivKey_requires_nonce():
     """seed but no nonce -> exception."""
     from yubtc.wallet import TPrivKey
@@ -484,6 +491,16 @@ def test_Wallet_init_raises_when_compressed_or_new_addresses_missing(monkeypatch
         Wallet(privkey=privkey)
     with pytest.raises(Exception, match='compressed not set'):
         Wallet(privkey=privkey, compressed=None)
+
+
+def test_Wallet_rejects_empty_seed(monkeypatch):
+    """Empty seed string is rejected (distinct from "not set")."""
+    from yubtc.wallet import Wallet
+    monkeypatch.setattr('yubtc.misc.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.misc.get_address_unspent', lambda address, **kwargs: [])
+    with pytest.raises(Exception, match='seed cannot be empty'):
+        Wallet(seed='', nonce=0, compressed=True, new_addresses=1)
 
 
 # ---------------------------------------------------------------------------

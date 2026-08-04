@@ -14,11 +14,13 @@ class TPrivKey(object):
         from yubtc.crypto import seed2privkey
         if args:
             raise Exception('only kwargs allowed')
-        if privkey:
+        if privkey is not None:
             self.privkey = privkey
         else:
-            if not seed:
+            if seed is None:
                 raise Exception('seed not set')
+            if not seed:
+                raise Exception('seed cannot be empty')
             if nonce is None:
                 raise Exception('nonce not set')
             self.privkey = seed2privkey(seed=seed, nonce=nonce)
@@ -78,16 +80,18 @@ class Wallet(object):
         if args:
             raise Exception('only kwargs allowed')
         self.privkeys = None
-        if privkey:
+        if privkey is not None:
             if compressed is None:
                 raise Exception('compressed not set')
             self.compressed = compressed
             self.privkeys = [TPrivKey(privkey=privkey, compressed=compressed)]
-        elif privwif:
+        elif privwif is not None:
             privkey, compressed = privwif2privkey(privwif)
             self.compressed = compressed
             self.privkeys = [TPrivKey(privkey=privkey, compressed=compressed)]
-        elif seed:
+        elif seed is not None:
+            if not seed:
+                raise Exception('seed cannot be empty')
             if compressed is None:
                 raise Exception('compressed not set')
             if new_addresses is None:
