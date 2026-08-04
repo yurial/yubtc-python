@@ -1,5 +1,7 @@
 from typing import Optional
 
+from coincurve import PrivateKey
+
 
 def script2pkh(script: bytes) -> bytes:
     from yubtc.script import OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
@@ -143,7 +145,7 @@ class CTransaction(object):
         result += pack(b"<L", self.locktime)
         return result
 
-    def sign(self, *args, privkey: Optional[bytes] = None, pubwif: Optional[bytes] = None) -> 'CTransaction':
+    def sign(self, *args, privkey: Optional[PrivateKey] = None, pubwif: Optional[bytes] = None) -> 'CTransaction':
         if args:
             raise Exception('only kwargs allowed')
         if privkey is None:

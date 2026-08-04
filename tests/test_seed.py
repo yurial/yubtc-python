@@ -113,7 +113,7 @@ def test_generate_seed_produces_a_usable_seed():
     from yubtc.crypto import seed2privkey
     seed = generate_seed(count=12, allow_dups=True)
     privkey = seed2privkey(seed=seed, nonce=0)
-    assert len(privkey) == 32
+    assert len(privkey.secret) == 32
 
 
 def test_generate_seed_raises_when_count_missing():

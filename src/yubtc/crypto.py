@@ -1,5 +1,7 @@
 from typing import Optional, TYPE_CHECKING
 
+from coincurve import PrivateKey
+
 from yubtc.fwd import TAddress, TNonce, TSatoshi, TSeed
 
 if TYPE_CHECKING:
@@ -59,17 +61,17 @@ def bin2privkey(data: bytes) -> bytes:
     return bytes(privkey)
 
 
-def seed2privkey(*args, seed: Optional[TSeed] = None, nonce: Optional[TNonce] = None) -> bytes:
+def seed2privkey(*args, seed: Optional[TSeed] = None, nonce: Optional[TNonce] = None) -> PrivateKey:
     if args:
         raise Exception('only kwargs allowed')
     if seed is None:
         raise Exception('seed not set')
     if nonce is None:
         raise Exception('nonce not set')
-    return bin2privkey(seed2bin(seed=seed, nonce=nonce))
+    return PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=nonce)))
 
 
-def privkey2privwif(*args, privkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> str:
+def privkey2privwif(*args, privkey: Optional[PrivateKey] = None, compressed: Optional[bool] = None) -> str:
     if args:
         raise Exception('only kwargs allowed')
     if privkey is None:
@@ -77,10 +79,9 @@ def privkey2privwif(*args, privkey: Optional[bytes] = None, compressed: Optional
     if compressed is None:
         raise Exception('compressed not set')
     from yubtc.base58check import base58CheckEncode
-    if compressed:
-        # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
-        privkey += bytes([SUFFIX_PRIVKEY_COMPRESSED])
-    return base58CheckEncode(bytes([PREFIX_PRIVKEY]) + privkey)
+    # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
+    suffix = bytes([SUFFIX_PRIVKEY_COMPRESSED]) if compressed else b''
+    return base58CheckEncode(bytes([PREFIX_PRIVKEY]) + privkey.secret + suffix)
 
 
 def privwif2privkey(privwif: str) -> tuple:
@@ -91,33 +92,29 @@ def privwif2privkey(privwif: str) -> tuple:
     else:
         privkey = privkey[1:]
     if len(privkey) == 33 and privkey[-1] == SUFFIX_PRIVKEY_COMPRESSED:
-        return (privkey[:-1], True)  # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
-    return (privkey, False)
+        return (PrivateKey(privkey[:-1]), True)  # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
+    return (PrivateKey(privkey), False)
 
 
-def privkey2pubkey(privkey: bytes) -> bytes:
-    from coincurve import PrivateKey
-    sk = PrivateKey(privkey)
+def privkey2pubkey(privkey: PrivateKey) -> bytes:
     # coincurve's uncompressed form is 65 bytes with the 0x04 prefix; strip it
     # so callers receive the 64-byte (X || Y) form the rest of the wallet expects.
-    return sk.public_key.format(compressed=False)[1:]
+    return privkey.public_key.format(compressed=False)[1:]
 
 
-def sign_hash(*args, privkey: Optional[bytes] = None, datahash: Optional[bytes] = None) -> bytes:
+def sign_hash(*args, privkey: Optional[PrivateKey] = None, datahash: Optional[bytes] = None) -> bytes:
     if args:
         raise Exception('only kwargs allowed')
     if privkey is None:
         raise Exception('privkey not set')
     if datahash is None:
         raise Exception('datahash not set')
-    from coincurve import PrivateKey
-    sk = PrivateKey(privkey)
     # hasher=None: sign the 32-byte digest directly. libsecp256k1 already
     # produces DER-encoded, low-s signatures by default.
-    return sk.sign(datahash, hasher=None)
+    return privkey.sign(datahash, hasher=None)
 
 
-def sign_data(*args, privkey: Optional[bytes] = None, data: Optional[bytes] = None) -> bytes:
+def sign_data(*args, privkey: Optional[PrivateKey] = None, data: Optional[bytes] = None) -> bytes:
     if args:
         raise Exception('only kwargs allowed')
     if privkey is None:
@@ -125,8 +122,8 @@ def sign_data(*args, privkey: Optional[bytes] = None, data: Optional[bytes] = No
     if data is None:
         raise Exception('data not set')
     from yubtc.hash import sha256
-    datahash = sha256(sha256(data))
-    return sign_hash(privkey=privkey, datahash=datahash)
+    # Bitcoin transaction-hash: double-SHA256, then ECDSA.
+    return privkey.sign(sha256(sha256(data)), hasher=None)
 
 
 def pubkey2pubwif(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> bytes:
@@ -156,14 +153,15 @@ def pubkey2addr(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool
     return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubwif))
 
 
-def privkey2addr(*args, privkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> bytes:
+def privkey2addr(*args, privkey: Optional[PrivateKey] = None, compressed: Optional[bool] = None) -> bytes:
     if args:
         raise Exception('only kwargs allowed')
     if privkey is None:
         raise Exception('privkey not set')
     if compressed is None:
         raise Exception('compressed not set')
-    return pubkey2addr(pubkey=privkey2pubkey(privkey), compressed=compressed)
+    pubkey = privkey.public_key.format(compressed=False)[1:]
+    return pubkey2addr(pubkey=pubkey, compressed=compressed)
 
 
 """

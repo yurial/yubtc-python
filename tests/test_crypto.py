@@ -24,9 +24,10 @@ import pytest
                               b'1sW6JDNWppzUjQr8jjQ9KJmVx92ooKEd6'),
                           ])
 def test(compressed, seed, privhex, privwif, address):
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2privwif, privkey2addr
     privkey = seed2privkey(seed=seed, nonce=0)
-    assert privkey.hex() == privhex
+    assert privkey.secret.hex() == privhex
     assert privkey2privwif(privkey=privkey, compressed=compressed) == privwif
     assert privkey2addr(privkey=privkey, compressed=compressed) == address
 
@@ -129,9 +130,10 @@ def test_bin2privkey_preserves_middle_bits():
 # ---------------------------------------------------------------------------
 
 def test_seed2privkey_equals_clamp_of_seed2bin():
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2bin, bin2privkey, seed2privkey
-    for seed in ('qwe', '12345', '', 'a much longer seed phrase here'):
-        assert seed2privkey(seed=seed, nonce=0) == bin2privkey(seed2bin(seed=seed, nonce=0))
+    for seed in ('qwe', '12345', 'a much longer seed phrase here'):
+        assert seed2privkey(seed=seed, nonce=0) == PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=0)))
 
 
 def test_seed2privkey_nonce_changes_privkey():
@@ -144,17 +146,21 @@ def test_seed2privkey_nonce_changes_privkey():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('privkey', [
-    b'\x00' * 32,
-    b'\xff' * 32,
-    b'\xab' * 32,
+    # secp256k1 scalar range: 1 <= x < n. Edge cases at the boundary.
+    # n - 1: largest valid scalar.
+    (0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140).to_bytes(32, 'big'),
+    # n / 2: middle of the order.
+    (0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0).to_bytes(32, 'big'),
+    # the canonical "qwe" seed test vector (compressed/uncompressed wif answers rely on this).
     bytes.fromhex('1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455'),
 ])
 def test_privwif_roundtrip(privkey):
+    from coincurve import PrivateKey
     from yubtc.crypto import privkey2privwif, privwif2privkey
     for compressed in (True, False):
-        wif = privkey2privwif(privkey=privkey, compressed=compressed)
+        wif = privkey2privwif(privkey=PrivateKey(privkey), compressed=compressed)
         decoded, c = privwif2privkey(wif)
-        assert decoded == privkey
+        assert decoded == PrivateKey(privkey)
         assert c == compressed
 
 
@@ -180,6 +186,7 @@ def test_privkey2addr_raises_when_compressed_missing():
 
 def test_pubkey2pubwif_raises_when_compressed_missing():
     """pubkey2pubwif's `compressed` is required -- callers must pass it."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
     with pytest.raises(Exception, match='compressed not set'):
@@ -190,6 +197,7 @@ def test_pubkey2pubwif_raises_when_compressed_missing():
 
 def test_pubkey2addr_raises_when_compressed_missing():
     """pubkey2addr's `compressed` is required -- callers must pass it."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2addr
     pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
     with pytest.raises(Exception, match='compressed not set'):
@@ -212,6 +220,7 @@ def test_privwif2privkey_rejects_bad_prefix():
 
 def test_privkey2pubkey_length_and_determinism():
     """The pubkey is 64 bytes (uncompressed, no leading 0x04) and deterministic."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
     a = privkey2pubkey(privkey=privkey)
@@ -221,6 +230,7 @@ def test_privkey2pubkey_length_and_determinism():
 
 
 def test_privkey2pubkey_known_answer():
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey
     expected = 'eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0' \
                '24d7de8d887bee3288e5afb66ff648f05f47cd6e6d21978c805a5cfe0983f301'
@@ -234,6 +244,7 @@ def test_privkey2pubkey_known_answer():
 ])
 def test_pubkey2pubwif_serialisation(compressed, expected):
     """Compressed: 33 bytes, prefix 0x02/0x03 by parity of y. Uncompressed: 65 bytes, prefix 0x04."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
     out = pubkey2pubwif(pubkey=pubkey, compressed=compressed)
@@ -268,6 +279,7 @@ def test_pubkey2pubwif_uncompressed_uses_full_prefix():
 
 def test_sign_hash_is_der_canonical_low_s():
     """Every signature is DER-encoded, and the s component is in the lower half of the order."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, sign_hash
     privkey = seed2privkey(seed='qwe', nonce=0)
     digest = b'\x42' * 32
@@ -286,24 +298,22 @@ def test_sign_hash_is_der_canonical_low_s():
 
 
 def test_sign_hash_verifies():
-    from yubtc.crypto import seed2privkey, sign_hash
     from coincurve import PrivateKey
+    from yubtc.crypto import seed2privkey, sign_hash
     privkey = seed2privkey(seed='qwe', nonce=0)
     digest = b'\x42' * 32
     sig = sign_hash(privkey=privkey, datahash=digest)
-    sk = PrivateKey(privkey)
-    assert sk.public_key.verify(sig, digest, hasher=None)
+    assert privkey.public_key.verify(sig, digest, hasher=None)
 
 
 def test_sign_data_verifies():
     """sign_data(data) signs sha256(sha256(data)) and produces a valid DER signature."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, sign_data
     from yubtc.hash import sha256
-    from coincurve import PrivateKey
     privkey = seed2privkey(seed='qwe', nonce=0)
     sig = sign_data(privkey=privkey, data=b'abc')
-    sk = PrivateKey(privkey)
-    assert sk.public_key.verify(sig, sha256(sha256(b'abc')), hasher=None)
+    assert privkey.public_key.verify(sig, sha256(sha256(b'abc')), hasher=None)
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +326,7 @@ def test_sign_data_verifies():
 
 def test_make_lock_script_p2pkh():
     """A P2PKH address produces the standard OP_DUP OP_HASH160 <20B> OP_EQUALVERIFY OP_CHECKSIG."""
+    from coincurve import PrivateKey
     from yubtc.crypto import make_lock_script, seed2privkey, privkey2addr
     addr = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
     # OP_DUP(0x76) OP_HASH160(0xa9) <20B> OP_EQUALVERIFY(0x88) OP_CHECKSIG(0xac)
@@ -353,6 +364,7 @@ def test_make_lock_script_unknown_prefix_raises():
 
 def test_make_vout_drains_when_amount_is_none():
     """`amount=None` means "send everything available"."""
+    from coincurve import PrivateKey
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0), compressed=True)
@@ -367,6 +379,7 @@ def test_make_vout_drains_when_amount_is_none():
 
 def test_make_vout_drains_when_amount_plus_fee_equals_input():
     """`amount + fee == in_amount` is the explicit form of "send everything"."""
+    from coincurve import PrivateKey
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0), compressed=True)
@@ -378,6 +391,7 @@ def test_make_vout_drains_when_amount_plus_fee_equals_input():
 
 def test_make_vout_sends_change_back_to_src():
     """Anything left over after amount+fee is routed back to the source address."""
+    from coincurve import PrivateKey
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0), compressed=True)

@@ -35,6 +35,7 @@ def test_TPrivKey_passes_through_known_privkey():
 
 def test_TPrivKey_derives_privkey_from_seed_and_nonce():
     """`seed=...` + `nonce=...` -> privkey via seed2privkey."""
+    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
@@ -84,35 +85,49 @@ def test_TPrivKey_raises_when_compressed_missing():
 
 def test_TPrivKey_get_privwif_returns_compressed_wif_by_default():
     """Default is compressed (Bitcoin convention)."""
+    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2privwif
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
-    assert p.get_privwif() == privkey2privwif(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
+    assert p.get_privwif() == privkey2privwif(
+        privkey=seed2privkey(seed='qwe', nonce=0), compressed=True,
+    )
 
 
 def test_TPrivKey_get_privwif_uncompressed():
     """compressed=False expands to the uncompressed WIF."""
+    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2privwif
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
-    assert p.get_privwif(False) == privkey2privwif(privkey=seed2privkey(seed='qwe', nonce=0), compressed=False)
+    assert p.get_privwif(False) == privkey2privwif(
+        privkey=seed2privkey(seed='qwe', nonce=0), compressed=False,
+    )
 
 
 def test_TPrivKey_get_p2pkh_address():
     """Address derivation reuses privkey2addr."""
+    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2addr
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
-    assert p.get_p2pkh_address() == privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
+    assert p.get_p2pkh_address() == privkey2addr(
+        privkey=seed2privkey(seed='qwe', nonce=0), compressed=True,
+    )
 
 
 def test_TPrivKey_get_p2pkh_address_with_explicit_compressed(monkeypatch):
     """Explicit `compressed=False` flows through without hitting the default."""
+    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2addr
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
-    assert p.get_p2pkh_address(False) == privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=False)
-    assert p.get_p2pkh_address(None) == privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
+    assert p.get_p2pkh_address(False) == privkey2addr(
+        privkey=seed2privkey(seed='qwe', nonce=0), compressed=False,
+    )
+    assert p.get_p2pkh_address(None) == privkey2addr(
+        privkey=seed2privkey(seed='qwe', nonce=0), compressed=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +266,7 @@ def test_Wallet_rejects_positional_args():
 def test_Wallet_from_privkey_creates_single_privkey(monkeypatch):
     """privkey=... -> a Wallet with one TPrivKey (no seed-scan)."""
     from yubtc.wallet import Wallet
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey
     monkeypatch.setattr('yubtc.misc.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -509,7 +525,9 @@ def test_Wallet_rejects_empty_seed(monkeypatch):
 
 def test_Wallet_make_vin_builds_cin_for_each_utxo(monkeypatch):
     """Each unspent UTXO becomes a CIn with the right txhash, n, and script."""
+    from coincurve import PrivateKey
     from yubtc.wallet import Wallet
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
     from yubtc.hash import hash160
     monkeypatch.setattr('yubtc.misc.get_address_info',
@@ -603,6 +621,7 @@ def test_Wallet_make_transaction_adds_change_output(monkeypatch):
 def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
     """The signed tx's input scripts use the wallet's owner privkey."""
     from yubtc.wallet import Wallet
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
     monkeypatch.setattr('yubtc.misc.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -613,7 +632,10 @@ def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2000, confirmations=0,
     )
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)), compressed=True)
+    pubwif = pubkey2pubwif(
+        pubkey=privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)),
+        compressed=True,
+    )
     # The signed signature script ends with the pubwif.
     assert stx.vin[0].script.endswith(pubwif)
 
@@ -729,9 +751,13 @@ def dry_run_send(w, input_fixture, dst, amount, send=False):
 
 def fake_unspent_with_one_utxo(amount=100_000):
     """A one-UTXO unspent list whose lock script matches the qwe seed."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     from yubtc.hash import hash160
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)), compressed=True)
+    pubwif = pubkey2pubwif(
+        pubkey=privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)),
+        compressed=True,
+    )
     pubhash = hash160(pubwif)
     # P2PKH lock script: OP_DUP OP_HASH160 <20B> OP_EQUALVERIFY OP_CHECKSIG
     script = '76a914' + pubhash.hex() + '88ac'
@@ -743,9 +769,13 @@ def fake_unspent_with_one_utxo(amount=100_000):
 
 def fake_unspent_with_two_utxos():
     """Two UTXOs for the same address."""
+    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     from yubtc.hash import hash160
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)), compressed=True)
+    pubwif = pubkey2pubwif(
+        pubkey=privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)),
+        compressed=True,
+    )
     pubhash = hash160(pubwif)
     script = '76a914' + pubhash.hex() + '88ac'
     raw = [

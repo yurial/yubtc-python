@@ -1,5 +1,7 @@
 from typing import Optional
 
+from coincurve import PrivateKey
+
 from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
 
 
@@ -15,7 +17,8 @@ class TPrivKey(object):
         if args:
             raise Exception('only kwargs allowed')
         if privkey is not None:
-            self.privkey = privkey
+            # accept either raw 32 bytes or an already-wrapped PrivateKey
+            self.privkey = privkey if isinstance(privkey, PrivateKey) else PrivateKey(privkey)
         else:
             if seed is None:
                 raise Exception('seed not set')

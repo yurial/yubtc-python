@@ -356,6 +356,7 @@ def test_ctransaction_id_known_answer():
 # ---------------------------------------------------------------------------
 
 def test_sign_populates_each_input_script():
+    from coincurve import PrivateKey
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey(seed='qwe', nonce=0)
@@ -379,6 +380,7 @@ def test_sign_script_ends_with_pubwif():
     The last 33 bytes must be the compressed pubwif (the constant we
     passed in). Anything else means the script is misshapen.
     """
+    from coincurve import PrivateKey
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey(seed='qwe', nonce=0)
@@ -395,6 +397,7 @@ def test_sign_changes_id():
     must move. If id() ever returns the same value before and after sign,
     either serialization is broken or the signature scripts are empty.
     """
+    from coincurve import PrivateKey
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey(seed='qwe', nonce=0)
@@ -409,6 +412,7 @@ def test_sign_changes_id():
 def test_sign_does_not_mutate_original():
     """`sign` uses deepcopy internally; the original tx must keep its
     empty signature scripts."""
+    from coincurve import PrivateKey
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey(seed='qwe', nonce=0)
