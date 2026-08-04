@@ -13,7 +13,7 @@ authors = [{ name = "Yuri Dyachenko", email = "pub.yurial@gmail.com" }]
 dependencies = [
     "requests",
     "click",
-    "ecdsa",
+    "coincurve",
     "base58",
     "pycryptodome",
 ]

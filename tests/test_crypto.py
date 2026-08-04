@@ -269,7 +269,6 @@ def test_pubkey2pubwif_uncompressed_uses_full_prefix():
 def test_sign_hash_is_der_canonical_low_s():
     """Every signature is DER-encoded, and the s component is in the lower half of the order."""
     from yubtc.crypto import seed2privkey, sign_hash
-    import ecdsa
     privkey = seed2privkey(seed='qwe', nonce=0)
     digest = b'\x42' * 32
     for _ in range(3):
@@ -281,31 +280,30 @@ def test_sign_hash_is_der_canonical_low_s():
         assert sig[4 + r_len] == 0x02
         s_len = sig[5 + r_len]
         s = int.from_bytes(sig[6 + r_len:6 + r_len + s_len], 'big')
-        # low-s: s must be <= n/2
-        assert s <= ecdsa.SECP256k1.order // 2
+        # low-s: s must be <= n/2. n is the secp256k1 group order.
+        n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+        assert s <= n // 2
 
 
 def test_sign_hash_verifies():
     from yubtc.crypto import seed2privkey, sign_hash
-    import ecdsa
+    from coincurve import PrivateKey
     privkey = seed2privkey(seed='qwe', nonce=0)
     digest = b'\x42' * 32
     sig = sign_hash(privkey=privkey, datahash=digest)
-    sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
-    assert sk.verifying_key.verify_digest(sig, digest, sigdecode=ecdsa.util.sigdecode_der)
+    sk = PrivateKey(privkey)
+    assert sk.public_key.verify(sig, digest, hasher=None)
 
 
 def test_sign_data_verifies():
     """sign_data(data) signs sha256(sha256(data)) and produces a valid DER signature."""
     from yubtc.crypto import seed2privkey, sign_data
     from yubtc.hash import sha256
-    import ecdsa
+    from coincurve import PrivateKey
     privkey = seed2privkey(seed='qwe', nonce=0)
     sig = sign_data(privkey=privkey, data=b'abc')
-    sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
-    assert sk.verifying_key.verify_digest(
-        sig, sha256(sha256(b'abc')), sigdecode=ecdsa.util.sigdecode_der,
-    )
+    sk = PrivateKey(privkey)
+    assert sk.public_key.verify(sig, sha256(sha256(b'abc')), hasher=None)
 
 
 # ---------------------------------------------------------------------------

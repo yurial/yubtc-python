@@ -96,9 +96,11 @@ def privwif2privkey(privwif: str) -> tuple:
 
 
 def privkey2pubkey(privkey: bytes) -> bytes:
-    import ecdsa
-    sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
-    return sk.verifying_key.to_string()
+    from coincurve import PrivateKey
+    sk = PrivateKey(privkey)
+    # coincurve's uncompressed form is 65 bytes with the 0x04 prefix; strip it
+    # so callers receive the 64-byte (X || Y) form the rest of the wallet expects.
+    return sk.public_key.format(compressed=False)[1:]
 
 
 def sign_hash(*args, privkey: Optional[bytes] = None, datahash: Optional[bytes] = None) -> bytes:
@@ -108,9 +110,11 @@ def sign_hash(*args, privkey: Optional[bytes] = None, datahash: Optional[bytes] 
         raise Exception('privkey not set')
     if datahash is None:
         raise Exception('datahash not set')
-    import ecdsa
-    sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
-    return sk.sign_digest(datahash, sigencode=ecdsa.util.sigencode_der_canonize)
+    from coincurve import PrivateKey
+    sk = PrivateKey(privkey)
+    # hasher=None: sign the 32-byte digest directly. libsecp256k1 already
+    # produces DER-encoded, low-s signatures by default.
+    return sk.sign(datahash, hasher=None)
 
 
 def sign_data(*args, privkey: Optional[bytes] = None, data: Optional[bytes] = None) -> bytes:

@@ -1,5 +1,5 @@
 requests
 click
-ecdsa
+coincurve
 base58
 pycryptodome
