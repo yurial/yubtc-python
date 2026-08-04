@@ -1,4 +1,4 @@
-from yubtc.fwd import TAddress, TSatoshi
+from yubtc.fwd import TAddress, TNonce, TSatoshi
 
 SUFFIX_PRIVKEY_COMPRESSED = 0x01
 PREFIX_P2PKH = 0x00  # Publick Key Hash
@@ -19,7 +19,7 @@ def bytes2str(b): return ''.join(map(chr, b))
 def str2list(s): return [c for c in s]
 
 
-def seed2bin(seed, nonce=0):
+def seed2bin(seed, nonce: TNonce = 0):
     from yubtc.hash import sha256, keccak256, blake2b256
     from struct import pack
     data = pack(">L", nonce) + str2bytes(seed)
@@ -41,7 +41,7 @@ def bin2privkey(data):
     return bytes(privkey)
 
 
-def seed2privkey(seed, nonce=0):
+def seed2privkey(seed, nonce: TNonce = 0):
     return bin2privkey(seed2bin(seed, nonce))
 
 

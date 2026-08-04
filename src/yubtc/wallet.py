@@ -1,9 +1,9 @@
 from yubtc.fwd import DEFAULT_CONFIRMATIONS
-from yubtc.fwd import TSatoshi, TBTC, TSeed, TAddress
+from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
 
 
 class TPrivKey(object):
-    def __init__(self, *args, privkey: bytes = None, seed: TSeed = None, nonce: int = None):
+    def __init__(self, *args, privkey: bytes = None, seed: TSeed = None, nonce: TNonce = None):
         from yubtc.crypto import seed2privkey
         if args:
             raise Exception('only kwargs allowed')
@@ -54,7 +54,7 @@ class Wallet(object):
             privwif: str = None,
             seed: TSeed = None,
             compressed: bool = True,
-            nonce: int = None,
+            nonce: TNonce = None,
             new_addresses: int = 1):
         from yubtc.crypto import privwif2privkey
         if args:

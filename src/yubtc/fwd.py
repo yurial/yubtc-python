@@ -5,6 +5,7 @@ TAddress = str
 TAmount = str
 TSatoshi = int
 TBTC = Decimal
+TNonce = int
 
 MINIMAL_FEE: TSatoshi = 2000
 DEFAULT_CONFIRMATIONS: int = 2
