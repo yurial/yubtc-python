@@ -23,10 +23,10 @@ else:  # python3
     str2list = lambda s: [c for c in s]
 
 def seed2bin(seed, nonce=0):
-    from yubtc.hash import sha256, keccak256, blake256
+    from yubtc.hash import sha256, keccak256, blake2b256
     from struct import pack
     data = pack(">L", nonce) + str2bytes(seed)
-    return sha256(keccak256(blake256(data)))
+    return sha256(keccak256(blake2b256(data)))
 
 def bin2privkey(data):
     privkey = bytearray(data)

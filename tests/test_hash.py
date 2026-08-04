@@ -10,7 +10,7 @@ and BLAKE2 test suites, and the standard Keccak-256 values.
 """
 import pytest
 
-from yubtc.hash import sha256, keccak256, ripemd160, blake256, hash160
+from yubtc.hash import sha256, keccak256, ripemd160, blake2b256, hash160
 
 EMPTY = b''
 ABC = b'abc'
@@ -26,9 +26,9 @@ ABC = b'abc'
     (ripemd160, EMPTY, '9c1185a5c5e9fc54612808977ee8f548b2258d31'),
     (ripemd160, ABC, '8eb208f7e05d987a9b044a8e98c6b087f15a0bfc'),
 
-    # blake256() is BLAKE2b truncated to 32 bytes -- see test_blake256_is_blake2b.
-    (blake256, EMPTY, '0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8'),
-    (blake256, ABC, 'bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319'),
+    # blake2b256() is BLAKE2b truncated to 32 bytes -- see test_blake2b256_matches_hashlib.
+    (blake2b256, EMPTY, '0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8'),
+    (blake2b256, ABC, 'bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319'),
 
     # hash160 = ripemd160(sha256(x)), the standard Bitcoin construction.
     (hash160, EMPTY, 'b472a266d0bd89c13706a4132ccfb16f7c3b9fcb'),
@@ -39,7 +39,7 @@ def test_known_answer(func, message, expected):
 
 
 @pytest.mark.parametrize('func, size', [
-    (sha256, 32), (keccak256, 32), (blake256, 32), (ripemd160, 20), (hash160, 20),
+    (sha256, 32), (keccak256, 32), (blake2b256, 32), (ripemd160, 20), (hash160, 20),
 ])
 def test_digest_size(func, size):
     assert len(func(EMPTY)) == size
@@ -57,14 +57,15 @@ def test_keccak256_is_not_nist_sha3():
     assert keccak256(ABC) != hashlib.sha3_256(ABC).digest()
 
 
-def test_blake256_is_blake2b_despite_the_name():
-    """The name says BLAKE-256, the implementation is BLAKE2b with digest_size=32.
+def test_blake2b256_matches_hashlib():
+    """Pin blake2b256() to hashlib.blake2b(digest_size=32).
 
-    These are different algorithms -- BLAKE-256 is the original SHA-3 candidate
-    that Decred uses. This test pins the behaviour the wallet actually relies on.
+    BLAKE2b is parameterised: a different digest_size, key, or person string
+    produces a different output. This test stops a future refactor from
+    drifting away from the exact configuration the wallet relies on.
     """
     import hashlib
-    assert blake256(ABC) == hashlib.blake2b(ABC, digest_size=32).digest()
+    assert blake2b256(ABC) == hashlib.blake2b(ABC, digest_size=32).digest()
 
 
 def test_hash160_is_ripemd160_of_sha256():
