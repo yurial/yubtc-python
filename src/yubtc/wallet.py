@@ -146,7 +146,13 @@ class Wallet(object):
             else:
                 print(rawtx.hex())
 
-    def _make_vin(self, pubhash: bytes, unspent: list) -> tuple:
+    def _make_vin(self, *args, pubhash: Optional[bytes] = None, unspent: Optional[list] = None) -> tuple:
+        if args:
+            raise Exception('only kwargs allowed')
+        if pubhash is None:
+            raise Exception('pubhash not set')
+        if unspent is None:
+            raise Exception('unspent not set')
         from yubtc.transaction import script2pkh, CIn
         vin = list()
         in_amount = 0
@@ -163,11 +169,16 @@ class Wallet(object):
 
     def make_transaction(
             self,
-            dst: TAddress,
-            amount: TBTC,
+            *args,
+            dst: Optional[TAddress] = None,
+            amount: Optional[TBTC] = None,
             feekb: Optional[TSatoshi] = None,
             fee: Optional[TSatoshi] = None,
             confirmations: Optional[int] = None) -> tuple:
+        if args:
+            raise Exception('only kwargs allowed')
+        if dst is None:
+            raise Exception('dst not set')
         from yubtc.hash import hash160
         from yubtc.crypto import privkey2pubkey, pubkey2pubwif, pubkey2addr, make_vout
         from yubtc.transaction import CTransaction
@@ -176,14 +187,14 @@ class Wallet(object):
         if feekb is None:
             raise Exception('feekb not set')
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
-        src = pubkey2addr(pubkey, self.compressed)
-        pubwif = pubkey2pubwif(pubkey, self.compressed)
+        src = pubkey2addr(pubkey=pubkey, compressed=self.compressed)
+        pubwif = pubkey2pubwif(pubkey=pubkey, compressed=self.compressed)
         pubhash = hash160(pubwif)
         unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
         vin, in_amount = self._make_vin(pubhash=pubhash, unspent=unspent)
         _fee = fee
         while True:
-            vout, _cashback, _amount = make_vout(src, dst=dst, in_amount=in_amount, amount=amount, fee=_fee)
+            vout, _cashback, _amount = make_vout(src=src, dst=dst, in_amount=in_amount, amount=amount, fee=_fee)
             tx = CTransaction(vin=vin, vout=vout, locktime=0)
             stx = tx.sign(privkey=self.privkeys[0].privkey, pubwif=pubwif)
             if fee:

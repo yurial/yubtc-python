@@ -5,7 +5,9 @@
 from typing import Optional
 
 
-def _generate_seed(count: Optional[int] = None, allow_dups: Optional[bool] = None) -> list:
+def _generate_seed(*args, count: Optional[int] = None, allow_dups: Optional[bool] = None) -> list:
+    if args:
+        raise Exception('only kwargs allowed')
     if count is None:
         raise Exception('count not set')
     if allow_dups is None:
@@ -207,12 +209,14 @@ def _generate_seed(count: Optional[int] = None, allow_dups: Optional[bool] = Non
     return [sysrandom.choice(wordList) for i in range(count)]
 
 
-def generate_seed(count: Optional[int] = None, allow_dups: Optional[bool] = None) -> str:
+def generate_seed(*args, count: Optional[int] = None, allow_dups: Optional[bool] = None) -> str:
+    if args:
+        raise Exception('only kwargs allowed')
     if count is None:
         raise Exception('count not set')
     if allow_dups is None:
         raise Exception('allow_dups not set')
-    return ' '.join(_generate_seed(count, allow_dups))
+    return ' '.join(_generate_seed(count=count, allow_dups=allow_dups))
 
 
 def get_seed() -> str:

@@ -31,7 +31,11 @@ def str2list(s: str) -> list:
     return [c for c in s]
 
 
-def seed2bin(seed: TSeed, nonce: Optional[TNonce] = None) -> bytes:
+def seed2bin(*args, seed: Optional[TSeed] = None, nonce: Optional[TNonce] = None) -> bytes:
+    if args:
+        raise Exception('only kwargs allowed')
+    if seed is None:
+        raise Exception('seed not set')
     if nonce is None:
         raise Exception('nonce not set')
     from yubtc.hash import sha256, keccak256, blake2b256
@@ -55,13 +59,21 @@ def bin2privkey(data: bytes) -> bytes:
     return bytes(privkey)
 
 
-def seed2privkey(seed: TSeed, nonce: Optional[TNonce] = None) -> bytes:
+def seed2privkey(*args, seed: Optional[TSeed] = None, nonce: Optional[TNonce] = None) -> bytes:
+    if args:
+        raise Exception('only kwargs allowed')
+    if seed is None:
+        raise Exception('seed not set')
     if nonce is None:
         raise Exception('nonce not set')
-    return bin2privkey(seed2bin(seed, nonce))
+    return bin2privkey(seed2bin(seed=seed, nonce=nonce))
 
 
-def privkey2privwif(privkey: bytes, compressed: Optional[bool] = None) -> str:
+def privkey2privwif(*args, privkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> str:
+    if args:
+        raise Exception('only kwargs allowed')
+    if privkey is None:
+        raise Exception('privkey not set')
     if compressed is None:
         raise Exception('compressed not set')
     from yubtc.base58check import base58CheckEncode
@@ -89,19 +101,35 @@ def privkey2pubkey(privkey: bytes) -> bytes:
     return sk.verifying_key.to_string()
 
 
-def sign_hash(privkey: bytes, datahash: bytes) -> bytes:
+def sign_hash(*args, privkey: Optional[bytes] = None, datahash: Optional[bytes] = None) -> bytes:
+    if args:
+        raise Exception('only kwargs allowed')
+    if privkey is None:
+        raise Exception('privkey not set')
+    if datahash is None:
+        raise Exception('datahash not set')
     import ecdsa
     sk = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1)
     return sk.sign_digest(datahash, sigencode=ecdsa.util.sigencode_der_canonize)
 
 
-def sign_data(privkey: bytes, data: bytes) -> bytes:
+def sign_data(*args, privkey: Optional[bytes] = None, data: Optional[bytes] = None) -> bytes:
+    if args:
+        raise Exception('only kwargs allowed')
+    if privkey is None:
+        raise Exception('privkey not set')
+    if data is None:
+        raise Exception('data not set')
     from yubtc.hash import sha256
     datahash = sha256(sha256(data))
     return sign_hash(privkey=privkey, datahash=datahash)
 
 
-def pubkey2pubwif(pubkey: bytes, compressed: Optional[bool] = None) -> bytes:
+def pubkey2pubwif(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> bytes:
+    if args:
+        raise Exception('only kwargs allowed')
+    if pubkey is None:
+        raise Exception('pubkey not set')
     if compressed is None:
         raise Exception('compressed not set')
     if not compressed:
@@ -111,19 +139,27 @@ def pubkey2pubwif(pubkey: bytes, compressed: Optional[bool] = None) -> bytes:
     return bytes([prefix]) + x
 
 
-def pubkey2addr(pubkey: bytes, compressed: Optional[bool] = None) -> str:
+def pubkey2addr(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> str:
+    if args:
+        raise Exception('only kwargs allowed')
+    if pubkey is None:
+        raise Exception('pubkey not set')
     if compressed is None:
         raise Exception('compressed not set')
     from yubtc.base58check import base58CheckEncode
     from yubtc.hash import hash160
-    pubwif = pubkey2pubwif(pubkey, compressed)
+    pubwif = pubkey2pubwif(pubkey=pubkey, compressed=compressed)
     return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubwif))
 
 
-def privkey2addr(privkey: bytes, compressed: Optional[bool] = None) -> str:
+def privkey2addr(*args, privkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> str:
+    if args:
+        raise Exception('only kwargs allowed')
+    if privkey is None:
+        raise Exception('privkey not set')
     if compressed is None:
         raise Exception('compressed not set')
-    return pubkey2addr(privkey2pubkey(privkey), compressed)
+    return pubkey2addr(pubkey=privkey2pubkey(privkey), compressed=compressed)
 
 
 """
@@ -147,7 +183,19 @@ def make_lock_script(address: TAddress) -> 'CScript':
         raise Exception('address not supported')
 
 
-def make_vout(src: TAddress, dst: TAddress, in_amount: TSatoshi, amount: TSatoshi, fee: TSatoshi) -> tuple:
+def make_vout(*args, src: Optional[TAddress] = None, dst: Optional[TAddress] = None,
+              in_amount: Optional[TSatoshi] = None, amount: Optional[TSatoshi] = None,
+              fee: Optional[TSatoshi] = None) -> tuple:
+    if args:
+        raise Exception('only kwargs allowed')
+    if src is None:
+        raise Exception('src not set')
+    if dst is None:
+        raise Exception('dst not set')
+    if in_amount is None:
+        raise Exception('in_amount not set')
+    if fee is None:
+        raise Exception('fee not set')
     from yubtc.transaction import COut
     vout_script = make_lock_script(dst)
     if amount is None or (amount + fee == in_amount):

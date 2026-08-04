@@ -112,7 +112,7 @@ def test_generate_seed_produces_a_usable_seed():
     from yubtc.seed import generate_seed
     from yubtc.crypto import seed2privkey
     seed = generate_seed(count=12, allow_dups=True)
-    privkey = seed2privkey(seed, nonce=0)
+    privkey = seed2privkey(seed=seed, nonce=0)
     assert len(privkey) == 32
 
 
@@ -138,6 +138,17 @@ def test__generate_seed_raises_when_count_or_allow_dups_missing():
         _generate_seed(count=5)
     with pytest.raises(Exception, match='allow_dups not set'):
         _generate_seed(count=5, allow_dups=None)
+
+
+def test_seed_functions_reject_positional_args():
+    """Both _generate_seed and generate_seed require kwargs-only call style."""
+    from yubtc.seed import _generate_seed, generate_seed
+    # _generate_seed: count + allow_dups both positional -> blocked.
+    with pytest.raises(Exception, match='only kwargs allowed'):
+        _generate_seed(5, True)
+    # generate_seed: same.
+    with pytest.raises(Exception, match='only kwargs allowed'):
+        generate_seed(5, True)
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,14 @@ def toVarInt(value: int) -> bytes:
 
 
 class CIn(object):
-    def __init__(self, txhash: bytes, n: int, script: bytes, sequence: Optional[int] = None):
+    def __init__(self, *args, txhash: Optional[bytes] = None, n: Optional[int] = None,
+                 script: bytes = b'', sequence: Optional[int] = None):
+        if args:
+            raise Exception('only kwargs allowed')
+        if txhash is None:
+            raise Exception('txhash not set')
+        if n is None:
+            raise Exception('n not set')
         if sequence is None:
             raise Exception('sequence not set')
         if len(txhash) != 32:
@@ -70,7 +77,11 @@ class CIn(object):
 
 
 class COut(object):
-    def __init__(self, amount: int, script: bytes):
+    def __init__(self, *args, amount: Optional[int] = None, script: bytes = b''):
+        if args:
+            raise Exception('only kwargs allowed')
+        if amount is None:
+            raise Exception('amount not set')
         if amount < 0:
             raise Exception('amount should be non-negative')
         if amount > 0xffffffffffffffff:
@@ -93,7 +104,14 @@ class COut(object):
 
 
 class CTransaction(object):
-    def __init__(self, vin: list, vout: list, locktime: Optional[int] = None):
+    def __init__(self, *args, vin: Optional[list] = None, vout: Optional[list] = None,
+                 locktime: Optional[int] = None):
+        if args:
+            raise Exception('only kwargs allowed')
+        if vin is None:
+            raise Exception('vin not set')
+        if vout is None:
+            raise Exception('vout not set')
         if locktime is None:
             raise Exception('locktime not set')
         self.version = 2
@@ -125,7 +143,13 @@ class CTransaction(object):
         result += pack(b"<L", self.locktime)
         return result
 
-    def sign(self, privkey: bytes, pubwif: bytes) -> 'CTransaction':
+    def sign(self, *args, privkey: Optional[bytes] = None, pubwif: Optional[bytes] = None) -> 'CTransaction':
+        if args:
+            raise Exception('only kwargs allowed')
+        if privkey is None:
+            raise Exception('privkey not set')
+        if pubwif is None:
+            raise Exception('pubwif not set')
         from copy import deepcopy
         from yubtc.crypto import sign_data
         from yubtc.script import CScript
