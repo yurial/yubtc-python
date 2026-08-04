@@ -9,11 +9,11 @@ def varint(n):
     if n < 0xfd:
         return pack('<B', n)
     elif n < 0xffff:
-        return pack('<cH', '\xfd', n)
+        return pack('<cH', b'\xfd', n)
     elif n < 0xffffffff:
-        return pack('<cL', '\xfe', n)
+        return pack('<cL', b'\xfe', n)
     else:
-        return pack('<cQ', '\xff', n)
+        return pack('<cQ', b'\xff', n)
 
 # Takes and returns byte string value, not hex string
 def varstr(s):
