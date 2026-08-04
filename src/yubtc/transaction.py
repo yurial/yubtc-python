@@ -42,7 +42,7 @@ class CIn(object):
         if sequence is None:
             raise Exception('sequence not set')
         if len(txhash) != 32:
-            raise Exception('txhash shoud be 32 bytes lenght')
+            raise Exception('txhash should be 32 bytes length')
         if n < 0:
             raise Exception('n should be non-negative')
         if n > 0xffffffff:

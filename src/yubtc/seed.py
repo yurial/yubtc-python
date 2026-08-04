@@ -1,4 +1,4 @@
-# flake8: noqa
+# flake8: noqa: E501
 # The BIP-39 wordlist has long words (up to 8 chars) packed densely per line;
 # splitting them differently would just shuffle E501 hits around without
 # improving readability. Suppress E501 for the whole file.

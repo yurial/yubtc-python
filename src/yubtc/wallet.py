@@ -4,8 +4,13 @@ from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
 
 
 class TPrivKey(object):
-    def __init__(self, *args, privkey: bytes = None, seed: TSeed = None,
-                 nonce: TNonce = None, compressed: Optional[bool] = None):
+    def __init__(
+            self,
+            *args,
+            privkey: bytes = None,
+            seed: TSeed = None,
+            nonce: TNonce = None,
+            compressed: Optional[bool] = None):
         from yubtc.crypto import seed2privkey
         if args:
             raise Exception('only kwargs allowed')
@@ -52,8 +57,10 @@ class TPrivKey(object):
         result = list()
         for x in get_address_unspent(self.get_p2pkh_address(self.compressed)):
             if x['confirmations'] >= confirmations:
-                result.append({'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
-                              'amount': x['value'], 'script': x['script']})
+                result.append({
+                    'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
+                    'amount': x['value'], 'script': x['script'],
+                })
         return result
 
 
@@ -134,7 +141,7 @@ class Wallet(object):
         fee = satoshi2btc(fee)
         rawtx = tx.serialize()
         if yesno(
-            'send {:0.08f} BTC to {} (cacshback={:0.08f}, fee={:0.08f}, txsize={})? '.format(
+            'send {:0.08f} BTC to {} (cashback={:0.08f}, fee={:0.08f}, txsize={})? '.format(
                 amount,
                 dst,
                 cashback,
@@ -163,8 +170,10 @@ class Wallet(object):
             if required_hash != pubhash:
                 raise Exception('unknown pubkey required')
             txhash = bytes.fromhex(u['tx'])
-            vin.append(CIn(txhash=txhash, n=u['out_n'], script=tx_lock_script,
-                       sequence=0xffffffff))
+            vin.append(CIn(
+                txhash=txhash, n=u['out_n'],
+                script=tx_lock_script, sequence=0xffffffff,
+            ))
         return vin, in_amount
 
     def make_transaction(
