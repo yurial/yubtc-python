@@ -361,7 +361,10 @@ def test_sign_populates_each_input_script():
     privkey = seed2privkey(seed='qwe', nonce=0)
     pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
     tx = CTransaction(
-        vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff), CIn(txhash=TXHASH, n=1, script=b'', sequence=0xffffffff)],
+        vin=[
+            CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff),
+            CIn(txhash=TXHASH, n=1, script=b'', sequence=0xffffffff),
+        ],
         vout=[COut(amount=1000, script=b'\x76\xa9')],
         locktime=0,
     )
