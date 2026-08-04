@@ -1,20 +1,35 @@
 import pytest
 
-@pytest.mark.parametrize(
-        'compressed, seed, privhex, privwif, address',
-        [
-            (False, 'qwe', '1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455', b'5Hztg9Lf6fPida3GtdxhzmC6gTh98oQ6dGPotiFWMBSanCVcqBb', b'16toxZ1pUrKbw7Ripem1X4aGxmY6b5qSCz'),
-            (True, 'qwe', '1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455', b'Kx2X5mom9zTGkQq38v8swx3z5ApAuRnwq4wfyF52Y55v6Ke5dRq5', b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'),
-            (False, '12345', '28820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d49', b'5J88JQkRPEffAwVL73kwtDzGFqtBFiCsFXajzb9ytmCZbs4VSUY', b'1MN1fFX2xmKS1qZXyhw5EUpS9Laa2HaeYX'),
-            (True, '12345', '28820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d49', b'KxaTDqped9KdUsW3KhAyF6KkLWktFvsNo7yvmBke7U62tWmMs8dk', b'1sW6JDNWppzUjQr8jjQ9KJmVx92ooKEd6'),
-        ]
-    )
+
+@pytest.mark.parametrize('compressed, seed, privhex, privwif, address',
+                         [(False,
+                           'qwe',
+                           '1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455',
+                           b'5Hztg9Lf6fPida3GtdxhzmC6gTh98oQ6dGPotiFWMBSanCVcqBb',
+                           b'16toxZ1pUrKbw7Ripem1X4aGxmY6b5qSCz'),
+                          (True,
+                           'qwe',
+                             '1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455',
+                             b'Kx2X5mom9zTGkQq38v8swx3z5ApAuRnwq4wfyF52Y55v6Ke5dRq5',
+                             b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'),
+                             (False,
+                              '12345',
+                              '28820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d49',
+                              b'5J88JQkRPEffAwVL73kwtDzGFqtBFiCsFXajzb9ytmCZbs4VSUY',
+                              b'1MN1fFX2xmKS1qZXyhw5EUpS9Laa2HaeYX'),
+                             (True,
+                              '12345',
+                              '28820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d49',
+                              b'KxaTDqped9KdUsW3KhAyF6KkLWktFvsNo7yvmBke7U62tWmMs8dk',
+                              b'1sW6JDNWppzUjQr8jjQ9KJmVx92ooKEd6'),
+                          ])
 def test(compressed, seed, privhex, privwif, address):
     from yubtc.crypto import seed2privkey, privkey2privwif, privkey2addr
     privkey = seed2privkey(seed)
     assert privkey.hex() == privhex
     assert privkey2privwif(privkey, compressed) == privwif
     assert privkey2addr(privkey, compressed) == address
+
 
 """
 this test included in main test()
@@ -31,10 +46,10 @@ def test_bin2privkey():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('seed, nonce, expected', [
-    ('qwe',  0, '1c14825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455'),
+    ('qwe', 0, '1c14825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455'),
     ('12345', 0, '2d820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d89'),
-    ('',     0, '07407db254d500c0b614d835abe6a525a80eada073a8f67e6350cd18678e8cf6'),
-    ('qwe',  7, '1f2b3272b320b5be8dae398655d2e25924a9ba9676b78b9eb095691fcb2c8c23'),
+    ('', 0, '07407db254d500c0b614d835abe6a525a80eada073a8f67e6350cd18678e8cf6'),
+    ('qwe', 7, '1f2b3272b320b5be8dae398655d2e25924a9ba9676b78b9eb095691fcb2c8c23'),
 ])
 def test_seed2bin_known_answers(seed, nonce, expected):
     from yubtc.crypto import seed2bin
@@ -162,7 +177,7 @@ def test_privkey2pubkey_known_answer():
 
 
 @pytest.mark.parametrize('compressed, expected', [
-    (True,  '03eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0'),
+    (True, '03eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0'),
     (False, '04eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0'
             '24d7de8d887bee3288e5afb66ff648f05f47cd6e6d21978c805a5cfe0983f301'),
 ])
@@ -326,3 +341,24 @@ def test_make_vout_sends_change_back_to_src():
     assert vouts[0].script.hex() == '76a914e96b5b4561e70170c16f51ca30a9429e3bede97788ac'
     assert vouts[1].amount == 40_000
     assert vouts[1].script.hex() == '76a914d9d50a8ac051c555bf9a514aee0e4835efb3273888ac'
+
+
+def test_str2bytes_encodes_as_latin1():
+    """str2bytes -> bytes via latin-1 encoding (covers single-byte codepoints)."""
+    from yubtc.crypto import str2bytes
+    assert str2bytes('abc') == b'abc'
+    assert str2bytes('') == b''
+
+
+def test_bytes2str_decodes_via_chr():
+    """bytes2str -> str via chr() of each byte value."""
+    from yubtc.crypto import bytes2str
+    assert bytes2str(b'abc') == 'abc'
+    assert bytes2str(bytes([65, 66, 67])) == 'ABC'
+
+
+def test_str2list_splits_into_characters():
+    """str2list -> list of single-char strings."""
+    from yubtc.crypto import str2list
+    assert str2list('abc') == ['a', 'b', 'c']
+    assert str2list('') == []

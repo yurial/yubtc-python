@@ -30,6 +30,7 @@ def _stub_offline(monkeypatch, unspent=None, info=None, used_nonces=0):
     # The wallet addresses we encounter are at nonce 0, 1, 2, ... in order.
     # Cache the --used_nonces first addresses as "used"; the rest as "fresh".
     counters = {'n': 0}
+
     def fake_info(address):
         counters['n'] += 1
         return used if counters['n'] <= used_nonces else info
@@ -127,7 +128,8 @@ def test_balance_shows_unspent_amount(monkeypatch):
     # The wallet's get_unspent reads fields from the API response: tx_hash,
     # tx_output_n, value, confirmations, script. Convert to wallet's internal
     # format (tx, out_n, amount) before returning.
-    raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 100_000_000, 'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'}]
+    raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 100_000_000,
+            'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'}]
     import yubtc.misc
     monkeypatch.setattr(yubtc.misc, 'get_address_unspent',
                         lambda address, **kwargs: raw)
@@ -140,10 +142,17 @@ def test_balance_shows_unspent_amount(monkeypatch):
 
 def test_balance_verbose_prints_each_utxo(monkeypatch):
     """-v prints each (txid, out_n) under the address."""
-    raw = [
-        {'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000, 'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'},
-        {'tx_hash': 'b' * 64, 'tx_output_n': 1, 'value': 25_000, 'confirmations': 10, 'script': '76a914' + 'bb' * 20 + '88ac'},
-    ]
+    raw = [{'tx_hash': 'a' * 64,
+            'tx_output_n': 0,
+            'value': 50_000,
+            'confirmations': 10,
+            'script': '76a914' + 'aa' * 20 + '88ac'},
+           {'tx_hash': 'b' * 64,
+            'tx_output_n': 1,
+            'value': 25_000,
+            'confirmations': 10,
+            'script': '76a914' + 'bb' * 20 + '88ac'},
+           ]
     import yubtc.misc
     monkeypatch.setattr(yubtc.misc, 'get_address_unspent',
                         lambda address, **kwargs: raw)
@@ -158,10 +167,17 @@ def test_balance_verbose_prints_each_utxo(monkeypatch):
 
 def test_balance_filters_low_confirmation_utxos(monkeypatch):
     """UTXOs with confirmations < -c are filtered out by get_unspent."""
-    raw = [
-        {'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000, 'confirmations': 1, 'script': '76a914' + 'aa' * 20 + '88ac'},
-        {'tx_hash': 'b' * 64, 'tx_output_n': 1, 'value': 50_000, 'confirmations': 10, 'script': '76a914' + 'bb' * 20 + '88ac'},
-    ]
+    raw = [{'tx_hash': 'a' * 64,
+            'tx_output_n': 0,
+            'value': 50_000,
+            'confirmations': 1,
+            'script': '76a914' + 'aa' * 20 + '88ac'},
+           {'tx_hash': 'b' * 64,
+            'tx_output_n': 1,
+            'value': 50_000,
+            'confirmations': 10,
+            'script': '76a914' + 'bb' * 20 + '88ac'},
+           ]
     import yubtc.misc
     monkeypatch.setattr(yubtc.misc, 'get_address_unspent',
                         lambda address, **kwargs: raw)
@@ -193,6 +209,7 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
         vin=[CIn(b'\xab' * 32, 0, b'')],
         vout=[COut(amount=50_000, script=b'\xac')],
     ).sign(privkey, pubwif)
+
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
@@ -208,6 +225,7 @@ def test_send_amount_all_means_none(monkeypatch):
     """Amount=ALL is converted to None before passing to the wallet."""
     import yubtc.wallet as wallet_mod
     captured = {}
+
     def fake_make_transaction(self, **kwargs):
         captured['amount'] = kwargs['amount']
         from yubtc.transaction import CIn, COut, CTransaction
@@ -227,7 +245,6 @@ def test_send_amount_all_means_none(monkeypatch):
 def test_send_declined_by_user_prints_nothing(monkeypatch):
     """If the user answers 'n' to the confirmation prompt, no tx is printed."""
     import yubtc.wallet as wallet_mod
-    import yubtc.misc
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey('qwe')
@@ -236,6 +253,7 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
         vin=[CIn(b'\xab' * 32, 0, b'')],
         vout=[COut(amount=0, script=b'\xac')],
     ).sign(privkey, pubwif)
+
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
@@ -258,6 +276,7 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
         vin=[CIn(b'\xab' * 32, 0, b'')],
         vout=[COut(amount=0, script=b'\xac')],
     ).sign(privkey, pubwif)
+
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)

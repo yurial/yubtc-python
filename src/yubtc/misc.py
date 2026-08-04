@@ -3,6 +3,8 @@ from yubtc.fwd import TAddress, TSatoshi, TBTC
 raw_input = input
 
 # Returns byte string value, not hex string
+
+
 def varint(n):
     from struct import pack
     if n < 0xfd:
@@ -15,8 +17,11 @@ def varint(n):
         return pack('<cQ', b'\xff', n)
 
 # Takes and returns byte string value, not hex string
+
+
 def varstr(s):
     return varint(len(s)) + s
+
 
 def yesno(question):
     while True:
@@ -28,11 +33,14 @@ def yesno(question):
         else:
             print("Please respond with 'Yes' or 'No'\n")
 
+
 def satoshi2btc(satoshi: TSatoshi) -> TBTC:
     return TBTC(satoshi) * TBTC((0, (1,), -8))
 
+
 def btc2satoshi(btc: TBTC) -> TSatoshi:
     return TSatoshi(btc * TBTC((0, (1,), 8)))
+
 
 def unpack_address(address: TAddress):
     from yubtc.base58check import base58CheckDecode
@@ -40,6 +48,7 @@ def unpack_address(address: TAddress):
     prefix = data[0]
     dsthash = data[1:]
     return prefix, dsthash
+
 
 def get_address_unspent(address):
     import requests
@@ -51,6 +60,7 @@ def get_address_unspent(address):
     except JSONDecodeError:
         return []
     raise Exception('Unknown error')
+
 
 def get_address_info(address):
     import requests

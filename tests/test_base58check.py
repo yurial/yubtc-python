@@ -18,21 +18,21 @@ import pytest
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('payload, expected', [
-    (b'',                              b'3QJmnh'),
-    (b'\x00',                          b'1Wh4bh'),
-    (b'\x00\x00',                      b'112edB6q'),
-    (b'\x00\x00\x00\x00\x00',          b'1111146Q4wc'),
-    (b'hello',                         b'2L5B5yqsVG8Vt'),
-    (b'\x00\x01\x02hello',             b'1FX2wksLr1nSBug'),
-    (b'\x01\x02\x03\x04',              b'An6Ui6sE1F'),
-    (bytes(range(32)),                 b'16qJFWMMHFy3xDdLmvUeyc2S6FrWRhJP51HsvDYdz9d1FsYG'),
-    (b'\xff' * 32,                     b'2wkBET2rRgE8pahuaczxKbmv7ciehqsne57F9gtzf1PVZS9BEY'),
+    (b'', b'3QJmnh'),
+    (b'\x00', b'1Wh4bh'),
+    (b'\x00\x00', b'112edB6q'),
+    (b'\x00\x00\x00\x00\x00', b'1111146Q4wc'),
+    (b'hello', b'2L5B5yqsVG8Vt'),
+    (b'\x00\x01\x02hello', b'1FX2wksLr1nSBug'),
+    (b'\x01\x02\x03\x04', b'An6Ui6sE1F'),
+    (bytes(range(32)), b'16qJFWMMHFy3xDdLmvUeyc2S6FrWRhJP51HsvDYdz9d1FsYG'),
+    (b'\xff' * 32, b'2wkBET2rRgE8pahuaczxKbmv7ciehqsne57F9gtzf1PVZS9BEY'),
     # The 20-byte P2PKH payload (without the 0x00 prefix) used by yuBTC.
     (bytes.fromhex('e96b5b4561e70170c16f51ca30a9429e3bede977'),
-                                       b'NHD3xcMHK7QW1bPQq1J5SCb6cpbNzC4wo'),
+     b'NHD3xcMHK7QW1bPQq1J5SCb6cpbNzC4wo'),
     # Full P2PKH payload (with the 0x00 prefix) -- the form wallet addresses take.
     (bytes.fromhex('00e96b5b4561e70170c16f51ca30a9429e3bede977'),
-                                       b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'),
+     b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'),
 ])
 def test_base58CheckEncode_known_answers(payload, expected):
     from yubtc.base58check import base58CheckEncode
@@ -44,11 +44,11 @@ def test_base58CheckEncode_known_answers(payload, expected):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('encoded, expected', [
-    (b'3QJmnh',  b''),
-    (b'1Wh4bh',  b'\x00'),
+    (b'3QJmnh', b''),
+    (b'1Wh4bh', b'\x00'),
     (b'112edB6q', b'\x00\x00'),
     (b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
-                 bytes.fromhex('00e96b5b4561e70170c16f51ca30a9429e3bede977')),
+     bytes.fromhex('00e96b5b4561e70170c16f51ca30a9429e3bede977')),
     (b'16qJFWMMHFy3xDdLmvUeyc2S6FrWRhJP51HsvDYdz9d1FsYG', bytes(range(32))),
 ])
 def test_base58CheckDecode_known_answers(encoded, expected):

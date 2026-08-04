@@ -61,16 +61,16 @@ def test_script2pkh_rejects_wrong_opcodes():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('value, expected', [
-    (0,         b'\x00'),
-    (1,         b'\x01'),
-    (0x7f,      b'\x7f'),
-    (0x80,      b'\x80\x01'),
-    (0xff,      b'\xff\x01'),
-    (0x100,     b'\x80\x02'),
-    (0x3fff,    b'\xff\x7f'),
-    (0x4000,    b'\x80\x80\x01'),
-    (0xffff,    b'\xff\xff\x03'),
-    (0xffffff,  b'\xff\xff\xff\x07'),
+    (0, b'\x00'),
+    (1, b'\x01'),
+    (0x7f, b'\x7f'),
+    (0x80, b'\x80\x01'),
+    (0xff, b'\xff\x01'),
+    (0x100, b'\x80\x02'),
+    (0x3fff, b'\xff\x7f'),
+    (0x4000, b'\x80\x80\x01'),
+    (0xffff, b'\xff\xff\x03'),
+    (0xffffff, b'\xff\xff\xff\x07'),
 ])
 def test_toVarInt(value, expected):
     from yubtc.transaction import toVarInt
@@ -223,7 +223,6 @@ def test_ctransaction_default_locktime_is_0():
 
 
 def test_ctransaction_serialize_known_answer():
-    from yubtc.transaction import CTransaction
     tx = _example_tx()
     assert tx.serialize() == (
         b'\x02\x00\x00\x00'        # version=2
@@ -260,7 +259,6 @@ def test_ctransaction_serialize_with_multiple_inputs_and_outputs():
 
 def test_ctransaction_id_is_double_sha256_reversed():
     """`id()` is double SHA-256 of the serialized tx, displayed little-endian."""
-    from yubtc.transaction import CTransaction
     from yubtc.hash import sha256
     tx = _example_tx()
     expected = sha256(sha256(tx.serialize()))[::-1]
@@ -270,7 +268,6 @@ def test_ctransaction_id_is_double_sha256_reversed():
 def test_ctransaction_id_known_answer():
     """Pin the byte-level id for the example tx -- if this shifts, every
     consumer that watches a txid will desynchronise."""
-    from yubtc.transaction import CTransaction
     tx = _example_tx()
     assert tx.id().hex() == '5f74d3c48b7f6f76be52629ea1ea3399131883b5e96e039ba949ff71621fd1b8'
 

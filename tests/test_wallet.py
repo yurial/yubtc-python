@@ -91,6 +91,7 @@ def test_TPrivKey_get_info_caches(monkeypatch):
     """get_info calls the network once and caches the result in `_info`."""
     from yubtc.wallet import TPrivKey
     calls = []
+
     def fake_info(address):
         calls.append(address)
         return {'total_received': 0, 'final_balance': 0, 'n_tx': 0}
@@ -153,9 +154,8 @@ def test_TPrivKey_get_unspent_renames_api_fields(monkeypatch):
     The wallet's internal format renames these to tx / out_n / amount / script."""
     import yubtc.wallet
     import yubtc.misc
-    raw = [
-        {'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000, 'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'},
-    ]
+    raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000,
+            'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'}, ]
     monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: raw)
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0)
     out = p.get_unspent()
@@ -167,10 +167,17 @@ def test_TPrivKey_get_unspent_renames_api_fields(monkeypatch):
 def test_TPrivKey_get_unspent_filters_low_confirmation_utxos(monkeypatch):
     import yubtc.wallet
     import yubtc.misc
-    raw = [
-        {'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000, 'confirmations': 1, 'script': '76a914' + 'aa' * 20 + '88ac'},
-        {'tx_hash': 'b' * 64, 'tx_output_n': 1, 'value': 50_000, 'confirmations': 10, 'script': '76a914' + 'bb' * 20 + '88ac'},
-    ]
+    raw = [{'tx_hash': 'a' * 64,
+            'tx_output_n': 0,
+            'value': 50_000,
+            'confirmations': 1,
+            'script': '76a914' + 'aa' * 20 + '88ac'},
+           {'tx_hash': 'b' * 64,
+            'tx_output_n': 1,
+            'value': 50_000,
+            'confirmations': 10,
+            'script': '76a914' + 'bb' * 20 + '88ac'},
+           ]
     monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: raw)
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0)
     out = p.get_unspent(confirmations=5)
@@ -182,9 +189,8 @@ def test_TPrivKey_get_unspent_includes_equal_confirmation(monkeypatch):
     """Boundary: confirmations >= threshold (inclusive)."""
     import yubtc.wallet
     import yubtc.misc
-    raw = [
-        {'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000, 'confirmations': 5, 'script': '76a914' + 'aa' * 20 + '88ac'},
-    ]
+    raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000,
+            'confirmations': 5, 'script': '76a914' + 'aa' * 20 + '88ac'}, ]
     monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: raw)
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0)
     assert len(p.get_unspent(confirmations=5)) == 1
@@ -255,6 +261,7 @@ def test_Wallet_from_seed_stops_at_first_unused_address(monkeypatch):
     from yubtc.wallet import Wallet
     # Address at nonce 0 is "used" (received funds); nonce 1 is fresh.
     counters = {'n': 0}
+
     def fake_info(address):
         counters['n'] += 1
         used = {'total_received': 1, 'n_tx': 1}
@@ -291,6 +298,7 @@ def test_Wallet_from_seed_scan_then_appends(monkeypatch):
     """Scanned used addresses plus new_addresses fresh ones."""
     from yubtc.wallet import Wallet
     counters = {'n': 0}
+
     def fake_info(address):
         counters['n'] += 1
         return {'total_received': 1, 'n_tx': 1} if counters['n'] <= 2 else {'total_received': 0, 'n_tx': 0}
@@ -391,7 +399,6 @@ def test_Wallet_make_vin_builds_cin_for_each_utxo(monkeypatch):
     from yubtc.wallet import Wallet
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
     from yubtc.hash import hash160
-    from yubtc.transaction import CIn
     monkeypatch.setattr('yubtc.misc.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_two_utxos())
@@ -481,7 +488,6 @@ def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
     """The signed tx's input scripts use the wallet's owner privkey."""
     from yubtc.wallet import Wallet
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
-    from yubtc.hash import hash160
     monkeypatch.setattr('yubtc.misc.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
@@ -532,7 +538,6 @@ def dry_run_send(w, input_fixture, dst, amount, send=False):
     """
     from decimal import Decimal
     import io
-    import sys
     from contextlib import redirect_stdout
     buf = io.StringIO()
     btc_amount = Decimal(amount) if amount is not None else None

@@ -5,9 +5,10 @@ def script2pkh(script):
         or script[1] != OP_HASH160
         or script[2] != 20
         or script[-2] != OP_EQUALVERIFY
-        or script[-1] != OP_CHECKSIG):
+            or script[-1] != OP_CHECKSIG):
         raise Exception('invalid script')
     return script[3:-2]
+
 
 def toVarInt(value):
     """Pack `value` into varint bytes"""
@@ -24,6 +25,7 @@ def toVarInt(value):
             buf += pack(b'B', towrite)
             break
     return buf
+
 
 class CIn(object):
     def __init__(self, txhash, n, script, sequence=0xffffffff):
@@ -45,10 +47,13 @@ class CIn(object):
     def serialize(self):
         """
         32  hash                char[32]    The hash of the referenced transaction.
-        4   index               uint32_t    The index of the specific output in the transaction. The first output is 0, etc.
+        4   index               uint32_t    The index of the specific output in the transaction.
+                                             The first output is 0, etc.
         1+  script length       var_int     The length of the signature script
         ?   signature script    uchar[]     Computational Script for confirming transaction authorization
-        4   sequence            uint32_t    Transaction version as defined by the sender. Intended for "replacement" of transactions when information is updated before inclusion into a block.
+        4   sequence            uint32_t    Transaction version as defined by the sender. Intended
+                                             for "replacement" of transactions when information is
+                                             updated before inclusion into a block.
         """
         from struct import pack
         result = self.txhash
@@ -57,6 +62,7 @@ class CIn(object):
         result += self.script
         result += pack(b"<L", self.sequence)
         return result
+
 
 class COut(object):
     def __init__(self, amount, script):
@@ -69,15 +75,17 @@ class COut(object):
 
     def serialize(self):
         """
-        8   value               int64_t Transaction Value
-        1+  pk_script length    var_int Length of the pk_script
-        ?   pk_script           uchar[] Usually contains the public key as a Bitcoin script setting up conditions to claim this output.
+        8   value               int64_t     Transaction Value
+        1+  pk_script length    var_int     Length of the pk_script
+        ?   pk_script           uchar[]     Usually contains the public key as a Bitcoin script
+                                             setting up conditions to claim this output.
         """
         from struct import pack
         result = pack(b"<Q", self.amount)
         result += toVarInt(len(self.script))
         result += self.script
         return result
+
 
 class CTransaction(object):
     def __init__(self, vin, vout, locktime=0):
@@ -88,14 +96,16 @@ class CTransaction(object):
 
     def serialize(self):
         """
-        4       version         int32_t             Transaction data format version (note, this is signed)
-        0 or 2  flag            optional uint8_t[2] If present, always 0001, and indicates the presence of witness data
-        1+      tx_in count     var_int             Number of Transaction inputs (never zero)
-        41+     tx_in           tx_in[]             A list of 1 or more transaction inputs or sources for coins
-        1+      tx_out count    var_int             Number of Transaction outputs
-        9+      tx_out          tx_out[]            A list of 1 or more transaction outputs or destinations for coins
-        0+      tx_witnesses    tx_witness[]        A list of witnesses, one for each input; omitted if flag is omitted above
-        4       lock_time       uint32_t            The block number or timestamp at which this transaction is unlocked.
+        4       version         int32_t     Transaction data format version (note, this is signed)
+        0 or 2  flag            uint8_t[2]  Optional. If present, always 0001, and indicates
+                                           the presence of witness data.
+        1+      tx_in count     var_int     Number of Transaction inputs (never zero)
+        41+     tx_in           tx_in[]     A list of 1 or more transaction inputs or sources for coins
+        1+      tx_out count    var_int     Number of Transaction outputs
+        9+      tx_out          tx_out[]    A list of 1 or more transaction outputs or destinations for coins
+        0+      tx_witnesses    tx_wit[]    A list of witnesses, one for each input;
+                                           omitted if flag is omitted above.
+        4       lock_time       uint32_t    The block number or timestamp at which this transaction is unlocked.
         """
         from struct import pack
         result = pack(b"<l", self.version)
@@ -121,7 +131,7 @@ class CTransaction(object):
                 tx.vin[z].script = b''
             tx.vin[i] = deepcopy(self.vin[i])
             sigdata = tx.serialize() + pack(b'<L', SIGHASH_ALL)
-            signature = sign_data(privkey=privkey, data=sigdata)+ pack(b'<B', SIGHASH_ALL)
+            signature = sign_data(privkey=privkey, data=sigdata) + pack(b'<B', SIGHASH_ALL)
             scripts.append(CScript([signature, pubwif]))
         for i in range(len(tx.vin)):
             tx.vin[i].script = scripts[i]

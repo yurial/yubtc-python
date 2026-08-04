@@ -1,12 +1,10 @@
-from typing import Union
-from collections import namedtuple
-
-from yubtc.fwd import MINIMAL_FEE, DEFAULT_CONFIRMATIONS
+from yubtc.fwd import DEFAULT_CONFIRMATIONS
 from yubtc.fwd import TSatoshi, TBTC, TSeed, TAddress
+
 
 class TPrivKey(object):
     def __init__(self, *args, privkey: bytes = None, seed: TSeed = None, nonce: int = None):
-        from yubtc.crypto import privwif2privkey, seed2privkey
+        from yubtc.crypto import seed2privkey
         if args:
             raise Exception('only kwargs allowed')
         if privkey:
@@ -43,13 +41,21 @@ class TPrivKey(object):
         result = list()
         for x in get_address_unspent(self.get_p2pkh_address()):
             if x['confirmations'] >= confirmations:
-                result.append({'tx': x['tx_hash'], 'out_n': x['tx_output_n'], 'amount': x['value'], 'script': x['script']})
+                result.append({'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
+                              'amount': x['value'], 'script': x['script']})
         return result
 
 
-
 class Wallet(object):
-    def __init__(self, *args, privkey: bytes = None, privwif: str = None, seed: TSeed = None, compressed: bool = True, nonce: int = None, new_addresses: int = 1):
+    def __init__(
+            self,
+            *args,
+            privkey: bytes = None,
+            privwif: str = None,
+            seed: TSeed = None,
+            compressed: bool = True,
+            nonce: int = None,
+            new_addresses: int = 1):
         from yubtc.crypto import privwif2privkey
         if args:
             raise Exception('only kwargs allowed')
@@ -71,7 +77,15 @@ class Wallet(object):
                 self.privkeys.append(privkey)
                 nonce = nonce + 1
 
-    def send(self, *args, dst: TAddress = None, amount: TBTC = None, feekb: TSatoshi = None, fee: TBTC = None, confirmations: int = None, send: bool = None):
+    def send(
+            self,
+            *args,
+            dst: TAddress = None,
+            amount: TBTC = None,
+            feekb: TSatoshi = None,
+            fee: TBTC = None,
+            confirmations: int = None,
+            send: bool = None):
         from yubtc.misc import yesno, satoshi2btc, btc2satoshi
         from yubtc.net import sendTx
         if args:
@@ -79,12 +93,19 @@ class Wallet(object):
         if amount is not None:
             amount = btc2satoshi(amount)
         fee = btc2satoshi(fee)
-        tx, cashback, amount, fee = self.make_transaction(dst=dst, amount=amount, feekb=feekb, fee=fee, confirmations=confirmations)
+        tx, cashback, amount, fee = self.make_transaction(
+            dst=dst, amount=amount, feekb=feekb, fee=fee, confirmations=confirmations)
         cashback = satoshi2btc(cashback)
         amount = satoshi2btc(amount)
         fee = satoshi2btc(fee)
         rawtx = tx.serialize()
-        if yesno('send {:0.08f} BTC to {} (cacshback={:0.08f}, fee={:0.08f}, txsize={})? '.format(amount, dst, cashback, fee, len(rawtx))):
+        if yesno(
+            'send {:0.08f} BTC to {} (cacshback={:0.08f}, fee={:0.08f}, txsize={})? '.format(
+                amount,
+                dst,
+                cashback,
+                fee,
+                len(rawtx))):
             print('id: {}'.format(tx.id().hex()))
             if send:
                 sendTx(rawtx)
@@ -105,9 +126,15 @@ class Wallet(object):
             vin.append(CIn(txhash=txhash, n=u['out_n'], script=tx_lock_script))
         return vin, in_amount
 
-    def make_transaction(self, dst: TAddress, amount: TBTC, feekb: TBTC = None, fee: TSatoshi = None, confirmations: int = None):
+    def make_transaction(
+            self,
+            dst: TAddress,
+            amount: TBTC,
+            feekb: TBTC = None,
+            fee: TSatoshi = None,
+            confirmations: int = None):
         from yubtc.hash import hash160
-        from yubtc.crypto import privkey2pubkey, pubkey2pubwif, sign_data, pubkey2addr, make_vout
+        from yubtc.crypto import privkey2pubkey, pubkey2pubwif, pubkey2addr, make_vout
         from yubtc.transaction import CTransaction
         if confirmations is None:
             confirmations = DEFAULT_CONFIRMATIONS
@@ -127,7 +154,7 @@ class Wallet(object):
             txsize = len(stx.serialize())
             newfee = int(txsize * feekb / 1000)
             if _fee == newfee:
-                break;
+                break
             _fee = newfee
 
         return stx, _cashback, _amount, _fee

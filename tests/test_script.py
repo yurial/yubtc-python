@@ -12,7 +12,7 @@ These tests cover the three missing branches:
 import pytest
 
 from yubtc.script import (
-    CScript, CScriptOp, OP_0, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_EQUAL,
+    CScript, OP_0, OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, OP_EQUAL,
 )
 
 

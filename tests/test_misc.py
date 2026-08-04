@@ -22,20 +22,20 @@ import pytest
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('n, expected', [
-    (0,           b'\x00'),
-    (1,           b'\x01'),
-    (0xfc,        b'\xfc'),
+    (0, b'\x00'),
+    (1, b'\x01'),
+    (0xfc, b'\xfc'),
     # 0xfd prefix: 1 + 2 LE bytes. Boundary: 0xffff is NOT < 0xffff, so it
     # falls through to the 0xfe encoding.
-    (0xfd,        b'\xfd\xfd\x00'),
-    (0xfffe,      b'\xfd\xfe\xff'),
+    (0xfd, b'\xfd\xfd\x00'),
+    (0xfffe, b'\xfd\xfe\xff'),
     # 0xfe prefix: 1 + 4 LE bytes.
-    (0xffff,      b'\xfe\xff\xff\x00\x00'),
-    (0x10000,     b'\xfe\x00\x00\x01\x00'),
-    (0xfffffffe,  b'\xfe\xfe\xff\xff\xff'),
+    (0xffff, b'\xfe\xff\xff\x00\x00'),
+    (0x10000, b'\xfe\x00\x00\x01\x00'),
+    (0xfffffffe, b'\xfe\xfe\xff\xff\xff'),
     # 0xff prefix: 1 + 8 LE bytes.
-    (0xffffffff,         b'\xff\xff\xff\xff\xff\x00\x00\x00\x00'),
-    (0x100000000,        b'\xff\x00\x00\x00\x00\x01\x00\x00\x00'),
+    (0xffffffff, b'\xff\xff\xff\xff\xff\x00\x00\x00\x00'),
+    (0x100000000, b'\xff\x00\x00\x00\x00\x01\x00\x00\x00'),
     (0xdeadbeef12345678, b'\xff\x78\x56\x34\x12\xef\xbe\xad\xde'),
 ])
 def test_varint_known_answers(n, expected):
@@ -58,11 +58,11 @@ def test_varstr(s):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize('sat, btc', [
-    (0,             Decimal('0')),
-    (1,             Decimal('0.00000001')),
-    (100_000_000,   Decimal('1')),
-    (50_000_000,    Decimal('0.5')),
-    (1_234_567_89,  Decimal('1.23456789')),
+    (0, Decimal('0')),
+    (1, Decimal('0.00000001')),
+    (100_000_000, Decimal('1')),
+    (50_000_000, Decimal('0.5')),
+    (1_234_567_89, Decimal('1.23456789')),
 ])
 def test_satoshi2btc_known_values(sat, btc):
     from yubtc.misc import satoshi2btc
@@ -70,10 +70,10 @@ def test_satoshi2btc_known_values(sat, btc):
 
 
 @pytest.mark.parametrize('btc, sat', [
-    (Decimal('0'),         0),
+    (Decimal('0'), 0),
     (Decimal('0.00000001'), 1),
-    (Decimal('1'),          100_000_000),
-    (Decimal('0.5'),        50_000_000),
+    (Decimal('1'), 100_000_000),
+    (Decimal('0.5'), 50_000_000),
     (Decimal('1.23456789'), 123_456_789),
 ])
 def test_btc2satoshi_known_values(btc, sat):
