@@ -114,44 +114,50 @@ def test_unpack_address_invalid_checksum_raises():
 
 
 # ---------------------------------------------------------------------------
-# yesno: interactive y/n prompt. Reads from `raw_input` (which is `input`
-# on Python 3). Loops until the input starts with y/n.
+# yesno: interactive y/n prompt. Reads from `misc.raw_input`, which is
+# assigned to the builtin `input` at module import time. Patching the
+# module attribute is the cleanest seam -- no need to touch builtins.
 # ---------------------------------------------------------------------------
 
 def test_yesno_accepts_yes(monkeypatch):
-    from yubtc import misc
+    import yubtc.misc as misc
     monkeypatch.setattr(misc, 'raw_input', lambda _: 'yes')
-    assert misc.yesno('?') is True
+    from yubtc.misc import yesno
+    assert yesno('?') is True
 
 
 def test_yesno_accepts_no(monkeypatch):
-    from yubtc import misc
+    import yubtc.misc as misc
     monkeypatch.setattr(misc, 'raw_input', lambda _: 'no')
-    assert misc.yesno('?') is False
+    from yubtc.misc import yesno
+    assert yesno('?') is False
 
 
 def test_yesno_case_insensitive(monkeypatch):
-    from yubtc import misc
+    import yubtc.misc as misc
     monkeypatch.setattr(misc, 'raw_input', lambda _: 'Y')
-    assert misc.yesno('?') is True
+    from yubtc.misc import yesno
+    assert yesno('?') is True
     monkeypatch.setattr(misc, 'raw_input', lambda _: 'N')
-    assert misc.yesno('?') is False
+    assert yesno('?') is False
 
 
 def test_yesno_loops_until_valid(monkeypatch):
-    from yubtc import misc
+    import yubtc.misc as misc
     responses = iter(['maybe', '', 'what?', 'y'])
     monkeypatch.setattr(misc, 'raw_input', lambda _: next(responses))
-    assert misc.yesno('?') is True
+    from yubtc.misc import yesno
+    assert yesno('?') is True
 
 
 def test_yesno_short_circuits_on_yes_or_no_prefix(monkeypatch):
     """'yodel' and 'nowhere' both pass -- the check is on the first character."""
-    from yubtc import misc
+    import yubtc.misc as misc
     monkeypatch.setattr(misc, 'raw_input', lambda _: 'yodel')
-    assert misc.yesno('?') is True
+    from yubtc.misc import yesno
+    assert yesno('?') is True
     monkeypatch.setattr(misc, 'raw_input', lambda _: 'nowhere')
-    assert misc.yesno('?') is False
+    assert yesno('?') is False
 
 
 # ---------------------------------------------------------------------------

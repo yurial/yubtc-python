@@ -1,7 +1,6 @@
 from yubtc.fwd import TAddress, TSatoshi, TBTC
 
-if str != bytes:
-    raw_input = input
+raw_input = input
 
 # Returns byte string value, not hex string
 def varint(n):

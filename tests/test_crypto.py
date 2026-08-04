@@ -245,10 +245,9 @@ def test_sign_data_verifies():
 # ---------------------------------------------------------------------------
 # make_lock_script: the scriptPubKey for a destination.
 #
-# P2SH support is broken in crypto.py:108 (`script_hash` is undefined). The
-# bug is not exercised by the test suite -- `make_vout` only ever passes
-# P2PKH addresses in this codebase. Skip the P2SH case rather than testing
-# against the broken implementation.
+# P2PKH (prefix 0x00) and P2SH (prefix 0x05) are the two address families
+# this wallet handles. The dsthash argument is the 20-byte hash *after*
+# the prefix -- for P2SH it is the script hash of the redeem script.
 # ---------------------------------------------------------------------------
 
 def test_make_lock_script_p2pkh():
@@ -257,6 +256,17 @@ def test_make_lock_script_p2pkh():
     addr = privkey2addr(seed2privkey('qwe'), True)
     # OP_DUP(0x76) OP_HASH160(0xa9) <20B> OP_EQUALVERIFY(0x88) OP_CHECKSIG(0xac)
     assert make_lock_script(addr).hex() == '76a914e96b5b4561e70170c16f51ca30a9429e3bede97788ac'
+
+
+def test_make_lock_script_p2sh():
+    """A P2SH address produces OP_HASH160 <20B> OP_EQUAL — the dsthash IS the script hash."""
+    from yubtc.crypto import make_lock_script
+    from yubtc.base58check import base58CheckEncode
+    from yubtc.crypto import PREFIX_P2SH
+    script_hash = b'\xab' * 20
+    addr = base58CheckEncode(bytes([PREFIX_P2SH]) + script_hash)
+    # OP_HASH160(0xa9) <20B> OP_EQUAL(0x87)
+    assert make_lock_script(addr).hex() == 'a914' + script_hash.hex() + '87'
 
 
 def test_make_lock_script_unknown_prefix_raises():

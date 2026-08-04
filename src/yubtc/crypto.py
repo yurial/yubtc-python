@@ -13,14 +13,9 @@ PREFIX_ENCPRIVKEY = 0x0142 # BIP-38
 PREFIX_EXTPUBKEY = 0x0488B21E # BIP-32
 # TODO: SEGWIT https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch07.asciidoc#segregated-witness
 
-if bytes == str:  # python2
-    str2bytes = lambda s: s
-    bytes2str = lambda b: b
-    str2list = lambda s: [ord(c) for c in s]
-else:  # python3
-    str2bytes = lambda s: s.encode('latin-1')
-    bytes2str = lambda b: ''.join(map(chr, b))
-    str2list = lambda s: [c for c in s]
+str2bytes = lambda s: s.encode('latin-1')
+bytes2str = lambda b: ''.join(map(chr, b))
+str2list = lambda s: [c for c in s]
 
 def seed2bin(seed, nonce=0):
     from yubtc.hash import sha256, keccak256, blake2b256
@@ -105,7 +100,7 @@ def make_lock_script(address: TAddress):
     if prefix == PREFIX_P2PKH:
         return CScript([OP_DUP, OP_HASH160, dsthash, OP_EQUALVERIFY, OP_CHECKSIG])
     elif prefix == PREFIX_P2SH:
-        return CScript([OP_HASH160, script_hash, OP_EQUAL])
+        return CScript([OP_HASH160, dsthash, OP_EQUAL])
     else:
         raise Exception('address not supported')
 
