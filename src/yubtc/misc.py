@@ -59,7 +59,6 @@ def get_address_unspent(address: TAddress) -> list:
         return requests.get(url).json()['unspent_outputs']
     except JSONDecodeError:
         return []
-    raise Exception('Unknown error')
 
 
 def get_address_info(address: TAddress) -> dict:
@@ -72,4 +71,3 @@ def get_address_info(address: TAddress) -> dict:
         return response.json()[address]
     except JSONDecodeError:
         return {'total_received': 0}
-    raise Exception('Unknown error')

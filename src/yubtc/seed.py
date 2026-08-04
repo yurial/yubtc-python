@@ -202,11 +202,7 @@ def _generate_seed(*args, count: Optional[int] = None, allow_dups: Optional[bool
     sysrandom = SystemRandom()
     if not allow_dups:
         return sysrandom.sample(wordList, count)
-    try:
-        return sysrandom.choices(wordList, count)  # available from python3.6
-    except BaseException:
-        pass
-    return [sysrandom.choice(wordList) for i in range(count)]
+    return sysrandom.choices(wordList, k=count)
 
 
 def generate_seed(*args, count: Optional[int] = None, allow_dups: Optional[bool] = None) -> str:
