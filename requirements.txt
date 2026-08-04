@@ -2,4 +2,4 @@ requests
 click
 ecdsa
 base58
-safe-pysha3
+pycryptodome

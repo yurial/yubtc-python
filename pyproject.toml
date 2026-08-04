@@ -15,7 +15,7 @@ dependencies = [
     "click",
     "ecdsa",
     "base58",
-    "safe-pysha3",
+    "pycryptodome",
 ]
 
 [project.optional-dependencies]
