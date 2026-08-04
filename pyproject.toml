@@ -37,7 +37,6 @@ branch = true
 
 [tool.coverage.report]
 show_missing = true
-# Raised alongside observed coverage. The 0.5pp buffer keeps the gate passing
-# while still catching bulk regressions. Hold-down files: net.py (untouched),
-# wallet.py, cli.py, script.py.
-fail_under = 65
+# Project target is 100% line + branch coverage. Every module must be fully
+# exercised; if you add code, add tests with it.
+fail_under = 100

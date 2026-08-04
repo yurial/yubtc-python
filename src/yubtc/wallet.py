@@ -50,6 +50,7 @@ class TPrivKey(object):
 
 class Wallet(object):
     def __init__(self, *args, privkey: bytes = None, privwif: str = None, seed: TSeed = None, compressed: bool = True, nonce: int = None, new_addresses: int = 1):
+        from yubtc.crypto import privwif2privkey
         if args:
             raise Exception('only kwargs allowed')
         if privkey:
@@ -108,6 +109,8 @@ class Wallet(object):
         from yubtc.hash import hash160
         from yubtc.crypto import privkey2pubkey, pubkey2pubwif, sign_data, pubkey2addr, make_vout
         from yubtc.transaction import CTransaction
+        if confirmations is None:
+            confirmations = DEFAULT_CONFIRMATIONS
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
         src = pubkey2addr(pubkey)
         pubwif = pubkey2pubwif(pubkey)

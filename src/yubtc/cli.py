@@ -76,6 +76,3 @@ def send(nonce:int , confirmations: int, fee: TBTC, feekb: TSatoshi, address: st
     wallet = Wallet(seed=get_seed(), nonce=nonce)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
     wallet.send(dst=address, amount=amount, fee=fee, feekb=feekb, confirmations=confirmations, send=send)
-
-if __name__ == '__main__':
-    cli()
