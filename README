@@ -13,6 +13,11 @@ YuBTC support next commands:
 Install:
 $ pip install .
 
+To run straight from a checkout, without installing, use the ./yubtc launcher.
+It only needs the third-party dependencies, not YuBTC itself:
+$ pip install -r requirements.txt
+$ ./yubtc newseed
+
 For development, install in editable mode and run the tests:
 $ pip install -e '.[test]'
 $ pytest
