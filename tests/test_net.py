@@ -1,16 +1,16 @@
 """Tests for net.py: the wallet's network surface.
 
-Three functions live here:
-- `sendTx` is a stub (raises NotImplementedError). The tests pin that
-  behaviour so a future implementation has to actively change them.
-- `get_address_unspent` and `get_address_info` hit blockchain.info via
-  `requests.get`. Tests patch `requests.get` so the suite stays offline.
+`get_address_unspent` and `get_address_info` hit blockchain.info via
+`requests.get`. `sendTx` POSTs a signed raw tx to blockchain.info/pushtx.
+All three are patched through `requests` so the suite stays offline.
 
 One quirk surfaced during test design; the tests pin the current behaviour
 rather than silently fixing it:
 - `get_address_unspent` / `get_address_info` have no catch-all except for
   `JSONDecodeError`, so any other exception (e.g. a missing JSON key) is
   meant to propagate out unchanged.
+- `sendTx` raises on non-2xx responses so the wallet sees the failure
+  after it has already printed the tx id.
 """
 from json.decoder import JSONDecodeError
 from unittest.mock import MagicMock
@@ -19,29 +19,52 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# sendTx: stub for broadcasting transactions.
+# sendTx: POST the raw tx to blockchain.info/pushtx.
 # ---------------------------------------------------------------------------
 
-def test_sendTx_is_a_stub():
-    """sendTx raises NotImplementedError on any call."""
+def test_sendTx_posts_raw_tx_as_form_field(monkeypatch):
+    """The raw tx is hex-encoded and sent as a form-encoded `tx` field."""
+    import requests
+    fake = MagicMock()
+    fake.ok = True
+    fake.status_code = 200
+    fake.text = 'Transaction Submitted'
+    captured = []
+    monkeypatch.setattr(requests, 'post',
+                        lambda url, **kwargs: (captured.append((url, kwargs)), fake)[1])
     from yubtc.net import sendTx
-    with pytest.raises(NotImplementedError):
-        sendTx(b'\x00' * 100)
+    sendTx(b'\x00\x01\x02\xff')
+    assert captured[0][0] == 'https://blockchain.info/pushtx'
+    assert captured[0][1]['data'] == {'tx': '000102ff'}
 
 
-def test_sendTx_does_not_touch_the_network():
-    """The stub must not import or use requests -- it has no network call."""
-    # If this import succeeded before the test, the next assertion is meaningful.
-    import yubtc.net as net
-    assert not hasattr(net, 'requests')
-
-
-def test_sendTx_message_mentions_block_explorer():
-    """The error message tells the user how to actually broadcast."""
+def test_sendTx_passes_timeout(monkeypatch):
+    """Same as the GET counterparts -- timeout is pinned on every call."""
+    import requests
+    fake = MagicMock()
+    fake.ok = True
+    fake.status_code = 200
+    fake.text = 'Transaction Submitted'
+    captured = []
+    monkeypatch.setattr(requests, 'post',
+                        lambda url, **kwargs: (captured.append(kwargs), fake)[1])
     from yubtc.net import sendTx
-    with pytest.raises(NotImplementedError) as info:
+    sendTx(b'\x00')
+    assert 'timeout' in captured[0]
+    assert captured[0]['timeout'] > 0
+
+
+def test_sendTx_raises_on_non_2xx(monkeypatch):
+    """A non-2xx response surfaces as an exception so the wallet sees the failure."""
+    import requests
+    fake = MagicMock()
+    fake.ok = False
+    fake.status_code = 500
+    fake.text = 'Internal Server Error'
+    monkeypatch.setattr(requests, 'post', lambda url, **kwargs: fake)
+    from yubtc.net import sendTx
+    with pytest.raises(Exception, match='broadcast failed'):
         sendTx(b'\x00')
-    assert 'block explorer' in str(info.value).lower()
 
 
 # ---------------------------------------------------------------------------

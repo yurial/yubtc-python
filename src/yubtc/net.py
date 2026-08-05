@@ -1,8 +1,9 @@
 """Network calls used by the wallet.
 
-Two read-only paths (UTXO lookup and address stats) hit blockchain.info via
-`requests`. The third, `sendTx`, is a stub: the wallet prints the raw tx
-hex so the user can paste it into a block explorer to broadcast.
+`get_address_unspent` and `get_address_info` are read-only GETs to
+blockchain.info. `sendTx` POSTs a signed raw transaction to
+blockchain.info/pushtx; the response is form-encoded text and the
+wallet on success is silent.
 """
 from yubtc.fwd import TAddress, DEFAULT_TIMEOUT_HTTP
 
@@ -31,13 +32,17 @@ def get_address_info(address: TAddress) -> dict:
 
 
 def sendTx(rawtxdata: bytes) -> None:
-    """Stub for broadcasting a transaction to the Bitcoin network.
+    """Broadcast a signed raw transaction via blockchain.info/pushtx.
 
-    The actual broadcast endpoint is not wired up here. The wallet's
-    `send` command already prints the rawtx hex when this is not called,
-    which is enough for now: paste the hex into a block explorer to
-    broadcast.
+    The endpoint accepts the raw tx hex as a form-encoded `tx` field and
+    returns a 200 with the body "Transaction Submitted" on success. Any
+    non-2xx response is treated as a failure (the wallet has already
+    printed the tx id, so surfacing the error is the right move).
     """
-    raise NotImplementedError(
-        'sendTx is a stub. Broadcast the raw tx via a block explorer.'
-    )
+    import requests
+    url = 'https://blockchain.info/pushtx'
+    response = requests.post(url, data={'tx': rawtxdata.hex()}, timeout=DEFAULT_TIMEOUT_HTTP)
+    if not response.ok:
+        raise Exception(
+            'broadcast failed: status={status} body={body}'.format(
+                status=response.status_code, body=response.text))
