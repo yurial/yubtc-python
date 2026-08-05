@@ -353,7 +353,7 @@ def test_balance_used_empty_address_keeps_zero_btc_label(monkeypatch):
 def test_send_dry_run_prints_raw_tx(monkeypatch):
     """Default (no --broadcast) prints the raw tx hex; the network stub is not called."""
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     fake_tx = _stub_make_transaction(monkeypatch, amount=50_000)
 
     output = run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'], stdin=SEED + '\n')
@@ -374,12 +374,12 @@ def test_send_amount_all_means_none(monkeypatch):
 
 
 def test_send_declined_by_user_prints_nothing(monkeypatch):
-    """With --broadcast, answering 'n' to the confirm prompt skips sendTx but the dump is still printed."""
+    """With --broadcast, answering 'n' to the confirm prompt skips broadcastTx but the dump is still printed."""
     fake_tx = _stub_make_transaction(monkeypatch, amount=50_000)
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
-    # --broadcast + 'n' answer -> sendTx is NOT called.
+    # --broadcast + 'n' answer -> broadcastTx is NOT called.
     output = run(['send', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
                  stdin=SEED + '\nn\n')
     sent.assert_not_called()
@@ -393,7 +393,7 @@ def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
     """Without --broadcast, no confirmation prompt is asked -- the dump just prints."""
     fake_tx = _stub_make_transaction(monkeypatch, amount=50_000)
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     prompted = []
     import yubtc.misc as misc
@@ -406,14 +406,14 @@ def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
     assert fake_tx.serialize().hex() in output
 
 
-def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
-    """--broadcast routes the tx through net.sendTx (the stub)."""
+def test_send_with_broadcast_flag_calls_broadcastTx(monkeypatch):
+    """--broadcast routes the tx through net.broadcastTx (the stub)."""
     _stub_make_transaction(monkeypatch, amount=50_000)
-    # Mock sendTx to record the call.
+    # Mock broadcastTx to record the call.
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
-    # --broadcast combined with 'y' confirmation -> sendTx is called.
+    # --broadcast combined with 'y' confirmation -> broadcastTx is called.
     run(['send', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
         stdin=SEED + '\ny\n')
     sent.assert_called_once()
@@ -424,7 +424,7 @@ def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
     captured = {}
     _stub_make_transaction(monkeypatch, amount=50_000, capture=captured)
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     run(['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
         stdin=SEED + '\n')
@@ -436,7 +436,7 @@ def test_send_with_scan_and_all_drains(monkeypatch):
     """--scan + ALL drains every scanned UTXO."""
     captured = {}
     _stub_make_transaction(monkeypatch, amount=80_000, capture=captured)
-    monkeypatch.setattr(yubtc.net, 'sendTx', MagicMock())
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', MagicMock())
 
     run(['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
         stdin=SEED + '\n')
@@ -497,7 +497,7 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
     monkeypatch.setattr('yubtc.net.get_address_unspent',
                         fake_unspent({0: [60_000], 1: [60_000]}))
 
-    monkeypatch.setattr(yubtc.net, 'sendTx', MagicMock())
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', MagicMock())
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
 
     output = run(
@@ -513,7 +513,7 @@ def test_send_without_scan_does_not_emit_per_address_lines(monkeypatch):
     """Without --scan, send does not invoke the per-address on_address path."""
     _stub_make_transaction(monkeypatch, amount=50_000)
     _stub_no_network(monkeypatch)
-    monkeypatch.setattr(yubtc.net, 'sendTx', MagicMock())
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', MagicMock())
 
     output = run(
         ['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
@@ -693,7 +693,7 @@ def test_send_interactive_drain_mode_skips_feasibility_check(monkeypatch):
 
 
 def test_send_interactive_broadcast_prompts_and_calls_sendtx(monkeypatch):
-    """--interactive + --broadcast: yesno('broadcast?') feeds into sendTx."""
+    """--interactive + --broadcast: yesno('broadcast?') feeds into broadcastTx."""
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
@@ -713,18 +713,18 @@ def test_send_interactive_broadcast_prompts_and_calls_sendtx(monkeypatch):
     _stub_run_selection(monkeypatch, [(pk0, utxo_dict)])
     import yubtc.misc as misc
     monkeypatch.setattr(misc, 'yesno', fake_yesno)
-    monkeypatch.setattr(yubtc.net, 'sendTx', MagicMock())
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', MagicMock())
 
     run(
         ['send', '-i', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
         stdin=SEED + '\n',
     )
     assert prompts == ['broadcast? ']
-    assert yubtc.net.sendTx.called
+    assert yubtc.net.broadcastTx.called
 
 
 def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
-    """--interactive + --broadcast + 'n' prompt: sendTx is not called."""
+    """--interactive + --broadcast + 'n' prompt: broadcastTx is not called."""
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
@@ -745,7 +745,7 @@ def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
     import yubtc.misc as misc
     monkeypatch.setattr(misc, 'yesno', fake_yesno)
     sendtx = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sendtx)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sendtx)
 
     output = run(
         ['send', '-i', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],

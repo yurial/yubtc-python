@@ -274,7 +274,7 @@ def test_Wallet_from_seed_scan_then_appends(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_Wallet_send_dry_run_prints_raw_tx(monkeypatch, monkeypatch_input):
-    """With broadcast=False the dump (id + summary + raw tx hex) is printed; sendTx is not called."""
+    """With broadcast=False the dump (id + summary + raw tx hex) is printed; broadcastTx is not called."""
     from yubtc.wallet import Wallet
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -282,7 +282,7 @@ def test_Wallet_send_dry_run_prints_raw_tx(monkeypatch, monkeypatch_input):
 
     sent = MagicMock()
     import yubtc.net
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     out = dry_run_send(w, monkeypatch_input, dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount='0.0005')
@@ -303,7 +303,7 @@ def test_Wallet_send_with_amount_none_skips_btc2satoshi(monkeypatch, monkeypatch
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     out = dry_run_send(w, monkeypatch_input, dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None)
@@ -311,14 +311,14 @@ def test_Wallet_send_with_amount_none_skips_btc2satoshi(monkeypatch, monkeypatch
     sent.assert_not_called()
 
 
-def test_Wallet_send_with_broadcast_calls_sendTx(monkeypatch, monkeypatch_input):
-    """With broadcast=True, the tx is passed to net.sendTx."""
-    """With broadcast=True, the tx is passed to net.sendTx."""
+def test_Wallet_send_with_broadcast_calls_broadcastTx(monkeypatch, monkeypatch_input):
+    """With broadcast=True, the tx is passed to net.broadcastTx."""
+    """With broadcast=True, the tx is passed to net.broadcastTx."""
     from yubtc.wallet import Wallet
     import yubtc.net
     import yubtc.misc
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
@@ -329,7 +329,7 @@ def test_Wallet_send_with_broadcast_calls_sendTx(monkeypatch, monkeypatch_input)
 
 
 def test_Wallet_send_declined_prints_nothing(monkeypatch):
-    """With --broadcast, answering 'n' to the prompt skips sendTx; the dump still prints."""
+    """With --broadcast, answering 'n' to the prompt skips broadcastTx; the dump still prints."""
     from yubtc.wallet import Wallet
     import yubtc.net
     import yubtc.misc
@@ -338,7 +338,7 @@ def test_Wallet_send_declined_prints_nothing(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     # monkeypatch the yes/no prompt to decline.
     monkeypatch.setattr(yubtc.misc, 'yesno', lambda q: False)
@@ -361,7 +361,7 @@ def test_Wallet_send_dry_run_does_not_prompt(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     prompted = []
     monkeypatch.setattr(yubtc.misc, 'yesno', lambda q: (prompted.append(q), True)[1])
@@ -387,7 +387,7 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     sent = MagicMock()
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
@@ -1048,7 +1048,7 @@ def test_Wallet_send_scan_passes_scan_to_make_transaction(monkeypatch, monkeypat
                         fake_unspent_per_nonce({0: [60_000]}))
     sent = MagicMock()
     import yubtc.net
-    monkeypatch.setattr(yubtc.net, 'sendTx', sent)
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     captured = {}
 

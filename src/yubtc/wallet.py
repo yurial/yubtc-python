@@ -24,10 +24,13 @@ def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool) -> None:
 
     Used by both `Wallet.send` and the interactive CLI path so they
     surface the same id + amount summary + rawtx and prompt identically
-    before broadcasting.
+    before broadcasting. The broadcast uses the current backend
+    indirectly via the `broadcastTx` free function -- tests that want to
+    intercept the call can either swap the backend with
+    `yubtc.net.set_current_backend(...)` or monkeypatch `broadcastTx`.
     """
     from yubtc.misc import satoshi2btc, yesno
-    from yubtc.net import sendTx
+    from yubtc.net import broadcastTx
     cashback_btc = satoshi2btc(result.cashback)
     amount_btc = satoshi2btc(result.amount)
     fee_btc = satoshi2btc(result.fee)
@@ -39,12 +42,12 @@ def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool) -> None:
     print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
     if broadcast:
         if yesno('broadcast? '):
-            sendTx(rawtx)
+            broadcastTx(rawtx)
     else:
         # No --broadcast: the tx is fully signed and shown above, but
         # never reaches the network. Print a clear note so the
         # operator doesn't mistake the raw tx for a sent one.
-        print('Not broadcast: pass --broadcast (or run sendTx manually) '
+        print('Not broadcast: pass --broadcast (or run broadcastTx manually) '
               'to push this transaction to the network.')
 
 
