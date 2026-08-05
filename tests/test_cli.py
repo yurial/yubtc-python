@@ -419,6 +419,43 @@ def test_send_with_broadcast_flag_calls_broadcastTx(monkeypatch):
     sent.assert_called_once()
 
 
+def test_send_with_yes_flag_skips_broadcast_prompt(monkeypatch):
+    """--yes suppresses the broadcast prompt; --broadcast is required to actually send.
+
+    No 'y' in stdin -- the prompt would hang or raise if it were shown.
+    """
+    _stub_make_transaction(monkeypatch, amount=50_000)
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+
+    # --yes + --broadcast: no 'y' in stdin yet the tx is broadcast.
+    run(['send', '--yes', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+        stdin=SEED + '\n')
+    sent.assert_called_once()
+
+
+def test_send_with_yes_short_flag_works(monkeypatch):
+    """-y is the short form of --yes."""
+    _stub_make_transaction(monkeypatch, amount=50_000)
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+
+    run(['send', '-y', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+        stdin=SEED + '\n')
+    sent.assert_called_once()
+
+
+def test_send_with_yes_without_broadcast_does_not_send(monkeypatch):
+    """`--yes` without `--broadcast` is a no-op for the broadcast step."""
+    _stub_make_transaction(monkeypatch, amount=50_000)
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+
+    run(['send', '--yes', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+        stdin=SEED + '\n')
+    sent.assert_not_called()
+
+
 def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
     """--scan routes through Wallet.send with scan=True."""
     captured = {}

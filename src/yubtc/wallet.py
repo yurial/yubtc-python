@@ -19,7 +19,7 @@ class TxResult(NamedTuple):
     fee: TSatoshi
 
 
-def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool) -> None:
+def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool, yes: bool = NotNone) -> None:
     """Print the signed tx dump and (optionally) push it to the network.
 
     Used by both `Wallet.send` and the interactive CLI path so they
@@ -28,6 +28,9 @@ def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool) -> None:
     indirectly via the `broadcastTx` free function -- tests that want to
     intercept the call can either swap the backend with
     `yubtc.net.set_current_backend(...)` or monkeypatch `broadcastTx`.
+
+    `yes=True` skips the broadcast confirmation prompt and broadcasts
+    immediately; useful for scripts and CI where the prompt is unwanted.
     """
     from yubtc.misc import satoshi2btc, yesno
     from yubtc.net import broadcastTx
@@ -41,7 +44,7 @@ def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool) -> None:
         txsize=len(rawtx)))
     print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
     if broadcast:
-        if yesno('broadcast? '):
+        if yes or yesno('broadcast? '):
             broadcastTx(rawtx)
     else:
         # No --broadcast: the tx is fully signed and shown above, but
@@ -127,7 +130,8 @@ class Wallet(object):
             confirmations: int = NotNone,
             broadcast: bool = NotNone,
             scan: bool = NotNone,
-            on_address: object = None) -> None:
+            on_address: object = None,
+            yes: bool = NotNone) -> None:
         from yubtc.misc import btc2satoshi
         # amount=None is a "drain" sentinel passed through to make_transaction.
         converted_amount = None if amount is None else btc2satoshi(amount)
@@ -136,7 +140,7 @@ class Wallet(object):
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
             confirmations=confirmations, scan=scan,
             sources=None, cashback_addr=None, on_address=on_address)
-        _announce_tx(result=result, dst=dst, broadcast=broadcast)
+        _announce_tx(result=result, dst=dst, broadcast=broadcast, yes=yes)
 
     @require_kwargs_only
     def _make_vin(self, sources: list = NotNone) -> tuple:

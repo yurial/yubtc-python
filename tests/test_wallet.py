@@ -347,7 +347,7 @@ def test_Wallet_send_declined_prints_nothing(monkeypatch):
     from decimal import Decimal
     w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0005'),
            fee=Decimal('0.00001'), feekb=2_000, confirmations=0, broadcast=True, scan=False,
-           on_address=None)
+           on_address=None, yes=False)
     sent.assert_not_called()
 
 
@@ -370,8 +370,58 @@ def test_Wallet_send_dry_run_does_not_prompt(monkeypatch):
     from decimal import Decimal
     w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0005'),
            fee=Decimal('0.00001'), feekb=2_000, confirmations=0, broadcast=False, scan=False,
-           on_address=None)
+           on_address=None, yes=False)
     assert prompted == []
+    sent.assert_not_called()
+
+
+def test_Wallet_send_with_yes_skips_broadcast_prompt(monkeypatch):
+    """`yes=True` skips the broadcast confirmation prompt and broadcasts directly.
+
+    The yesno fixture is patched with a MagicMock so we can assert it
+    was never invoked. broadcastTx is then called exactly once.
+    """
+    from yubtc.wallet import Wallet
+    import yubtc.net
+    import yubtc.misc
+    from unittest.mock import MagicMock
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
+    prompted = MagicMock(side_effect=AssertionError('yesno called despite yes=True'))
+    monkeypatch.setattr(yubtc.misc, 'yesno', prompted)
+
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    from decimal import Decimal
+    w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0005'),
+           fee=Decimal('0.00001'), feekb=2_000, confirmations=0,
+           broadcast=True, scan=False, on_address=None, yes=True)
+    prompted.assert_not_called()
+    sent.assert_called_once()
+
+
+def test_Wallet_send_with_yes_and_no_broadcast_does_nothing(monkeypatch):
+    """`yes=True` without `broadcast=True` is a no-op -- no prompt, no broadcast."""
+    from yubtc.wallet import Wallet
+    import yubtc.net
+    import yubtc.misc
+    from unittest.mock import MagicMock
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
+    prompted = MagicMock(side_effect=AssertionError('yesno called despite broadcast=False'))
+    monkeypatch.setattr(yubtc.misc, 'yesno', prompted)
+
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    from decimal import Decimal
+    w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0005'),
+           fee=Decimal('0.00001'), feekb=2_000, confirmations=0,
+           broadcast=False, scan=False, on_address=None, yes=True)
+    prompted.assert_not_called()
     sent.assert_not_called()
 
 
@@ -392,7 +442,7 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
                 amount=None, fee=Decimal('0.00001'), feekb=2_000,
-                confirmations=0, broadcast=False, scan=False, on_address=None)
+                confirmations=0, broadcast=False, scan=False, on_address=None, yes=False)
     with pytest.raises(TypeError, match='dst not set'):
         w.send(**{k: v for k, v in base.items() if k != 'dst'})
     with pytest.raises(TypeError, match='fee not set'):
@@ -405,6 +455,8 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
         w.send(**{k: v for k, v in base.items() if k != 'broadcast'})
     with pytest.raises(TypeError, match='scan not set'):
         w.send(**{k: v for k, v in base.items() if k != 'scan'})
+    with pytest.raises(TypeError, match='yes not set'):
+        w.send(**{k: v for k, v in base.items() if k != 'yes'})
 
 
 def test_Wallet_init_raises_when_seed_missing(monkeypatch):
@@ -689,12 +741,16 @@ def monkeypatch_input(monkeypatch):
     monkeypatch.setattr(yubtc.misc, 'yesno', lambda q: True)
 
 
-def dry_run_send(w, input_fixture, dst, amount, broadcast=False, scan=False):
+def dry_run_send(w, input_fixture, dst, amount, broadcast=False, scan=False, yes=False):
     """Run wallet.send with the local yes/no fixture and capture stdout.
 
     `amount` is in BTC (the wallet's TBTC units). It is converted to a Decimal
     so btc2satoshi treats it as BTC, not satoshi. Pass amount=None to send all.
     The dump (id, summary, rawtx) is always printed; returns it.
+
+    `yes=True` skips the broadcast confirmation prompt -- the helper
+    leaves the no-op yesno fixture in place but `Wallet.send` won't
+    call it.
     """
     from decimal import Decimal
     import io
@@ -703,7 +759,7 @@ def dry_run_send(w, input_fixture, dst, amount, broadcast=False, scan=False):
     btc_amount = Decimal(amount) if amount is not None else None
     with redirect_stdout(buf):
         w.send(dst=dst, amount=btc_amount, fee=Decimal('0.00001'), feekb=2_000,
-               confirmations=0, broadcast=broadcast, scan=scan, on_address=None)
+               confirmations=0, broadcast=broadcast, scan=scan, on_address=None, yes=yes)
     return buf.getvalue()
 
 
@@ -1072,7 +1128,7 @@ def test_Wallet_send_scan_passes_scan_to_make_transaction(monkeypatch, monkeypat
     from decimal import Decimal
     w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0001'),
            fee=Decimal('0.00001'), feekb=2_000, confirmations=0,
-           broadcast=False, scan=True, on_address=None)
+           broadcast=False, scan=True, on_address=None, yes=False)
     assert captured['scan'] is True
 
 

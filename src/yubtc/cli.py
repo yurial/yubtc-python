@@ -118,6 +118,9 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
               'gap limit; the default selection is the smallest set of UTXOs from the earliest '
               'addresses that covers the amount (and an estimated fee).',
               default=False, is_flag=True)
+@click.option('-y', '--yes', help='Skip the broadcast confirmation prompt. Implies --broadcast when '
+              'used in non-interactive mode; safe to combine with --broadcast explicitly.',
+              default=False, is_flag=True)
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
 def send(
@@ -129,7 +132,8 @@ def send(
         amount: TAmount,
         broadcast: bool,
         scan: bool,
-        interactive: bool) -> None:
+        interactive: bool,
+        yes: bool) -> None:
     amount = None if amount == 'ALL' else TBTC(amount)
     wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
@@ -145,14 +149,14 @@ def send(
         _send_interactive(
             wallet=wallet, address=address, amount=amount,
             fee=fee, feekb=feekb, confirmations=confirmations,
-            broadcast=broadcast, on_address=on_address,
+            broadcast=broadcast, on_address=on_address, yes=yes,
         )
         return
 
     wallet.send(
         dst=address, amount=amount, fee=fee, feekb=feekb,
         confirmations=confirmations, broadcast=broadcast, scan=scan,
-        on_address=on_address if scan else None,
+        on_address=on_address if scan else None, yes=yes,
     )
 
 
@@ -165,7 +169,8 @@ def _send_interactive(
         feekb: TSatoshi = NotNone,
         confirmations: int = NotNone,
         broadcast: bool = NotNone,
-        on_address=None) -> None:
+        on_address=None,
+        yes: bool = NotNone) -> None:
     """send --interactive: scan to gap, run ncurses UI, build and broadcast tx."""
     from yubtc.misc import btc2satoshi, satoshi2btc
     from yubtc.tui import run_selection
@@ -214,4 +219,4 @@ def _send_interactive(
         confirmations=confirmations, scan=False,
         sources=grouped, cashback_addr=cashback_addr, on_address=None,
     )
-    _announce_tx(result=result, dst=address, broadcast=broadcast)
+    _announce_tx(result=result, dst=address, broadcast=broadcast, yes=yes)
