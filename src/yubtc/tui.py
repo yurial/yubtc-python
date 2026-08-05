@@ -139,16 +139,27 @@ def compute_total(sources, selected_set: set) -> int:
     return total
 
 
+# Rough P2PKH-only tx size constants. Used by `estimate_tx_size` to
+# give the UI a live fee readout as the user toggles inputs. The precise
+# fee is recomputed by `make_transaction` after the tx is actually signed.
+_TX_OVERHEAD_BYTES = 10
+_P2PKH_INPUT_BYTES = 148
+_P2PKH_OUTPUT_BYTES = 34
+
+
 def estimate_tx_size(num_inputs: int, num_outputs: int) -> int:
     """Rough estimate of a P2PKH-only tx size in bytes.
 
-    ~10 bytes of tx overhead, ~148 bytes per P2PKH input (DER sig +
-    compressed pubkey + push op + txin scaffolding), ~34 bytes per
-    P2PKH output (amount + script length + P2PKH script). Good enough
-    for the UI's live fee readout -- the precise fee is recomputed when
-    make_transaction actually signs the tx.
+    ~`_TX_OVERHEAD_BYTES` of tx overhead, ~`_P2PKH_INPUT_BYTES` per P2PKH
+    input (DER sig + compressed pubkey + push op + txin scaffolding),
+    ~`_P2PKH_OUTPUT_BYTES` per P2PKH output (amount + script length +
+    P2PKH script). Good enough for the UI's live fee readout -- the
+    precise fee is recomputed when make_transaction actually signs the
+    tx.
     """
-    return 10 + 148 * num_inputs + 34 * num_outputs
+    return (_TX_OVERHEAD_BYTES
+            + _P2PKH_INPUT_BYTES * num_inputs
+            + _P2PKH_OUTPUT_BYTES * num_outputs)
 
 
 def _count_outputs(total: int, target: Optional[TSatoshi],
