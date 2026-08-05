@@ -434,16 +434,14 @@ def test_Wallet_rejects_empty_seed(monkeypatch):
 def test_Wallet_make_vin_builds_cin_for_each_utxo(monkeypatch):
     """Each unspent UTXO becomes a CIn with the right txhash, n, and script."""
     from yubtc.wallet import Wallet
-    from yubtc.crypto import seed2privkey, privkey2pubkey
-    from yubtc.hash import hash160
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_two_utxos())
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
-    pubhash = hash160(pubkey)
-    vin, in_amount = w._make_vin(pubhash=pubhash, unspent=w.privkeys[0].get_unspent(confirmations=0))
+    tp = w.privkeys[0]
+    unspent = tp.get_unspent(confirmations=0)
+    vin, in_amount, signers = w._make_vin(sources=[(tp, unspent)])
     assert in_amount == 100_000
     assert len(vin) == 2
     assert vin[0].txhash == b'\xaa' * 32
@@ -453,16 +451,19 @@ def test_Wallet_make_vin_builds_cin_for_each_utxo(monkeypatch):
 
 
 def test_Wallet_make_vin_rejects_utxo_with_mismatched_pubkey(monkeypatch):
-    """A UTXO whose lock script doesn't match our pubkey hash is rejected."""
-    from yubtc.wallet import Wallet
+    """A UTXO whose lock script doesn't match the source privkey's pubhash is rejected."""
+    from yubtc.wallet import Wallet, TPrivKey
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
 
+    tp = TPrivKey(seed='qwe', nonce=0)
+    # Lock script for a different pubhash than tp's -- a random 20-byte payload.
+    bad_script = '76a914' + '11' * 20 + '88ac'
+    bad_utxo = [{'tx': 'a' * 64, 'out_n': 0, 'amount': 1_000, 'script': bad_script}]
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     with pytest.raises(Exception, match='unknown pubkey required'):
-        # Pass a fake pubhash that doesn't match the UTXO's lock script.
-        w._make_vin(pubhash=b'\x00' * 20, unspent=w.privkeys[0].get_unspent(confirmations=0))
+        w._make_vin(sources=[(tp, bad_utxo)])
 
 
 # ---------------------------------------------------------------------------
@@ -593,16 +594,14 @@ def test_Wallet_make_transaction_raises_when_dst_missing(monkeypatch):
         w.make_transaction(**{k: v for k, v in base.items() if k != 'dst'})
 
 
-def test_Wallet_make_vin_raises_when_pubhash_or_unspent_missing(monkeypatch):
+def test_Wallet_make_vin_raises_when_sources_missing(monkeypatch):
     from yubtc.wallet import Wallet
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='pubhash not set'):
-        w._make_vin(unspent=[])
-    with pytest.raises(Exception, match='unspent not set'):
-        w._make_vin(pubhash=b'\x00' * 20)
+    with pytest.raises(Exception, match='sources not set'):
+        w._make_vin()
 
 
 def test_Wallet_methods_reject_positional_args(monkeypatch):
@@ -620,7 +619,7 @@ def test_Wallet_methods_reject_positional_args(monkeypatch):
         w.make_transaction('1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 50_000)
     # _make_vin: same.
     with pytest.raises(Exception, match='only kwargs allowed'):
-        w._make_vin(b'\x00' * 20, [])
+        w._make_vin([])
 
 
 # ---------------------------------------------------------------------------
@@ -1079,26 +1078,6 @@ def test_Wallet_scan_inputs_raises_when_confirmations_missing(monkeypatch):
         w._scan_inputs()
 
 
-def test_Wallet_make_vin_multi_raises_when_sources_missing(monkeypatch):
-    from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
-    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='sources not set'):
-        w._make_vin_multi()
-
-
-def test_Wallet_make_vin_multi_rejects_positional_args(monkeypatch):
-    from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
-    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='only kwargs allowed'):
-        w._make_vin_multi([(None, [])])
-
-
 def test_Wallet_scan_inputs_rejects_positional_args(monkeypatch):
     from yubtc.wallet import Wallet
     monkeypatch.setattr('yubtc.net.get_address_info',
@@ -1107,18 +1086,3 @@ def test_Wallet_scan_inputs_rejects_positional_args(monkeypatch):
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     with pytest.raises(Exception, match='only kwargs allowed'):
         w._scan_inputs(0)
-
-
-def test_Wallet_make_vin_multi_rejects_unknown_pubkey(monkeypatch):
-    """A UTXO whose lock script doesn't match its source privkey is rejected."""
-    from yubtc.wallet import Wallet, TPrivKey
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
-    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    tp = TPrivKey(seed='qwe', nonce=0)
-    # A UTXO whose lock script is a random 25-byte P2PKH-shaped hex.
-    fake_script = '76a914' + '11' * 20 + '88ac'
-    bad_utxo = [{'tx': 'a' * 64, 'out_n': 0, 'amount': 1_000, 'script': fake_script}]
-    with pytest.raises(Exception, match='unknown pubkey required'):
-        w._make_vin_multi(sources=[(tp, bad_utxo)])

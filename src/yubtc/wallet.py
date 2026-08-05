@@ -131,36 +131,22 @@ class Wallet(object):
                   'to push this transaction to the network.')
 
     @require_kwargs_only
-    def _make_vin(self, pubhash: bytes = NotNone, unspent: list = NotNone) -> tuple:
-        from yubtc.transaction import script2pkh, CIn
-        vin = list()
-        in_amount = 0
-        for u in unspent:
-            in_amount += u['amount']
-            tx_lock_script = bytes.fromhex(u['script'])
-            required_hash = script2pkh(tx_lock_script)
-            if required_hash != pubhash:
-                raise Exception('unknown pubkey required')
-            txhash = bytes.fromhex(u['tx'])
-            vin.append(CIn(
-                txhash=txhash, n=u['out_n'],
-                script=tx_lock_script, sequence=0xffffffff,
-            ))
-        return vin, in_amount
+    def _make_vin(self, sources: list = NotNone) -> tuple:
+        """Build CIn entries from one or more addresses' UTXOs.
 
-    @require_kwargs_only
-    def _make_vin_multi(
-            self,
-            sources: list = NotNone) -> tuple:
-        """Build CIn entries from multiple addresses' UTXOs.
+        `sources` is a list of `(TPrivKey, unspent_list)` tuples. Each
+        UTXO is validated against its privkey's pubhash and a
+        `(privkey, pubkey)` signer pair is appended for every input.
+        Single-address callers pass a one-element list; multi-address
+        callers (e.g. from `_scan_inputs`) pass one entry per address
+        that contributed UTXOs.
 
-        `sources` is a list of (TPrivKey, unspent) tuples. The lock
-        script of each UTXO is validated against the corresponding
-        privkey's pubhash. Returns (vin, in_amount, signers) where
-        signers is a list of (PrivateKey, pubwif) pairs, one per input.
+        Returns `(vin, in_amount, signers)` -- the same shape regardless
+        of how many addresses contribute, so the caller doesn't branch on
+        single vs. multi.
         """
-        from yubtc.hash import hash160
         from yubtc.crypto import privkey2pubkey
+        from yubtc.hash import hash160
         from yubtc.transaction import script2pkh, CIn
         vin = list()
         in_amount = 0
@@ -272,23 +258,20 @@ class Wallet(object):
             if cashback_addr is None:
                 raise Exception('cashback_addr not set')
             src = cashback_addr
-            vin, in_amount, signers = self._make_vin_multi(sources=sources)
+            vin_sources = sources
         elif scan:
             # When scanning, fetch UTXOs from every address starting at
             # nonce 0 until either the target amount is met or an unused
             # address is hit. Cashback goes to the last input or to the
             # unused address (when the scan halted via gap limit).
-            sources, src = self._scan_inputs(
+            vin_sources, src = self._scan_inputs(
                 target=amount, confirmations=confirmations,
                 on_address=on_address)
-            vin, in_amount, signers = self._make_vin_multi(sources=sources)
         else:
             src = pubkey2addr(pubkey=pubkey)
             unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
-            from yubtc.hash import hash160
-            pubhash = hash160(pubkey)
-            vin, in_amount = self._make_vin(pubhash=pubhash, unspent=unspent)
-            signers = [(self.privkeys[0].privkey, pubkey)]
+            vin_sources = [(self.privkeys[0], unspent)]
+        vin, in_amount, signers = self._make_vin(sources=vin_sources)
         _fee = fee
         while True:
             vout_result = make_vout(src=src, dst=dst, in_amount=in_amount,
