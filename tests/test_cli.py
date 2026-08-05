@@ -246,7 +246,7 @@ def test_send_amount_all_means_none(monkeypatch):
 
 
 def test_send_declined_by_user_prints_nothing(monkeypatch):
-    """If the user answers 'n' to the confirmation prompt, no tx is printed."""
+    """With --broadcast, answering 'n' to the confirm prompt skips sendTx but the dump is still printed."""
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
@@ -261,11 +261,49 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
-    # User says 'no' to the confirmation.
-    output = run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+
+    sent = MagicMock()
+    import yubtc.net as net
+    monkeypatch.setattr(net, 'sendTx', sent)
+
+    # --broadcast + 'n' answer -> sendTx is NOT called.
+    output = run(['send', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
                  stdin=SEED + '\nn\n')
-    # The raw tx hex is NOT printed.
-    assert fake_tx.serialize().hex() not in output
+    sent.assert_not_called()
+    # The dump (id + rawtx) is still printed.
+    assert fake_tx.serialize().hex() in output
+
+
+def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
+    """Without --broadcast, no confirmation prompt is asked -- the dump just prints."""
+    import yubtc.wallet as wallet_mod
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    privkey = seed2privkey(seed='qwe', nonce=0)
+    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    fake_tx = CTransaction(
+        vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+        vout=[COut(amount=0, script=b'\xac')],
+        locktime=0,
+    ).sign(privkey=privkey, pubwif=pubwif)
+
+    def fake_make_transaction(self, **kwargs):
+        return fake_tx, 0, 50_000, 1_000
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+
+    sent = MagicMock()
+    import yubtc.net as net
+    monkeypatch.setattr(net, 'sendTx', sent)
+
+    prompted = []
+    import yubtc.misc as misc
+    monkeypatch.setattr(misc, 'yesno', lambda q: (prompted.append(q), True)[1])
+
+    output = run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+                 stdin=SEED + '\n')
+    assert prompted == []
+    sent.assert_not_called()
+    assert fake_tx.serialize().hex() in output
 
 
 def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):

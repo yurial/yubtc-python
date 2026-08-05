@@ -147,18 +147,17 @@ class Wallet(object):
         amount_btc = satoshi2btc(satoshi_amount)
         fee_btc = satoshi2btc(satoshi_fee_used)
         rawtx = tx.serialize()
-        if yesno(
-            'send {:0.08f} BTC to {} (cashback={:0.08f}, fee={:0.08f}, txsize={})? '.format(
-                amount_btc,
-                dst,
-                cashback_btc,
-                fee_btc,
-                len(rawtx))):
-            print('id: {}'.format(tx.id().hex()))
-            if broadcast:
+        print('id: {id}'.format(id=tx.id().hex()))
+        print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
+            amount=amount_btc,
+            dst=dst,
+            cashback=cashback_btc,
+            fee=fee_btc,
+            txsize=len(rawtx)))
+        print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
+        if broadcast:
+            if yesno('broadcast? '):
                 sendTx(rawtx)
-            else:
-                print(rawtx.hex())
 
     def _make_vin(self, *args, pubhash: Optional[bytes] = None, unspent: Optional[list] = None) -> tuple:
         if args:
