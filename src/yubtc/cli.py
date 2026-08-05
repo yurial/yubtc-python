@@ -113,6 +113,10 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
 @click.option('--scan', help='Scan addresses starting at --nonce until the target amount is reached '
               'or an unused address is found; spend all collected inputs.',
               default=False, is_flag=True)
+@click.option('-i', '--interactive', help='Open an ncurses UI to pick inputs. Always scans to the '
+              'gap limit; the default selection is the smallest set of UTXOs from the earliest '
+              'addresses that covers the amount (and an estimated fee).',
+              default=False, is_flag=True)
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
 def send(
@@ -123,7 +127,8 @@ def send(
         address: TAddress,
         amount: TAmount,
         broadcast: bool,
-        scan: bool) -> None:
+        scan: bool,
+        interactive: bool) -> None:
     amount = None if amount == 'ALL' else TBTC(amount)
     wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
@@ -135,8 +140,102 @@ def send(
         amount_btc = satoshi2btc(in_amount)
         print(f'{tp.nonce}# {addr}: {amount_btc:0.08f} BTC')
 
+    if interactive:
+        _send_interactive(
+            wallet=wallet, address=address, amount=amount,
+            fee=fee, feekb=feekb, confirmations=confirmations,
+            broadcast=broadcast, on_address=on_address,
+        )
+        return
+
     wallet.send(
         dst=address, amount=amount, fee=fee, feekb=feekb,
         confirmations=confirmations, broadcast=broadcast, scan=scan,
         on_address=on_address if scan else None,
     )
+
+
+def _send_interactive(
+        *args,
+        wallet=None,
+        address: TAddress = None,
+        amount=None,
+        fee: TBTC = None,
+        feekb: TSatoshi = None,
+        confirmations: int = None,
+        broadcast: bool = None,
+        on_address=None) -> None:
+    """send --interactive: scan to gap, run ncurses UI, build and broadcast tx."""
+    if args:
+        raise Exception('only kwargs allowed')
+    if wallet is None:
+        raise Exception('wallet not set')
+    if address is None:
+        raise Exception('address not set')
+    if fee is None:
+        raise Exception('fee not set')
+    if feekb is None:
+        raise Exception('feekb not set')
+    if confirmations is None:
+        raise Exception('confirmations not set')
+    if broadcast is None:
+        raise Exception('broadcast not set')
+    from yubtc.misc import btc2satoshi, satoshi2btc, yesno
+    from yubtc.net import sendTx
+    from yubtc.tui import run_selection
+    from yubtc.select import selection_to_sources
+
+    # Scan to gap (target=None) so the user sees every available UTXO.
+    sources, cashback_addr = wallet._scan_inputs(
+        target=None, confirmations=confirmations, on_address=on_address)
+    if not sources:
+        print('No funds available')
+        return
+
+    # Target the UI at exactly the requested amount (not padded with an
+    # estimated fee); the UI shows the live fee impact of the user's
+    # selection as they toggle inputs.
+    satoshi_target = None if amount is None else btc2satoshi(amount)
+    satoshi_fee = btc2satoshi(fee)
+
+    # When the target can't be reached with the available UTXOs, no
+    # selection the user could make would cover it -- skip the UI and
+    # print the gap so the operator knows how short they are. Drain
+    # mode (satoshi_target is None) has no target to fail against, so
+    # the check is skipped.
+    if satoshi_target is not None:
+        total_available = sum(
+            u['amount'] for pk, unspent in sources for u in unspent)
+        if satoshi_target > total_available:
+            print('Insufficient funds: target {target:0.08f} BTC, '
+                  'available {available:0.08f} BTC'.format(
+                      target=satoshi2btc(satoshi_target),
+                      available=satoshi2btc(total_available)))
+            return
+
+    selected_flat = run_selection(sources, target=satoshi_target,
+                                  fee=satoshi_fee, feekb=feekb,
+                                  cashback_addr=cashback_addr)
+    if selected_flat is None:
+        print('Cancelled')
+        return
+
+    grouped = selection_to_sources(selected_flat)
+    converted_amount = None if amount is None else btc2satoshi(amount)
+    stx, cashback, sent, fee_used = wallet.make_transaction(
+        dst=address, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
+        confirmations=confirmations, scan=False,
+        sources=grouped, cashback_addr=cashback_addr,
+    )
+    cashback_btc = satoshi2btc(cashback)
+    sent_btc = satoshi2btc(sent)
+    fee_btc = satoshi2btc(fee_used)
+    rawtx = stx.serialize()
+    print('id: {id}'.format(id=stx.id().hex()))
+    print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
+        amount=sent_btc, dst=address, cashback=cashback_btc, fee=fee_btc,
+        txsize=len(rawtx)))
+    print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
+    if broadcast:
+        if yesno('broadcast? '):
+            sendTx(rawtx)

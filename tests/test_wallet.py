@@ -633,6 +633,54 @@ def test_Wallet_methods_reject_positional_args(monkeypatch):
 # Helpers (test-local).
 # ---------------------------------------------------------------------------
 
+
+def test_Wallet_make_transaction_uses_caller_sources_and_cashback_addr(monkeypatch):
+    """End-to-end: pre-selected sources + cashback_addr reach make_vout
+    and the tx is built/signed."""
+    from yubtc.wallet import Wallet
+    from yubtc.crypto import seed2privkey, privkey2addr, privkey2pubkey
+    from yubtc.hash import hash160
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent_with_one_utxo())
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    pk = w.privkeys[0]
+    pubkey = privkey2pubkey(privkey=pk.privkey)
+    pubhash = hash160(pubkey)
+    script = '76a914' + pubhash.hex() + '88ac'
+    sources = [(pk, [{'tx': 'aa' * 32, 'out_n': 0, 'amount': 100_000,
+                      'confirmations': 10, 'script': script}])]
+    # Use the gap-limit address as the cashback destination.
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=2))
+    stx, cashback_sat, sent_sat, fee_sat = w.make_transaction(
+        dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=99_000, fee=1_000,
+        feekb=2_000, confirmations=0, scan=False,
+        sources=sources, cashback_addr=cashback,
+    )
+    # Exact spend: no cashback, single output.
+    assert cashback_sat == 0
+    assert sent_sat == 99_000
+    assert len(stx.vout) == 1
+
+
+def test_Wallet_make_transaction_with_sources_requires_cashback_addr(monkeypatch):
+    """When `sources` is provided, `cashback_addr` is also required."""
+    from yubtc.wallet import Wallet
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    with pytest.raises(Exception, match='cashback_addr not set'):
+        w.make_transaction(
+            dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
+            fee=1_000, feekb=2_000, confirmations=0, scan=False,
+            sources=[(w.privkeys[0], [{'tx_hash': 'aa' * 32, 'out_n': 0,
+                                       'amount': 100_000, 'confirmations': 0,
+                                       'script': '76a914' + 'aa' * 20 + '88ac'}])],
+        )
+
+
 @pytest.fixture
 def monkeypatch_input(monkeypatch):
     """Patch `yubtc.misc.yesno` to confirm everything."""

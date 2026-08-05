@@ -248,7 +248,7 @@ class Wallet(object):
             unspent = pk.get_unspent(confirmations=confirmations)
             if pk.is_unused() and not unspent:
                 # True gap: this address has never received anything and
-                # has nothing to spend. Retback goes here.
+                # has nothing to spend. Cashback goes here.
                 cashback_addr = pk.get_p2pkh_address()
                 break
             if unspent:
@@ -273,7 +273,20 @@ class Wallet(object):
             fee: Optional[TSatoshi] = None,
             confirmations: Optional[int] = None,
             scan: Optional[bool] = None,
+            sources: Optional[list] = None,
+            cashback_addr: Optional[TAddress] = None,
             on_address: Optional[object] = None) -> tuple:
+        """Build and sign a transaction.
+
+        Three input modes:
+        - `sources` provided: caller has already selected inputs (e.g.
+          via the interactive TUI). `cashback_addr` is the destination
+          for any change; the scan is skipped.
+        - `scan=True`: walk the seed forward collecting UTXOs until the
+          target is met or the gap limit is hit. Cashback goes to the
+          last sourced address, or to the gap-limit unused address.
+        - otherwise: use the wallet's primary address's UTXOs only.
+        """
         if args:
             raise Exception('only kwargs allowed')
         if dst is None:
@@ -287,10 +300,18 @@ class Wallet(object):
         if scan is None:
             raise Exception('scan not set')
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
-        if scan:
+        if sources is not None:
+            # Caller pre-selected (e.g. the interactive UI). The cashback
+            # address is whatever the caller picked -- normally the gap-
+            # limit unused address so a fresh receive slot gets the change.
+            if cashback_addr is None:
+                raise Exception('cashback_addr not set')
+            src = cashback_addr
+            vin, in_amount, signers = self._make_vin_multi(sources=sources)
+        elif scan:
             # When scanning, fetch UTXOs from every address starting at
             # nonce 0 until either the target amount is met or an unused
-            # address is hit. Retback goes to the last input or to the
+            # address is hit. Cashback goes to the last input or to the
             # unused address (when the scan halted via gap limit).
             sources, src = self._scan_inputs(
                 target=amount, confirmations=confirmations,

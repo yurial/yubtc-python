@@ -4,6 +4,7 @@ from click.testing import CliRunner
 
 import yubtc
 import yubtc.net
+from yubtc.fwd import TBTC
 
 # Vectors below are the same ones asserted in test_crypto.py, reached through
 # the CLI instead of the crypto helpers.
@@ -515,8 +516,371 @@ def test_send_without_scan_does_not_emit_per_address_lines(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# send --interactive: scan to gap, run selection UI, build tx.
+# ---------------------------------------------------------------------------
+
+
+def test_send_interactive_passes_scan_target_none_to_gap(monkeypatch):
+    """--interactive always scans to the gap limit (target=None)."""
+    import yubtc.wallet as wallet_mod
+    captured = {}
+
+    def fake_scan_inputs(self, *args, **kwargs):
+        captured['target'] = kwargs.get('target')
+        captured['confirmations'] = kwargs.get('confirmations')
+        # Return one source with a UTXO big enough to cover the 0.001 BTC
+        # request (so the feasibility short-circuit doesn't kick in) and
+        # the gap-limit cashback address.
+        from yubtc.crypto import seed2privkey, privkey2addr
+        pk = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+        utxo = {
+            'tx': 'aa' * 32, 'out_n': 0, 'amount': 1_000_000,
+            'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac',
+        }
+        captured['cashback_addr'] = privkey2addr(
+            privkey=seed2privkey(seed='qwe', nonce=1))
+        return [(pk, [utxo])], captured['cashback_addr']
+
+    def fake_run_selection(sources, target, fee, feekb, cashback_addr):
+        captured['ui_target'] = target
+        captured['ui_fee'] = fee
+        captured['ui_feekb'] = feekb
+        captured['ui_cashback_addr'] = cashback_addr
+        # User immediately cancels.
+        return None
+
+    def fake_make_transaction(self, **kwargs):
+        raise AssertionError('make_transaction should not run after cancel')
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    monkeypatch.setattr(wallet_mod.Wallet, '_scan_inputs', fake_scan_inputs)
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+    import yubtc.tui as tui_mod
+    monkeypatch.setattr(tui_mod, 'run_selection', fake_run_selection)
+
+    output = run(
+        ['send', '-i', '-f', '0', '-k', '2000',
+         '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.001'],
+        stdin=SEED + '\n',
+    )
+    # Scan was forced to target=None (gap limit), not the user's amount.
+    assert captured['target'] is None
+    # The UI's target is the exact requested amount (no fee padding).
+    assert captured['ui_target'] == 100_000  # 0.001 BTC in satoshi
+    # The hard-set fee (0) and feekb (2000) are forwarded.
+    assert captured['ui_fee'] == 0
+    assert captured['ui_feekb'] == 2000
+    # The cashback address from _scan_inputs is forwarded so the UI
+    # can show where any change would land.
+    assert captured['ui_cashback_addr'] == captured['cashback_addr']
+    assert 'Cancelled' in output
+
+
+def test_send_interactive_builds_tx_with_caller_selection(monkeypatch):
+    """When the UI returns a selection, make_transaction receives it
+    as `sources` plus the gap-limit cashback address."""
+    import yubtc.wallet as wallet_mod
+    from yubtc.crypto import seed2privkey, privkey2addr, privkey2pubkey
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.hash import hash160
+
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1))
+    utxo_dict = {
+        'tx_hash': 'a' * 64, 'out_n': 0, 'amount': 100_000,
+        'confirmations': 10,
+        'script': '76a914' + hash160(privkey2pubkey(privkey=pk0.privkey)).hex() + '88ac',
+    }
+
+    def fake_scan_inputs(self, *args, **kwargs):
+        return [(pk0, [utxo_dict])], cashback
+
+    def fake_make_transaction(self, **kwargs):
+        captured_make['sources'] = kwargs.get('sources')
+        captured_make['cashback_addr'] = kwargs.get('cashback_addr')
+        captured_make['scan'] = kwargs.get('scan')
+        privkey = pk0.privkey
+        pubkey = privkey2pubkey(privkey=privkey)
+        stx = CTransaction(
+            vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+            vout=[COut(amount=99_000, script=b'\xac')],
+            locktime=0,
+        ).sign(signers=[(privkey, pubkey)])
+        return stx, 0, 99_000, 1_000
+
+    captured_make = {}
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    monkeypatch.setattr(wallet_mod.Wallet, '_scan_inputs', fake_scan_inputs)
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+    # UI returns the one available UTXO pre-selected.
+    import yubtc.tui as tui_mod
+    monkeypatch.setattr(tui_mod, 'run_selection',
+                        lambda sources, target, fee, feekb, cashback_addr: [(pk0, utxo_dict)])
+
+    output = run(
+        ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
+        stdin=SEED + '\n',
+    )
+    # The selected UTXO reaches make_transaction grouped under its key.
+    assert captured_make['sources'] == [(pk0, [utxo_dict])]
+    assert captured_make['cashback_addr'] == cashback
+    # The interactive path passes scan=False because the scan already ran
+    # in the CLI to feed the UI.
+    assert captured_make['scan'] is False
+    # A successful tx prints the id and the raw hex.
+    assert 'id:' in output
+    assert 'rawtx:' in output
+
+
+def test_send_interactive_prints_no_funds_when_scan_empty(monkeypatch):
+    """If the scan finds nothing, the interactive path prints a notice."""
+    import yubtc.wallet as wallet_mod
+
+    def fake_scan_inputs(self, *args, **kwargs):
+        return [], b''
+
+    def fake_run_selection(sources, target, fee, feekb):
+        raise AssertionError('UI must not run when there are no funds')
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    monkeypatch.setattr(wallet_mod.Wallet, '_scan_inputs', fake_scan_inputs)
+    import yubtc.tui as tui_mod
+    monkeypatch.setattr(tui_mod, 'run_selection', fake_run_selection)
+
+    output = run(
+        ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.001'],
+        stdin=SEED + '\n',
+    )
+    assert 'No funds' in output
+
+
+def test_send_interactive_skips_tui_when_target_unreachable(monkeypatch):
+    """When the requested amount exceeds total available UTXOs, skip
+    the UI and print an insufficient-funds message naming both numbers."""
+    import yubtc.wallet as wallet_mod
+
+    def fake_scan_inputs(self, *args, **kwargs):
+        # One source with a tiny UTXO (100 satoshi = 0.00000100 BTC).
+        pk = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+        utxo = {
+            'tx': 'aa' * 32, 'out_n': 0, 'amount': 100,
+            'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac',
+        }
+        return [(pk, [utxo])], b'cashback_addr'
+
+    def fake_run_selection(sources, target, fee, feekb, cashback_addr):
+        raise AssertionError('UI must not run when target is unreachable')
+
+    def fake_make_transaction(self, **kwargs):
+        raise AssertionError(
+            'make_transaction must not run when target is unreachable')
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    monkeypatch.setattr(wallet_mod.Wallet, '_scan_inputs', fake_scan_inputs)
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+    import yubtc.tui as tui_mod
+    monkeypatch.setattr(tui_mod, 'run_selection', fake_run_selection)
+
+    # 0.001 BTC requested, only 0.00000100 BTC available.
+    output = run(
+        ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.001'],
+        stdin=SEED + '\n',
+    )
+    assert 'Insufficient funds' in output
+    # Both amounts appear so the operator sees the gap.
+    assert '0.00100000' in output
+    assert '0.00000100' in output
+
+
+def test_send_interactive_drain_mode_skips_feasibility_check(monkeypatch):
+    """With amount=ALL (drain mode, target=None), the feasibility
+    short-circuit is skipped even if available funds are tiny."""
+    import yubtc.wallet as wallet_mod
+
+    def fake_scan_inputs(self, *args, **kwargs):
+        pk = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+        utxo = {
+            'tx': 'aa' * 32, 'out_n': 0, 'amount': 100,
+            'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac',
+        }
+        return [(pk, [utxo])], b'cashback_addr'
+
+    ui_called = []
+
+    def fake_run_selection(sources, target, fee, feekb, cashback_addr):
+        # In drain mode target is None -- the UI is reached.
+        ui_called.append(target)
+        return None  # user cancels
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    monkeypatch.setattr(wallet_mod.Wallet, '_scan_inputs', fake_scan_inputs)
+    import yubtc.tui as tui_mod
+    monkeypatch.setattr(tui_mod, 'run_selection', fake_run_selection)
+
+    output = run(
+        ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
+        stdin=SEED + '\n',
+    )
+    # The UI ran with target=None (drain).
+    assert ui_called == [None]
+    assert 'Insufficient funds' not in output
+    assert 'Cancelled' in output
+
+
+def test_send_interactive_broadcast_prompts_and_calls_sendtx(monkeypatch):
+    """--interactive + --broadcast: yesno('broadcast?') feeds into sendTx."""
+    import yubtc.wallet as wallet_mod
+    from yubtc.crypto import seed2privkey, privkey2addr, privkey2pubkey
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.hash import hash160
+
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1))
+    utxo_dict = {
+        'tx_hash': 'a' * 64, 'out_n': 0, 'amount': 100_000,
+        'confirmations': 10,
+        'script': '76a914' + hash160(privkey2pubkey(privkey=pk0.privkey)).hex() + '88ac',
+    }
+
+    def fake_scan_inputs(self, *args, **kwargs):
+        return [(pk0, [utxo_dict])], cashback
+
+    def fake_make_transaction(self, **kwargs):
+        privkey = pk0.privkey
+        pubkey = privkey2pubkey(privkey=privkey)
+        stx = CTransaction(
+            vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+            vout=[COut(amount=99_000, script=b'\xac')],
+            locktime=0,
+        ).sign(signers=[(privkey, pubkey)])
+        return stx, 0, 99_000, 1_000
+
+    prompts = []
+
+    def fake_yesno(prompt):
+        prompts.append(prompt)
+        return True
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    monkeypatch.setattr(wallet_mod.Wallet, '_scan_inputs', fake_scan_inputs)
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+    import yubtc.tui as tui_mod
+    monkeypatch.setattr(tui_mod, 'run_selection',
+                        lambda sources, target, fee, feekb, cashback_addr: [(pk0, utxo_dict)])
+    import yubtc.misc as misc
+    monkeypatch.setattr(misc, 'yesno', fake_yesno)
+    monkeypatch.setattr(yubtc.net, 'sendTx', MagicMock())
+
+    run(
+        ['send', '-i', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
+        stdin=SEED + '\n',
+    )
+    assert prompts == ['broadcast? ']
+    assert yubtc.net.sendTx.called
+
+
+def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
+    """--interactive + --broadcast + 'n' prompt: sendTx is not called."""
+    import yubtc.wallet as wallet_mod
+    from yubtc.crypto import seed2privkey, privkey2addr, privkey2pubkey
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.hash import hash160
+
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1))
+    utxo_dict = {
+        'tx_hash': 'a' * 64, 'out_n': 0, 'amount': 100_000,
+        'confirmations': 10,
+        'script': '76a914' + hash160(privkey2pubkey(privkey=pk0.privkey)).hex() + '88ac',
+    }
+
+    def fake_scan_inputs(self, *args, **kwargs):
+        return [(pk0, [utxo_dict])], cashback
+
+    def fake_make_transaction(self, **kwargs):
+        privkey = pk0.privkey
+        pubkey = privkey2pubkey(privkey=privkey)
+        stx = CTransaction(
+            vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+            vout=[COut(amount=99_000, script=b'\xac')],
+            locktime=0,
+        ).sign(signers=[(privkey, pubkey)])
+        return stx, 0, 99_000, 1_000
+
+    prompts = []
+
+    def fake_yesno(prompt):
+        prompts.append(prompt)
+        return False
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    monkeypatch.setattr(wallet_mod.Wallet, '_scan_inputs', fake_scan_inputs)
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+    import yubtc.tui as tui_mod
+    monkeypatch.setattr(tui_mod, 'run_selection',
+                        lambda sources, target, fee, feekb, cashback_addr: [(pk0, utxo_dict)])
+    import yubtc.misc as misc
+    monkeypatch.setattr(misc, 'yesno', fake_yesno)
+    sendtx = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'sendTx', sendtx)
+
+    output = run(
+        ['send', '-i', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
+        stdin=SEED + '\n',
+    )
+    # The prompt was shown, but the user said no.
+    assert prompts == ['broadcast? ']
+    sendtx.assert_not_called()
+    # The rawtx is still printed so the operator can broadcast by other means.
+    assert 'rawtx:' in output
+
+
+# ---------------------------------------------------------------------------
 # __main__ block in cli.py: cli() runs when the module is executed.
 # ---------------------------------------------------------------------------
+
+
+def test_send_interactive_rejects_positional_args():
+    """_send_interactive is kwargs-only."""
+    from yubtc.cli import _send_interactive
+    with pytest.raises(Exception, match='only kwargs allowed'):
+        _send_interactive(None)
+
+
+def test_send_interactive_raises_when_required_kwarg_missing():
+    """Each required kwarg has its own 'X not set' guard."""
+    from yubtc.cli import _send_interactive
+    from yubtc.wallet import Wallet
+    base = dict(wallet=Wallet(seed='qwe', nonce=0, new_addresses=1),
+                address='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
+                amount=None, fee=TBTC(0), feekb=2000, confirmations=0,
+                broadcast=False)
+    for missing in ('wallet', 'address', 'fee', 'feekb',
+                    'confirmations', 'broadcast'):
+        kwargs = {k: v for k, v in base.items() if k != missing}
+        with pytest.raises(Exception, match=f'{missing} not set'):
+            _send_interactive(**kwargs)
 # This block was removed from cli.py -- yubtc/__main__.py already invokes
 # `cli`, so the guard was redundant. See test_main.py for the real entry-point
 # test.
