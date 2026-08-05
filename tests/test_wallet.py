@@ -253,44 +253,6 @@ def test_Wallet_rejects_positional_args():
         Wallet('positional')
 
 
-def test_Wallet_from_privkey_creates_single_privkey(monkeypatch):
-    """privkey=... -> a Wallet with one TPrivKey (no seed-scan)."""
-    from yubtc.wallet import Wallet
-    from yubtc.crypto import seed2privkey
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
-    w = Wallet(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True, new_addresses=1)
-    assert len(w.privkeys) == 1
-    assert w.privkeys[0].privkey == seed2privkey(seed='qwe', nonce=0)
-
-
-def test_Wallet_from_privwif_creates_single_privkey(monkeypatch):
-    """privwif=... -> Wallet with one TPrivKey whose privkey matches the WIF."""
-    from yubtc.wallet import Wallet
-    from yubtc.crypto import privkey2privwif, seed2privkey
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
-    privkey = seed2privkey(seed='qwe', nonce=0)
-    wif = privkey2privwif(privkey=privkey, compressed=True)
-    w = Wallet(privwif=wif, compressed=True, new_addresses=1)
-    assert len(w.privkeys) == 1
-    assert w.privkeys[0].privkey == privkey
-
-
-def test_Wallet_with_no_source_leaves_privkeys_unset(monkeypatch):
-    """Wallet() with no privkey/privwif/seed: privkeys is left as None.
-
-    This is the uncovered branch in Wallet.__init__: when no source is
-    provided, the constructor falls through and never builds the privkey
-    list, leaving the attribute at the placeholder None.
-    """
-    from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
-    w = Wallet()
-    assert w.privkeys is None
-
-
 def test_Wallet_send_rejects_positional_args(monkeypatch):
     """send(arg, ...) is invalid -- only kwargs are accepted."""
     from yubtc.wallet import Wallet
@@ -501,6 +463,13 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
         w.send(**{**base, 'scan': None})
 
 
+def test_Wallet_init_raises_when_seed_missing(monkeypatch):
+    """Wallet.__init__ requires `seed`; None raises."""
+    from yubtc.wallet import Wallet
+    with pytest.raises(Exception, match='seed not set'):
+        Wallet(compressed=True, new_addresses=1)
+
+
 def test_Wallet_init_raises_when_compressed_or_new_addresses_missing(monkeypatch):
     """Wallet.__init__ requires `compressed` and `new_addresses`; None raises."""
     from yubtc.wallet import Wallet
@@ -511,13 +480,6 @@ def test_Wallet_init_raises_when_compressed_or_new_addresses_missing(monkeypatch
         Wallet(seed='qwe', nonce=0)
     with pytest.raises(Exception, match='new_addresses not set'):
         Wallet(seed='qwe', nonce=0, compressed=True)
-    # privkey= path also requires `compressed`.
-    from yubtc.crypto import seed2privkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
-    with pytest.raises(Exception, match='compressed not set'):
-        Wallet(privkey=privkey)
-    with pytest.raises(Exception, match='compressed not set'):
-        Wallet(privkey=privkey, compressed=None)
 
 
 def test_Wallet_rejects_empty_seed(monkeypatch):
@@ -968,22 +930,6 @@ def test_Wallet_make_transaction_scan_signs_with_privkey_per_input(monkeypatch):
     # The two input scripts end with distinct pubwifs.
     assert any(s.endswith(pubwif_0) for s in scripts)
     assert any(s.endswith(pubwif_1) for s in scripts)
-
-
-def test_Wallet_make_transaction_scan_raises_without_seed(monkeypatch):
-    """scan=True requires a seed-based wallet (no privkey/privwif)."""
-    from yubtc.wallet import Wallet
-    from yubtc.crypto import seed2privkey
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
-    privkey = seed2privkey(seed='qwe', nonce=0)
-    w = Wallet(privkey=privkey, compressed=True)
-    with pytest.raises(Exception, match='scan not available without seed'):
-        w.make_transaction(
-            dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
-            feekb=2_000, confirmations=0, scan=True,
-        )
 
 
 def test_Wallet_make_transaction_raises_when_scan_missing(monkeypatch):

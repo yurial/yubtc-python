@@ -73,46 +73,33 @@ class Wallet(object):
     def __init__(
             self,
             *args,
-            privkey: Optional[bytes] = None,
-            privwif: Optional[str] = None,
             seed: Optional[TSeed] = None,
             compressed: Optional[bool] = None,
             nonce: Optional[TNonce] = None,
             new_addresses: Optional[int] = None):
-        from yubtc.crypto import privwif2privkey
         if args:
             raise Exception('only kwargs allowed')
-        self.privkeys = None
-        self._seed = None
-        if privkey is not None:
-            if compressed is None:
-                raise Exception('compressed not set')
-            self.compressed = compressed
-            self.privkeys = [TPrivKey(privkey=privkey, compressed=compressed)]
-        elif privwif is not None:
-            privkey, compressed = privwif2privkey(privwif)
-            self.compressed = compressed
-            self.privkeys = [TPrivKey(privkey=privkey, compressed=compressed)]
-        elif seed is not None:
-            if not seed:
-                raise Exception('seed cannot be empty')
-            if compressed is None:
-                raise Exception('compressed not set')
-            if new_addresses is None:
-                raise Exception('new_addresses not set')
-            self.compressed = compressed
-            self._seed = seed
-            self.privkeys = []
-            while True:
-                privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
-                if privkey.is_unused():
-                    break
-                self.privkeys.append(privkey)
-                nonce = nonce + 1
-            for i in range(new_addresses):
-                privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
-                self.privkeys.append(privkey)
-                nonce = nonce + 1
+        if seed is None:
+            raise Exception('seed not set')
+        if not seed:
+            raise Exception('seed cannot be empty')
+        if compressed is None:
+            raise Exception('compressed not set')
+        if new_addresses is None:
+            raise Exception('new_addresses not set')
+        self.compressed = compressed
+        self._seed = seed
+        self.privkeys = []
+        while True:
+            privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
+            if privkey.is_unused():
+                break
+            self.privkeys.append(privkey)
+            nonce = nonce + 1
+        for i in range(new_addresses):
+            privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
+            self.privkeys.append(privkey)
+            nonce = nonce + 1
 
     def send(
             self,
@@ -299,8 +286,6 @@ class Wallet(object):
             # nonce 0 until either the target amount is met or an unused
             # address is hit. Retback goes to the last input or to the
             # unused address (when the scan halted via gap limit).
-            if self._seed is None:
-                raise Exception('scan not available without seed')
             sources, src = self._scan_inputs(
                 target=amount, confirmations=confirmations)
             vin, in_amount, signers = self._make_vin_multi(sources=sources)
