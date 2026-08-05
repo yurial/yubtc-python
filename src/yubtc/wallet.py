@@ -98,7 +98,8 @@ class Wallet(object):
             fee: Optional[TBTC] = None,
             confirmations: Optional[int] = None,
             broadcast: Optional[bool] = None,
-            scan: Optional[bool] = None) -> None:
+            scan: Optional[bool] = None,
+            on_address: Optional[object] = None) -> None:
         from yubtc.misc import yesno, satoshi2btc, btc2satoshi
         from yubtc.net import sendTx
         if args:
@@ -123,7 +124,7 @@ class Wallet(object):
             raise Exception('scan not set')
         tx, satoshi_cashback, satoshi_amount, satoshi_fee_used = self.make_transaction(
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
-            confirmations=confirmations, scan=scan)
+            confirmations=confirmations, scan=scan, on_address=on_address)
         cashback_btc = satoshi2btc(satoshi_cashback)
         amount_btc = satoshi2btc(satoshi_amount)
         fee_btc = satoshi2btc(satoshi_fee_used)
@@ -205,12 +206,19 @@ class Wallet(object):
             self,
             *args,
             target: Optional[TSatoshi] = None,
-            confirmations: Optional[int] = None) -> tuple:
+            confirmations: Optional[int] = None,
+            on_address: Optional[object] = None) -> tuple:
         """Walk forward from nonce 0 collecting addresses' UTXOs.
 
         Stops when either:
         - the running total of satoshis >= `target` (when target is not None), or
         - an address with no UTXOs is found (gap limit).
+
+        `on_address`, if provided, is invoked as `on_address(tp, unspent)`
+        for every address that contributes a UTXO. The gap-limit stop and
+        target-met stop are *not* reported -- only the addresses that
+        actually fed inputs. Callers can use this to print progress as the
+        scan runs (e.g. mirroring `balance`'s per-address line).
 
         Returns (sources, retback_addr) where sources is a list of
         (TPrivKey, unspent) tuples in scan order and retback_addr is the
@@ -238,6 +246,8 @@ class Wallet(object):
             sources.append((pk, unspent))
             for u in unspent:
                 total += u['amount']
+            if on_address is not None:
+                on_address(pk, unspent)
             if target is not None and total >= target:
                 # Target met: retback goes to the last sourced address.
                 retback_addr = pk.get_p2pkh_address()
@@ -253,7 +263,8 @@ class Wallet(object):
             feekb: Optional[TSatoshi] = None,
             fee: Optional[TSatoshi] = None,
             confirmations: Optional[int] = None,
-            scan: Optional[bool] = None) -> tuple:
+            scan: Optional[bool] = None,
+            on_address: Optional[object] = None) -> tuple:
         if args:
             raise Exception('only kwargs allowed')
         if dst is None:
@@ -273,7 +284,8 @@ class Wallet(object):
             # address is hit. Retback goes to the last input or to the
             # unused address (when the scan halted via gap limit).
             sources, src = self._scan_inputs(
-                target=amount, confirmations=confirmations)
+                target=amount, confirmations=confirmations,
+                on_address=on_address)
             vin, in_amount, signers = self._make_vin_multi(sources=sources)
         else:
             src = pubkey2addr(pubkey=pubkey)

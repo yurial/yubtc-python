@@ -395,6 +395,104 @@ def test_send_with_scan_and_all_drains(monkeypatch):
     assert captured['amount'] is None
 
 
+def test_send_scan_prints_each_address_like_balance(monkeypatch):
+    """`send --scan` emits a per-address line in the same format as `balance`."""
+    import yubtc.wallet as wallet_mod
+    from yubtc.crypto import seed2privkey, privkey2addr, privkey2pubkey
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.hash import hash160
+
+    def addr_for(seed, nonce):
+        return privkey2addr(privkey=seed2privkey(seed=seed, nonce=nonce)).decode('ascii')
+
+    def script_for(seed, nonce):
+        pubkey = privkey2pubkey(privkey=seed2privkey(seed=seed, nonce=nonce))
+        return '76a914' + hash160(pubkey).hex() + '88ac'
+
+    def fake_unspent(specs):
+        def get_unspent(address, **kwargs):
+            address = address.decode('ascii') if isinstance(address, bytes) else address
+            for n, amts in specs.items():
+                if addr_for(SEED, n) == address:
+                    return [
+                        {'tx_hash': f'{n:064x}'[-64:], 'tx_output_n': i,
+                         'value': amt, 'confirmations': 10,
+                         'script': script_for(SEED, n)}
+                        for i, amt in enumerate(amts)
+                    ]
+            return []
+        return get_unspent
+
+    def fake_make_transaction(self, **kwargs):
+        # Run the real scan to drive the on_address callback.
+        sources, src = self._scan_inputs(
+            target=kwargs['amount'], confirmations=kwargs['confirmations'],
+            on_address=kwargs.get('on_address'),
+        )
+        # Sign a stub tx so make_transaction's tail is happy.
+        privkey = seed2privkey(seed=SEED, nonce=0)
+        pubkey = privkey2pubkey(privkey=privkey)
+        vout_script = bytes.fromhex(script_for(SEED, 1))
+        tx = CTransaction(
+            vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+            vout=[COut(amount=80_000, script=vout_script)],
+            locktime=0,
+        ).sign(signers=[(privkey, pubkey)])
+        return tx, 39_000, 80_000, 1_000
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent({0: [60_000], 1: [60_000]}))
+
+    import yubtc.net as net
+    monkeypatch.setattr(net, 'sendTx', MagicMock())
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+
+    output = run(
+        ['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0008'],
+        stdin=SEED + '\n',
+    )
+    # Per-address lines in the `balance` format: `{nonce}# {addr}: {amount:0.08f} BTC`.
+    assert f'0# {addr_for(SEED, 0)}: 0.00060000 BTC' in output
+    assert f'1# {addr_for(SEED, 1)}: 0.00060000 BTC' in output
+
+
+def test_send_without_scan_does_not_emit_per_address_lines(monkeypatch):
+    """Without --scan, send does not invoke the per-address on_address path."""
+    import yubtc.wallet as wallet_mod
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.crypto import seed2privkey, privkey2pubkey
+    privkey = seed2privkey(seed=SEED, nonce=0)
+    pubkey = privkey2pubkey(privkey=privkey)
+    fake_tx = CTransaction(
+        vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+        vout=[COut(amount=0, script=b'\xac')],
+        locktime=0,
+    ).sign(signers=[(privkey, pubkey)])
+
+    def fake_make_transaction(self, **kwargs):
+        return fake_tx, 0, 50_000, 1_000
+
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        lambda address, **kwargs: [])
+    import yubtc.net as net
+    monkeypatch.setattr(net, 'sendTx', MagicMock())
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+
+    output = run(
+        ['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+        stdin=SEED + '\n',
+    )
+    # The format is `{nonce}# {address}: ... BTC`. A plain send with the
+    # primary address's nonce=0 line would still match the prefix if the
+    # wallet printed its own address. We just verify the per-address
+    # balance line never shows up: the tx-id line is the only data line.
+    assert '# ' not in output
+
+
 # ---------------------------------------------------------------------------
 # __main__ block in cli.py: cli() runs when the module is executed.
 # ---------------------------------------------------------------------------

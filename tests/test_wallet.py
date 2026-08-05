@@ -811,6 +811,44 @@ def test_Wallet_scan_change_goes_to_unused_address_at_gap(monkeypatch):
     assert retback_addr == unused_addr
 
 
+def test_Wallet_scan_inputs_invokes_on_address_for_each_source(monkeypatch):
+    """on_address(tp, unspent) is called once per sourced address, not for the gap-limit stop."""
+    from yubtc.wallet import Wallet
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    # Nonces 0, 1 have UTXOs; nonce 2 is empty -> stop. Only 0 and 1 should
+    # be reported via the callback.
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent_per_nonce({0: [60_000], 1: [60_000]}))
+
+    seen = []
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    sources, _ = w._scan_inputs(
+        target=200_000, confirmations=0,
+        on_address=lambda tp, unspent: seen.append((tp.nonce, len(unspent))),
+    )
+    assert seen == [(0, 1), (1, 1)]
+    assert len(sources) == 2
+
+
+def test_Wallet_scan_inputs_on_address_runs_before_target_check(monkeypatch):
+    """The callback fires for the address that satisfies the target, not just earlier ones."""
+    from yubtc.wallet import Wallet
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    # Target met at nonce 1; callback should fire for both 0 and 1.
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent_per_nonce({0: [30_000], 1: [30_000], 2: [30_000]}))
+
+    seen = []
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    w._scan_inputs(
+        target=50_000, confirmations=0,
+        on_address=lambda tp, unspent: seen.append(tp.nonce),
+    )
+    assert seen == [0, 1]
+
+
 def test_Wallet_make_transaction_scan_change_goes_to_last_input(monkeypatch):
     """When scan halts at the target, change goes to the last input's address."""
     from yubtc.wallet import Wallet

@@ -121,5 +121,16 @@ def send(
     amount = None if amount == 'ALL' else TBTC(amount)
     wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
-    wallet.send(dst=address, amount=amount, fee=fee, feekb=feekb,
-                confirmations=confirmations, broadcast=broadcast, scan=scan)
+
+    def on_address(tp, unspent):
+        from yubtc.misc import satoshi2btc
+        in_amount = sum(u['amount'] for u in unspent)
+        addr = tp.get_p2pkh_address().decode('ascii')
+        amount_btc = satoshi2btc(in_amount)
+        print(f'{tp.nonce}# {addr}: {amount_btc:0.08f} BTC')
+
+    wallet.send(
+        dst=address, amount=amount, fee=fee, feekb=feekb,
+        confirmations=confirmations, broadcast=broadcast, scan=scan,
+        on_address=on_address if scan else None,
+    )
