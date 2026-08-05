@@ -112,7 +112,7 @@ def test_generate_seed_produces_a_usable_seed():
     from yubtc.seed import generate_seed
     from yubtc.crypto import seed2privkey
     seed = generate_seed(count=12, allow_dups=True)
-    privkey = seed2privkey(seed=seed, nonce=0)
+    privkey = seed2privkey(seed=seed, nonce=0, passphrase='')
     assert len(privkey.secret) == 32
 
 
@@ -161,11 +161,51 @@ def test_seed_functions_reject_positional_args():
 # local-binding is re-evaluated on every invocation.
 # ---------------------------------------------------------------------------
 
+def test_get_seed_raises_when_echo_missing():
+    """get_seed's echo kwarg is required -- no silent default."""
+    from yubtc.seed import get_seed
+    with pytest.raises(TypeError, match='echo not set'):
+        get_seed()
+    with pytest.raises(ValueError, match='echo is None'):
+        get_seed(echo=None)
+
+
+def test_get_seed_rejects_positional_args():
+    """get_seed requires kwargs-only call style."""
+    from yubtc.seed import get_seed
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        get_seed(True)
+
+
+def test_get_passphrase_raises_when_prompt_missing():
+    """get_passphrase's prompt kwarg is required -- no silent default."""
+    from yubtc.seed import get_passphrase
+    with pytest.raises(TypeError, match='prompt not set'):
+        get_passphrase()
+    with pytest.raises(ValueError, match='prompt is None'):
+        get_passphrase(prompt=None)
+
+
+def test_get_passphrase_rejects_positional_args():
+    """get_passphrase requires kwargs-only call style."""
+    from yubtc.seed import get_passphrase
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        get_passphrase('pin: ')
+
+
 def test_get_seed_reads_piped_stdin(monkeypatch):
     """A non-tty stdin is read directly via readline()."""
     monkeypatch.setattr(sys, 'stdin', io.StringIO('my secret seed\n'))
     from yubtc.seed import get_seed
-    assert get_seed() == 'my secret seed'
+    assert get_seed(echo=False) == 'my secret seed'
+
+
+def test_get_seed_echo_arg_accepted_on_pipe(monkeypatch):
+    """On a non-tty, `echo` is forwarded but the read still uses
+    readline -- piped input was never echoed by this code path."""
+    monkeypatch.setattr(sys, 'stdin', io.StringIO('still-a-seed\n'))
+    from yubtc.seed import get_seed
+    assert get_seed(echo=True) == 'still-a-seed'
 
 
 def test_get_seed_strips_trailing_whitespace(monkeypatch):
@@ -177,11 +217,12 @@ def test_get_seed_strips_trailing_whitespace(monkeypatch):
     """
     monkeypatch.setattr(sys, 'stdin', io.StringIO('  abandon ability able  \n'))
     from yubtc.seed import get_seed
-    assert get_seed() == '  abandon ability able'
+    assert get_seed(echo=False) == '  abandon ability able'
 
 
-def test_get_seed_uses_getpass_on_tty(monkeypatch):
-    """On a tty, the function calls `getpass.getpass('seed: ')` and returns its result."""
+def test_get_seed_uses_getpass_on_tty_when_no_echo(monkeypatch):
+    """On a tty with echo=False (the default), the function calls
+    `getpass.getpass('seed: ')` and returns its result."""
     class FakeTTY(io.StringIO):
         def isatty(self):
             return True
@@ -189,7 +230,171 @@ def test_get_seed_uses_getpass_on_tty(monkeypatch):
     import getpass
     monkeypatch.setattr(getpass, 'getpass', lambda prompt: 'typed-in-seed')
     from yubtc.seed import get_seed
-    assert get_seed() == 'typed-in-seed'
+    # Default echo is False -- silent read.
+    assert get_seed(echo=False) == 'typed-in-seed'
+    # Explicit echo=False is the same path.
+    assert get_seed(echo=False) == 'typed-in-seed'
     # Sanity: the prompt arg is what the user sees on the terminal.
     monkeypatch.setattr(getpass, 'getpass', lambda prompt: ('seen', prompt)[1])
-    assert get_seed() == 'seed: '
+    assert get_seed(echo=False) == 'seed: '
+
+
+def test_get_seed_uses_input_on_tty_when_echo(monkeypatch):
+    """On a tty with echo=True, the function uses `input('seed: ')`
+    -- the seed is echoed back to the user."""
+    class FakeTTY(io.StringIO):
+        def isatty(self):
+            return True
+    monkeypatch.setattr(sys, 'stdin', FakeTTY(''))
+    import builtins
+    seen = {}
+
+    def fake_input(prompt=''):
+        seen['prompt'] = prompt
+        return 'visible-seed'
+    monkeypatch.setattr(builtins, 'input', fake_input)
+    from yubtc.seed import get_seed
+    assert get_seed(echo=True) == 'visible-seed'
+    assert seen['prompt'] == 'seed: '
+
+
+# ---------------------------------------------------------------------------
+# get_passphrase: the 25th-word prompt.
+#
+# Mirrors get_seed's tty/non-tty split. The empty string is a legitimate
+# "no passphrase" answer, so the helper returns '' rather than rejecting
+# the call -- that's how the user opts out of the PBKDF2 path in the
+# KDF.
+# ---------------------------------------------------------------------------
+
+
+def test_get_passphrase_reads_piped_stdin(monkeypatch):
+    """A non-tty stdin is read directly via readline()."""
+    monkeypatch.setattr(sys, 'stdin', io.StringIO('my secret\n'))
+    from yubtc.seed import get_passphrase
+    assert get_passphrase(prompt='passphrase (empty for none): ') == 'my secret'
+
+
+def test_get_passphrase_empty_string_is_legitimate(monkeypatch):
+    """Pressing enter on an empty line is the documented way to opt out
+    of the PBKDF2 path; the helper must not raise."""
+    monkeypatch.setattr(sys, 'stdin', io.StringIO('\n'))
+    from yubtc.seed import get_passphrase
+    assert get_passphrase(prompt='passphrase (empty for none): ') == ''
+
+
+def test_get_passphrase_strips_trailing_newline(monkeypatch):
+    """The trailing \\n is dropped, but interior characters stay put --
+    including leading/trailing spaces, which are part of the passphrase
+    (BIP-39 trim is not normalised)."""
+    monkeypatch.setattr(sys, 'stdin', io.StringIO('  hunter2  \n'))
+    from yubtc.seed import get_passphrase
+    assert get_passphrase(prompt='passphrase (empty for none): ') == '  hunter2  '
+
+
+def test_get_passphrase_uses_getpass_on_tty(monkeypatch):
+    """On a tty, the function calls `getpass.getpass(prompt)` and returns its result."""
+    class FakeTTY(io.StringIO):
+        def isatty(self):
+            return True
+    monkeypatch.setattr(sys, 'stdin', FakeTTY(''))
+    import getpass
+    monkeypatch.setattr(getpass, 'getpass', lambda prompt: 'typed-in-pass')
+    from yubtc.seed import get_passphrase
+    assert get_passphrase(prompt='passphrase (empty for none): ') == 'typed-in-pass'
+    # The prompt is what the user sees on the terminal; verify the
+    # default text is wired up.
+    monkeypatch.setattr(getpass, 'getpass', lambda prompt: ('seen', prompt)[1])
+    assert get_passphrase(prompt='passphrase (empty for none): ') == 'passphrase (empty for none): '
+    # And a custom prompt is honoured end-to-end.
+    monkeypatch.setattr(getpass, 'getpass', lambda prompt: ('seen', prompt)[1])
+    assert get_passphrase(prompt='pin: ') == 'pin: '
+
+
+# ---------------------------------------------------------------------------
+# get_seed_and_passphrase: combined prompt.
+#
+# Two facts to pin:
+# 1. The passphrase is asked first; the seed is asked second.
+# 2. The `echo` flag is forwarded to get_seed -- so the
+#    passphrase-aware caller can document its intent even though
+#    `get_seed` always uses readline on a non-tty.
+# ---------------------------------------------------------------------------
+
+
+def test_get_seed_and_passphrase_asks_passphrase_first(monkeypatch):
+    """The passphrase prompt fires before the seed prompt, in either
+    echo mode. With an empty passphrase the seed goes through
+    `getpass`; with a non-empty passphrase it goes through `input`
+    (echoed)."""
+    class FakeTTY(io.StringIO):
+        def isatty(self):
+            return True
+    monkeypatch.setattr(sys, 'stdin', FakeTTY(''))
+    import getpass
+    import builtins
+    getpass_prompts = []
+    input_prompts = []
+    # Non-empty passphrase: seed is read with echo (input path).
+    monkeypatch.setattr(getpass, 'getpass',
+                        lambda prompt: (getpass_prompts.append(prompt), 'pp')[1])
+    monkeypatch.setattr(builtins, 'input',
+                        lambda prompt='': (input_prompts.append(prompt), 'ss')[1])
+    from yubtc.seed import get_seed_and_passphrase
+    get_seed_and_passphrase()
+    assert 'passphrase' in getpass_prompts[0].lower()
+    # Seed is read via input() because the passphrase is non-empty.
+    assert input_prompts == ['seed: ']
+
+    # Empty passphrase: seed is read with no echo (getpass path).
+    getpass_prompts.clear()
+    input_prompts.clear()
+    monkeypatch.setattr(getpass, 'getpass',
+                        lambda prompt: (getpass_prompts.append(prompt), '')[1])
+    get_seed_and_passphrase()
+    assert 'passphrase' in getpass_prompts[0].lower()
+    # Seed is read via getpass because the passphrase is empty.
+    assert getpass_prompts[1] == 'seed: '
+    assert input_prompts == []
+
+
+def test_get_seed_and_passphrase_no_echo_when_passphrase_empty(monkeypatch):
+    """With an empty passphrase, the seed is read silently
+    (echo=False) -- a visible seed alone is enough to spend the
+    wallet, so a non-empty passphrase is the condition that flips
+    the seed onto the echoed (input) path."""
+    monkeypatch.setattr('yubtc.seed.get_passphrase', lambda prompt='...': '')
+    seen = {}
+
+    def spy_get_seed(echo=False):
+        seen['echo'] = echo
+        return 'the-seed'
+    monkeypatch.setattr('yubtc.seed.get_seed', spy_get_seed)
+    from yubtc.seed import get_seed_and_passphrase
+    get_seed_and_passphrase()
+    assert seen['echo'] is False
+
+
+def test_get_seed_and_passphrase_echo_when_passphrase_present(monkeypatch):
+    """With a non-empty passphrase, the seed is read with echo
+    (echo=True) so the user can sanity-check what they typed."""
+    monkeypatch.setattr('yubtc.seed.get_passphrase', lambda prompt='...': 'hunter2')
+    seen = {}
+
+    def spy_get_seed(echo=False):
+        seen['echo'] = echo
+        return 'the-seed'
+    monkeypatch.setattr('yubtc.seed.get_seed', spy_get_seed)
+    from yubtc.seed import get_seed_and_passphrase
+    get_seed_and_passphrase()
+    assert seen['echo'] is True
+
+
+def test_get_seed_and_passphrase_returns_pair(monkeypatch):
+    """Returns (seed, passphrase); both strings, passphrase may be empty."""
+    monkeypatch.setattr('yubtc.seed.get_passphrase', lambda prompt='...': 'pp')
+    monkeypatch.setattr('yubtc.seed.get_seed', lambda echo=False: 'ss')
+    from yubtc.seed import get_seed_and_passphrase
+    seed, passphrase = get_seed_and_passphrase()
+    assert seed == 'ss'
+    assert passphrase == 'pp'

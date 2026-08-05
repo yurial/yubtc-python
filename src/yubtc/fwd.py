@@ -30,6 +30,11 @@ TAddress = str
 TAmount = str
 TSatoshi = int
 TNonce = int
+# Passphrase is a string; the empty string means "no passphrase" and
+# triggers the legacy KDF path. This alias exists for symmetry with the
+# other type aliases in this module and to make the KDF signature
+# self-documenting at call sites.
+TPassphrase = str
 
 # Defaults for function signatures. Centralised so callers can override one
 # place and have every signature pick up the change.
@@ -39,6 +44,12 @@ DEFAULT_SEED_WORDS: int = 15
 DEFAULT_ALLOW_DUPS: bool = True
 DEFAULT_NEW_ADDRESSES: int = 1
 DEFAULT_FEE: TBTC = TBTC(0)
+# Default passphrase: empty string means "no passphrase", which makes
+# `seed2bin` skip PBKDF2 entirely and stay bit-for-bit identical with
+# the pre-passphrase behaviour. Callers who want to opt in pass a
+# non-empty value through the prompt; the `get_passphrase()` helper in
+# `seed.py` is the only way the CLI does that today.
+DEFAULT_PASSPHRASE: str = ''
 # Sequence value used by CIn when caller doesn't pass one. 0xffffffff marks
 # the input as final (no replacement/RBF).
 SEQUENCE_FINAL: int = 0xffffffff

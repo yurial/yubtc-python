@@ -13,7 +13,7 @@ import pytest
                           ])
 def test(seed, privhex, privwif, address):
     from yubtc.crypto import seed2privkey, privkey2privwif, privkey2addr
-    privkey = seed2privkey(seed=seed, nonce=0)
+    privkey = seed2privkey(seed=seed, nonce=0, passphrase='')
     assert privkey.secret.hex() == privhex
     assert privkey2privwif(privkey=privkey) == privwif
     assert privkey2addr(privkey=privkey) == address
@@ -25,7 +25,7 @@ def test_bin2privkey():
     import axolotl_curve25519 as curve
     from yubtc.crypto import seed2privkey, seed2bin
     seed = 'my test seed'
-    assert seed2privkey(seed) == curve.generatePrivateKey(seed2bin(seed))
+    assert seed2privkey(seed, passphrase='') == curve.generatePrivateKey(seed2bin(seed, passphrase=''))
 """
 
 
@@ -41,7 +41,7 @@ def test_bin2privkey():
 ])
 def test_seed2bin_known_answers(seed, nonce, expected):
     from yubtc.crypto import seed2bin
-    out = seed2bin(seed=seed, nonce=nonce)
+    out = seed2bin(seed=seed, nonce=nonce, passphrase='')
     assert len(out) == 32
     assert out.hex() == expected
 
@@ -49,22 +49,83 @@ def test_seed2bin_known_answers(seed, nonce, expected):
 def test_seed2bin_nonce_changes_output():
     """The nonce is meant to derive distinct addresses from one seed."""
     from yubtc.crypto import seed2bin
-    assert seed2bin(seed='qwe', nonce=0) != seed2bin(seed='qwe', nonce=1)
-    assert seed2bin(seed='qwe', nonce=0) != seed2bin(seed='qwe', nonce=7)
+    assert seed2bin(seed='qwe', nonce=0, passphrase='') != seed2bin(seed='qwe', nonce=1, passphrase='')
+    assert seed2bin(seed='qwe', nonce=0, passphrase='') != seed2bin(seed='qwe', nonce=7, passphrase='')
 
 
 def test_seed2bin_raises_when_nonce_missing():
     """nonce is required -- callers must pass it explicitly."""
     from yubtc.crypto import seed2bin
     with pytest.raises(TypeError, match='nonce not set'):
-        seed2bin(seed='qwe')
+        seed2bin(seed='qwe', passphrase='')
+
+
+# ---------------------------------------------------------------------------
+# seed2bin with passphrase: the optional 25th-word extension.
+#
+# The empty-passphrase path must stay bit-for-bit identical to the
+# no-passphrase call so a wallet that's been around since before
+# passphrase support can still open. A non-empty passphrase routes the
+# seed through PBKDF2-HMAC-SHA512 (2048 iters) before the cascade, so
+# a different passphrase always yields a different key.
+# ---------------------------------------------------------------------------
+
+
+def test_seed2bin_empty_passphrase_matches_no_passphrase():
+    """The default of `passphrase=''` is the legacy KDF path -- the
+    output is identical to the pre-passphrase code."""
+    from yubtc.crypto import seed2bin
+    for seed, nonce in [('qwe', 0), ('qwe', 7), ('12345', 0),
+                        ('a much longer seed phrase here', 3)]:
+        assert seed2bin(seed=seed, nonce=nonce, passphrase='') == \
+            seed2bin(seed=seed, nonce=nonce, passphrase='')
+
+
+@pytest.mark.parametrize('seed, nonce, passphrase, expected', [
+    # Locked to the BIP-32/BIP-44 path: PBKDF2(mnemonic, "mnemonic"+pass,
+    # 2048 iters, 64B) → master → m/44'/0'/0'/0/<nonce>. Any change to
+    # the KDF would break the KAT and surface here.
+    ('qwe', 0, 'hunter2', '0ed52a08de77f0bcdebe34ed43c1716e95bdc31047289a49d973118ae625cba4'),
+    ('qwe', 0, 'test-pass', '634900eb40be06a7525f06c2d419d74e26230b4d4de02aa3f17f8831f549866a'),
+    ('qwe', 7, 'hunter2', '3467e5fee5e5bac0638595da13772d33a1be049612d7b68ee0a05222051f6c64'),
+])
+def test_seed2bin_passphrase_known_answers(seed, nonce, passphrase, expected):
+    from yubtc.crypto import seed2bin
+    out = seed2bin(seed=seed, nonce=nonce, passphrase=passphrase)
+    assert len(out) == 32
+    assert out.hex() == expected
+
+
+def test_seed2bin_passphrase_changes_output():
+    """A non-empty passphrase must produce a different key than the
+    empty path -- otherwise the parameter is silently ignored."""
+    from yubtc.crypto import seed2bin
+    empty = seed2bin(seed='qwe', nonce=0, passphrase='')
+    with_pw = seed2bin(seed='qwe', nonce=0, passphrase='hunter2')
+    assert empty != with_pw
+
+
+def test_seed2bin_passphrase_is_sensitive_to_value():
+    """Two different non-empty passphrases must derive distinct keys."""
+    from yubtc.crypto import seed2bin
+    a = seed2bin(seed='qwe', nonce=0, passphrase='alpha')
+    b = seed2bin(seed='qwe', nonce=0, passphrase='beta')
+    assert a != b
 
 
 def test_seed2privkey_raises_when_nonce_missing():
     """seed2privkey's nonce is also required."""
     from yubtc.crypto import seed2privkey
     with pytest.raises(TypeError, match='nonce not set'):
-        seed2privkey(seed='qwe')
+        seed2privkey(seed='qwe', passphrase='')
+
+
+def test_seed2privkey_passphrase_changes_privkey():
+    """End-to-end: a passphrase change must produce a different PrivateKey."""
+    from yubtc.crypto import seed2privkey
+    a = seed2privkey(seed='qwe', nonce=0, passphrase='')
+    b = seed2privkey(seed='qwe', nonce=0, passphrase='hunter2')
+    assert a != b
 
 
 # ---------------------------------------------------------------------------
@@ -116,12 +177,15 @@ def test_seed2privkey_equals_clamp_of_seed2bin():
     from coincurve import PrivateKey
     from yubtc.crypto import seed2bin, bin2privkey, seed2privkey
     for seed in ('qwe', '12345', 'a much longer seed phrase here'):
-        assert seed2privkey(seed=seed, nonce=0) == PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=0)))
+        kw = {'seed': seed, 'nonce': 0, 'passphrase': ''}
+        assert seed2privkey(**kw) == PrivateKey(bin2privkey(seed2bin(**kw)))
 
 
 def test_seed2privkey_nonce_changes_privkey():
     from yubtc.crypto import seed2privkey
-    assert seed2privkey(seed='qwe', nonce=0) != seed2privkey(seed='qwe', nonce=1)
+    a = seed2privkey(seed='qwe', nonce=0, passphrase='')
+    b = seed2privkey(seed='qwe', nonce=1, passphrase='')
+    assert a != b
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +235,7 @@ def test_privwif2privkey_rejects_bad_prefix():
 def test_privkey2pubkey_length_and_determinism():
     """The pubkey is 33 bytes (compressed) and deterministic."""
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     a = privkey2pubkey(privkey=privkey)
     b = privkey2pubkey(privkey=privkey)
     assert len(a) == 33
@@ -181,13 +245,13 @@ def test_privkey2pubkey_length_and_determinism():
 def test_privkey2pubkey_known_answer():
     from yubtc.crypto import seed2privkey, privkey2pubkey
     expected = '03eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0'
-    assert privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)).hex() == expected
+    assert privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0, passphrase='')).hex() == expected
 
 
 def test_privkey2pubkey_prefix_signals_y_parity():
     """The leading byte is 0x02 or 0x03 depending on the parity of y."""
     from yubtc.crypto import seed2privkey, privkey2pubkey, PREFIX_PUBKEY
-    pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
+    pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
     assert pubkey[0] in (PREFIX_PUBKEY, PREFIX_PUBKEY | 1)
 
 
@@ -202,7 +266,7 @@ def test_privkey2pubkey_prefix_signals_y_parity():
 def test_sign_hash_is_der_canonical_low_s():
     """Every signature is DER-encoded, and the s component is in the lower half of the order."""
     from yubtc.crypto import seed2privkey, sign_hash
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     digest = b'\x42' * 32
     for _ in range(3):
         sig = sign_hash(privkey=privkey, datahash=digest)
@@ -220,7 +284,7 @@ def test_sign_hash_is_der_canonical_low_s():
 
 def test_sign_hash_verifies():
     from yubtc.crypto import seed2privkey, sign_hash
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     digest = b'\x42' * 32
     sig = sign_hash(privkey=privkey, datahash=digest)
     assert privkey.public_key.verify(sig, digest, hasher=None)
@@ -230,7 +294,7 @@ def test_sign_data_verifies():
     """sign_data(data) signs sha256(sha256(data)) and produces a valid DER signature."""
     from yubtc.crypto import seed2privkey, sign_data
     from yubtc.hash import sha256
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     sig = sign_data(privkey=privkey, data=b'abc')
     assert privkey.public_key.verify(sig, sha256(sha256(b'abc')), hasher=None)
 
@@ -246,7 +310,7 @@ def test_sign_data_verifies():
 def test_make_lock_script_p2pkh():
     """A P2PKH address produces the standard OP_DUP OP_HASH160 <20B> OP_EQUALVERIFY OP_CHECKSIG."""
     from yubtc.crypto import make_lock_script, seed2privkey, privkey2addr
-    addr = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    addr = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
     # OP_DUP(0x76) OP_HASH160(0xa9) <20B> OP_EQUALVERIFY(0x88) OP_CHECKSIG(0xac)
     assert make_lock_script(addr).hex() == '76a914e96b5b4561e70170c16f51ca30a9429e3bede97788ac'
 
@@ -283,8 +347,8 @@ def test_make_lock_script_unknown_prefix_raises():
 def test_make_vout_drains_when_amount_is_none():
     """`amount=None` means "send everything available"."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0, passphrase=''))
     result = make_vout(src=src, dst=dst, in_amount=100_000, amount=None, fee=1_000)
     assert result.cashback == 0
     assert result.amount == 99_000
@@ -297,8 +361,8 @@ def test_make_vout_drains_when_amount_is_none():
 def test_make_vout_drains_when_amount_plus_fee_equals_input():
     """`amount + fee == in_amount` is the explicit form of "send everything"."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0, passphrase=''))
     result = make_vout(src=src, dst=dst, in_amount=100_000, amount=99_000, fee=1_000)
     assert result.cashback == 0
     assert result.amount == 99_000
@@ -308,8 +372,8 @@ def test_make_vout_drains_when_amount_plus_fee_equals_input():
 def test_make_vout_sends_change_back_to_src():
     """Anything left over after amount+fee is routed back to the source address."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0, passphrase=''))
     result = make_vout(src=src, dst=dst, in_amount=100_000, amount=40_000, fee=1_000)
     assert result.cashback == 59_000
     assert result.amount == 40_000
@@ -324,8 +388,8 @@ def test_make_vout_sends_change_back_to_src():
 def test_make_vout_drain_raises_when_input_does_not_cover_fee():
     """amount=None with in_amount < fee: the drain would go negative."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0, passphrase=''))
     with pytest.raises(ValueError, match='input does not cover fee'):
         make_vout(src=src, dst=dst, in_amount=500, amount=None, fee=1_000)
 
@@ -333,8 +397,8 @@ def test_make_vout_drain_raises_when_input_does_not_cover_fee():
 def test_make_vout_drain_raises_when_input_equals_fee():
     """amount=None with in_amount == fee: still valid (sends 0 to dst)."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0, passphrase=''))
     result = make_vout(src=src, dst=dst, in_amount=1_000, amount=None, fee=1_000)
     assert result.amount == 0
     assert result.cashback == 0
@@ -344,8 +408,8 @@ def test_make_vout_drain_raises_when_input_equals_fee():
 def test_make_vout_raises_when_amount_plus_fee_exceeds_input():
     """Non-drain: amount + fee > in_amount would produce a negative cashback."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0, passphrase=''))
     with pytest.raises(ValueError, match=r'amount \+ fee exceeds input'):
         make_vout(src=src, dst=dst, in_amount=10_000, amount=50_000, fee=1_000)
 
@@ -353,8 +417,8 @@ def test_make_vout_raises_when_amount_plus_fee_exceeds_input():
 def test_make_vout_exact_no_change_does_not_trip_drain_check():
     """amount + fee == in_amount is the "exact spend" branch -- no error."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0, passphrase=''))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0, passphrase=''))
     result = make_vout(src=src, dst=dst, in_amount=11_000, amount=10_000, fee=1_000)
     assert result.cashback == 0
     assert result.amount == 10_000
@@ -364,14 +428,14 @@ def test_seed2bin_raises_when_seed_missing():
     """seed is required -- callers must pass it explicitly."""
     from yubtc.crypto import seed2bin
     with pytest.raises(TypeError, match='seed not set'):
-        seed2bin(nonce=0)
+        seed2bin(nonce=0, passphrase='')
 
 
 def test_seed2privkey_raises_when_seed_missing():
     """seed2privkey's seed is also required."""
     from yubtc.crypto import seed2privkey
     with pytest.raises(TypeError, match='seed not set'):
-        seed2privkey(nonce=0)
+        seed2privkey(nonce=0, passphrase='')
 
 
 def test_privwif_raises_when_privkey_missing():
@@ -403,7 +467,7 @@ def test_sign_hash_raises_when_privkey_missing():
 
 def test_sign_hash_raises_when_datahash_missing():
     from yubtc.crypto import seed2privkey, sign_hash
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     with pytest.raises(TypeError, match='datahash not set'):
         sign_hash(privkey=privkey)
 
@@ -416,7 +480,7 @@ def test_sign_data_raises_when_privkey_missing():
 
 def test_sign_data_raises_when_data_missing():
     from yubtc.crypto import seed2privkey, sign_data
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     with pytest.raises(TypeError, match='data not set'):
         sign_data(privkey=privkey)
 
@@ -454,10 +518,10 @@ def test_multi_arg_functions_reject_positional_args():
         pubkey2addr, privkey2addr, make_vout,
     )
     from yubtc.crypto import seed2privkey as sk
-    seed2privkey(seed='qwe', nonce=0)  # sanity: kwargs path still works
+    seed2privkey(seed='qwe', nonce=0, passphrase='')  # sanity: kwargs path still works
     # seed2bin
     with pytest.raises(TypeError, match='only kwargs allowed'):
-        seed2bin('qwe', 0)
+        seed2bin('qwe', 0, passphrase='')
     # seed2privkey
     with pytest.raises(TypeError, match='only kwargs allowed'):
         sk('qwe', 0)

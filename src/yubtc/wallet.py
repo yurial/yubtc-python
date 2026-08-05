@@ -1,6 +1,6 @@
 from typing import NamedTuple
 
-from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
+from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress, TPassphrase
 from yubtc.transaction import CTransaction
 from yubtc.util import NotNone, require_kwargs_only
 
@@ -59,11 +59,12 @@ class TPrivKey(object):
     def __init__(
             self,
             seed: TSeed = NotNone,
-            nonce: TNonce = NotNone):
+            nonce: TNonce = NotNone,
+            passphrase: TPassphrase = ''):
         from yubtc.crypto import seed2privkey
         if not seed:
             raise ValueError('seed cannot be empty')
-        self.privkey = seed2privkey(seed=seed, nonce=nonce)
+        self.privkey = seed2privkey(seed=seed, nonce=nonce, passphrase=passphrase)
         self.nonce = nonce
         self._info = None
 
@@ -105,19 +106,25 @@ class Wallet(object):
             self,
             seed: TSeed = NotNone,
             nonce: TNonce = NotNone,
-            new_addresses: int = NotNone):
+            new_addresses: int = NotNone,
+            passphrase: TPassphrase = ''):
         if not seed:
             raise ValueError('seed cannot be empty')
         self._seed = seed
+        # Stash the passphrase so the gap scan below derives each
+        # subsequent nonce with the same secret. Without this, every
+        # new TPrivKey would default to an empty passphrase and the
+        # scan would build an inconsistent wallet.
+        self._passphrase = passphrase
         self.privkeys = []
         while True:
-            privkey = TPrivKey(seed=seed, nonce=nonce)
+            privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase)
             if privkey.is_unused():
                 break
             self.privkeys.append(privkey)
             nonce = nonce + 1
         for i in range(new_addresses):
-            privkey = TPrivKey(seed=seed, nonce=nonce)
+            privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase)
             self.privkeys.append(privkey)
             nonce = nonce + 1
 
@@ -219,7 +226,7 @@ class Wallet(object):
         nonce = 0
         cashback_addr = None
         while True:
-            pk = TPrivKey(seed=self._seed, nonce=nonce)
+            pk = TPrivKey(seed=self._seed, nonce=nonce, passphrase=self._passphrase)
             unspent = pk.get_unspent(confirmations=confirmations)
             if pk.is_unused() and not unspent:
                 # True gap: this address has never received anything and

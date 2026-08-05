@@ -37,7 +37,7 @@ def _stub_offline(monkeypatch, unspent=None, info=None, used_nonces=0):
         info = {'total_received': 0, 'final_balance': 0, 'n_tx': 0}
     used = {'total_received': 1, 'final_balance': 0, 'n_tx': 1}
     from yubtc.crypto import seed2privkey, privkey2addr
-    address_for = {n: privkey2addr(privkey=seed2privkey(seed=SEED, nonce=n)).decode('ascii')
+    address_for = {n: privkey2addr(privkey=seed2privkey(seed=SEED, nonce=n, passphrase='')).decode('ascii')
                    for n in range(used_nonces)}
 
     def fake_info(address):
@@ -79,7 +79,7 @@ def _make_signed_tx(output_amount=0):
     """
     from yubtc.crypto import seed2privkey, privkey2pubkey
     from yubtc.transaction import CIn, COut, CTransaction
-    privkey = seed2privkey(seed=SEED, nonce=0)
+    privkey = seed2privkey(seed=SEED, nonce=0, passphrase='')
     pubkey = privkey2pubkey(privkey=privkey)
     return CTransaction(
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
@@ -126,7 +126,7 @@ def _make_utxo(nonce=0, amount=100_000, tx_hash=None):
     """
     from yubtc.crypto import seed2privkey, privkey2pubkey
     from yubtc.hash import hash160
-    privkey = seed2privkey(seed=SEED, nonce=nonce)
+    privkey = seed2privkey(seed=SEED, nonce=nonce, passphrase='')
     pubkey = privkey2pubkey(privkey=privkey)
     return {
         'tx': tx_hash or 'aa' * 32,
@@ -197,11 +197,11 @@ def _stub_scan_inputs(monkeypatch, return_value=None, side_effect=None):
 # ---------------------------------------------------------------------------
 
 def test_address(offline):
-    assert ADDRESS in run(['address'], stdin=SEED + '\n')
+    assert ADDRESS in run(['address'], stdin='\n' + SEED + '\n\n' + '')
 
 
 def test_dumpprivkey(offline):
-    output = run(['dumpprivkey'], stdin=SEED + '\n')
+    output = run(['dumpprivkey'], stdin='\n' + SEED + '\n\n' + '')
     assert ADDRESS in output
     assert PRIVWIF in output
 
@@ -235,13 +235,13 @@ def test_newseed_address_matches_seed(offline):
     seed, shown = output.strip().split('\n')
     assert len(seed.split()) == 5
     expected = privkey2addr(
-        privkey=seed2privkey(seed=seed, nonce=0),
+        privkey=seed2privkey(seed=seed, nonce=0, passphrase=''),
     ).decode('ascii')
     assert shown == 'Address: ' + expected
 
 
 def test_balance(offline):
-    assert 'Total:' in run(['balance'], stdin=SEED + '\n')
+    assert 'Total:' in run(['balance'], stdin='\n' + SEED + '\n\n' + '')
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ def test_balance_hides_used_empty_addresses_by_default(monkeypatch):
     """Default balance hides empty-and-used addresses (the common case)."""
     # Nonce 0 is "used" but currently empty (no UTXOs); nonce 1+ is fresh.
     _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0}, used_nonces=1)
-    output = run(['balance'], stdin=SEED + '\n')
+    output = run(['balance'], stdin='\n' + SEED + '\n\n' + '')
     # The header line `<nonce># <address>: 0.00000000 BTC` is suppressed.
     assert ADDRESS not in output
     assert 'Total: 0.00000000' in output
@@ -261,7 +261,7 @@ def test_balance_hides_used_empty_addresses_by_default(monkeypatch):
 def test_balance_shows_used_empty_addresses_with_empty_flag(monkeypatch):
     """-e forces the empty-but-used address to be printed."""
     _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0}, used_nonces=1)
-    output = run(['balance', '-e'], stdin=SEED + '\n')
+    output = run(['balance', '-e'], stdin='\n' + SEED + '\n\n' + '')
     assert ADDRESS in output
     assert '0.00000000 BTC' in output
 
@@ -276,7 +276,7 @@ def test_balance_shows_unspent_amount(monkeypatch):
     # Nonce 0 is "used" (has the UTXO); later nonces are unused so wallet
     # init's seed-scan terminates.
     _stub_offline(monkeypatch, unspent=raw, used_nonces=1)
-    output = run(['balance'], stdin=SEED + '\n')
+    output = run(['balance'], stdin='\n' + SEED + '\n\n' + '')
     assert '1.00000000 BTC' in output
     assert 'Total: 1.00000000' in output
 
@@ -295,7 +295,7 @@ def test_balance_verbose_prints_each_utxo(monkeypatch):
             'script': '76a914' + 'bb' * 20 + '88ac'},
            ]
     _stub_offline(monkeypatch, unspent=raw, used_nonces=1)
-    output = run(['balance', '-v'], stdin=SEED + '\n')
+    output = run(['balance', '-v'], stdin='\n' + SEED + '\n\n' + '')
     assert 'a' * 64 in output
     assert 'b' * 64 in output
     assert ':0)' in output
@@ -317,7 +317,7 @@ def test_balance_filters_low_confirmation_utxos(monkeypatch):
            ]
     _stub_offline(monkeypatch, unspent=raw, used_nonces=1)
     # With -c 5 and -v, only the second UTXO's txid is shown.
-    output = run(['balance', '-v', '-c', '5'], stdin=SEED + '\n')
+    output = run(['balance', '-v', '-c', '5'], stdin='\n' + SEED + '\n\n' + '')
     assert 'a' * 64 not in output
     assert 'b' * 64 in output
 
@@ -328,7 +328,7 @@ def test_balance_shows_unused_label_for_unused_addresses(monkeypatch):
     # wallet pre-generates with -n (default new_addresses=1).
     _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0},
                   used_nonces=0)
-    output = run(['balance'], stdin=SEED + '\n')
+    output = run(['balance'], stdin='\n' + SEED + '\n\n' + '')
     # The wallet contains one unused address; it should print 'unused'
     # instead of '0.00000000 BTC' so the operator can tell it apart from
     # a used-but-currently-empty address.
@@ -340,7 +340,7 @@ def test_balance_used_empty_address_keeps_zero_btc_label(monkeypatch):
     """-e shows '0.00000000 BTC' for a used-but-empty address, not 'unused'."""
     _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0},
                   used_nonces=1)
-    output = run(['balance', '-e'], stdin=SEED + '\n')
+    output = run(['balance', '-e'], stdin='\n' + SEED + '\n\n' + '')
     # Nonce 0 was used (total_received=1) but is now drained: '0.00000000 BTC'.
     assert f'0# {ADDRESS}: 0.00000000 BTC' in output
 
@@ -356,7 +356,7 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     fake_tx = _stub_make_transaction(monkeypatch, amount=50_000)
 
-    output = run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'], stdin=SEED + '\n')
+    output = run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'], stdin='\n' + SEED + '\n\n' + '')
     # The hex of the signed tx is printed.
     assert fake_tx.serialize().hex() in output
     # The broadcast stub was never invoked.
@@ -369,7 +369,7 @@ def test_send_amount_all_means_none(monkeypatch):
     """Amount=ALL is converted to None before passing to the wallet."""
     captured = {}
     _stub_make_transaction(monkeypatch, amount=0, capture=captured)
-    run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'], stdin=SEED + '\n')
+    run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'], stdin='\n' + SEED + '\n\n' + '')
     assert captured['amount'] is None
 
 
@@ -381,7 +381,7 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
 
     # --broadcast + 'n' answer -> broadcastTx is NOT called.
     output = run(['send', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-                 stdin=SEED + '\nn\n')
+                 stdin='\n' + SEED + '\n\n' + 'n\n')
     sent.assert_not_called()
     # The dump (id + rawtx) is still printed.
     assert fake_tx.serialize().hex() in output
@@ -400,7 +400,7 @@ def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
     monkeypatch.setattr(misc, 'yesno', lambda q: (prompted.append(q), True)[1])
 
     output = run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-                 stdin=SEED + '\n')
+                 stdin='\n' + SEED + '\n\n' + '')
     assert prompted == []
     sent.assert_not_called()
     assert fake_tx.serialize().hex() in output
@@ -415,7 +415,7 @@ def test_send_with_broadcast_flag_calls_broadcastTx(monkeypatch):
 
     # --broadcast combined with 'y' confirmation -> broadcastTx is called.
     run(['send', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-        stdin=SEED + '\ny\n')
+        stdin='\n' + SEED + '\n\n' + 'y\n')
     sent.assert_called_once()
 
 
@@ -430,7 +430,7 @@ def test_send_with_yes_flag_skips_broadcast_prompt(monkeypatch):
 
     # --yes + --broadcast: no 'y' in stdin yet the tx is broadcast.
     run(['send', '--yes', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-        stdin=SEED + '\n')
+        stdin='\n' + SEED + '\n\n' + '')
     sent.assert_called_once()
 
 
@@ -441,7 +441,7 @@ def test_send_with_yes_short_flag_works(monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     run(['send', '-y', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-        stdin=SEED + '\n')
+        stdin='\n' + SEED + '\n\n' + '')
     sent.assert_called_once()
 
 
@@ -452,7 +452,7 @@ def test_send_with_yes_without_broadcast_does_not_send(monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     run(['send', '--yes', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-        stdin=SEED + '\n')
+        stdin='\n' + SEED + '\n\n' + '')
     sent.assert_not_called()
 
 
@@ -563,7 +563,7 @@ def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
 
     run(['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-        stdin=SEED + '\n')
+        stdin='\n' + SEED + '\n\n' + '')
     assert captured['scan'] is True
     sent.assert_not_called()
 
@@ -575,7 +575,7 @@ def test_send_with_scan_and_all_drains(monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', MagicMock())
 
     run(['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
-        stdin=SEED + '\n')
+        stdin='\n' + SEED + '\n\n' + '')
     assert captured['scan'] is True
     # amount=None is the drain sentinel.
     assert captured['amount'] is None
@@ -587,10 +587,10 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
     from yubtc.hash import hash160
 
     def addr_for(seed, nonce):
-        return privkey2addr(privkey=seed2privkey(seed=seed, nonce=nonce)).decode('ascii')
+        return privkey2addr(privkey=seed2privkey(seed=seed, nonce=nonce, passphrase='')).decode('ascii')
 
     def script_for(seed, nonce):
-        pubkey = privkey2pubkey(privkey=seed2privkey(seed=seed, nonce=nonce))
+        pubkey = privkey2pubkey(privkey=seed2privkey(seed=seed, nonce=nonce, passphrase=''))
         return '76a914' + hash160(pubkey).hex() + '88ac'
 
     def fake_unspent(specs):
@@ -617,7 +617,7 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
         )
         # Sign a stub tx so make_transaction's tail is happy.
         from yubtc.crypto import seed2privkey, privkey2pubkey
-        privkey = seed2privkey(seed=SEED, nonce=0)
+        privkey = seed2privkey(seed=SEED, nonce=0, passphrase='')
         pubkey = privkey2pubkey(privkey=privkey)
         vout_script = bytes.fromhex(script_for(SEED, 1))
         from yubtc.transaction import CIn, COut, CTransaction
@@ -638,7 +638,7 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
 
     output = run(
         ['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0008'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     # Per-address lines in the `balance` format: `{nonce}# {addr}: {amount:0.08f} BTC`.
     assert f'0# {addr_for(SEED, 0)}: 0.00060000 BTC' in output
@@ -653,7 +653,7 @@ def test_send_without_scan_does_not_emit_per_address_lines(monkeypatch):
 
     output = run(
         ['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     # The format is `{nonce}# {address}: ... BTC`. A plain send with the
     # primary address's nonce=0 line would still match the prefix if the
@@ -673,8 +673,8 @@ def test_send_interactive_passes_scan_target_none_to_gap(monkeypatch):
     from yubtc.crypto import seed2privkey, privkey2addr
     captured = {}
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
-    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1))
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     # Big enough UTXO to cover the 0.001 BTC request so the feasibility
     # short-circuit doesn't kick in.
     utxo = _make_utxo(nonce=0, amount=1_000_000, tx_hash='aa' * 32)
@@ -704,7 +704,7 @@ def test_send_interactive_passes_scan_target_none_to_gap(monkeypatch):
     output = run(
         ['send', '-i', '-f', '0', '-k', '2000',
          '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.001'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     # Scan was forced to target=None (gap limit), not the user's amount.
     assert captured['target'] is None
@@ -725,8 +725,8 @@ def test_send_interactive_builds_tx_with_caller_selection(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
-    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1))
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     utxo_dict = _make_utxo(nonce=0, amount=100_000, tx_hash='a' * 64)
 
     captured_make = {}
@@ -737,7 +737,7 @@ def test_send_interactive_builds_tx_with_caller_selection(monkeypatch):
 
     output = run(
         ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     # The selected UTXO reaches make_transaction grouped under its key.
     assert captured_make['sources'] == [(pk0, [utxo_dict])]
@@ -763,7 +763,7 @@ def test_send_interactive_prints_no_funds_when_scan_empty(monkeypatch):
 
     output = run(
         ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.001'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     assert 'No funds' in output
 
@@ -773,7 +773,7 @@ def test_send_interactive_skips_tui_when_target_unreachable(monkeypatch):
     the UI and print an insufficient-funds message naming both numbers."""
     import yubtc.wallet as wallet_mod
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
     # Tiny UTXO (100 satoshi = 0.00000100 BTC); the request is 0.001 BTC.
     utxo = _make_utxo(nonce=0, amount=100, tx_hash='aa' * 32)
 
@@ -791,7 +791,7 @@ def test_send_interactive_skips_tui_when_target_unreachable(monkeypatch):
 
     output = run(
         ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.001'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     assert 'Insufficient funds' in output
     # Both amounts appear so the operator sees the gap.
@@ -804,7 +804,7 @@ def test_send_interactive_drain_mode_skips_feasibility_check(monkeypatch):
     short-circuit is skipped even if available funds are tiny."""
     import yubtc.wallet as wallet_mod
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
     utxo = _make_utxo(nonce=0, amount=100, tx_hash='aa' * 32)
 
     ui_called = []
@@ -820,7 +820,7 @@ def test_send_interactive_drain_mode_skips_feasibility_check(monkeypatch):
 
     output = run(
         ['send', '-i', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     # The UI ran with target=None (drain).
     assert ui_called == [None]
@@ -833,8 +833,8 @@ def test_send_interactive_broadcast_prompts_and_calls_sendtx(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
-    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1))
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     utxo_dict = _make_utxo(nonce=0, amount=100_000, tx_hash='a' * 64)
 
     _stub_make_transaction(monkeypatch, amount=99_000)
@@ -853,7 +853,7 @@ def test_send_interactive_broadcast_prompts_and_calls_sendtx(monkeypatch):
 
     run(
         ['send', '-i', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     assert prompts == ['broadcast? ']
     assert yubtc.net.broadcastTx.called
@@ -864,8 +864,8 @@ def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0)
-    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1))
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     utxo_dict = _make_utxo(nonce=0, amount=100_000, tx_hash='a' * 64)
 
     _stub_make_transaction(monkeypatch, amount=99_000)
@@ -885,7 +885,7 @@ def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
 
     output = run(
         ['send', '-i', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
-        stdin=SEED + '\n',
+        stdin='\n' + SEED + '\n\n' + '',
     )
     # The prompt was shown, but the user said no.
     assert prompts == ['broadcast? ']
@@ -910,7 +910,7 @@ def test_send_interactive_raises_when_required_kwarg_missing():
     """Each required kwarg has its own 'X not set' guard."""
     from yubtc.cli import _send_interactive
     from yubtc.wallet import Wallet
-    base = dict(wallet=Wallet(seed='qwe', nonce=0, new_addresses=1),
+    base = dict(wallet=Wallet(seed='qwe', nonce=0, new_addresses=1, passphrase=''),
                 address='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
                 amount=None, fee=TBTC(0), feekb=2000, confirmations=0,
                 broadcast=False)

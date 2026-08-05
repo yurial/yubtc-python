@@ -304,7 +304,7 @@ def test_set_current_backend_takes_effect_for_wallet_calls():
     from yubtc.wallet import TPrivKey
     set_current_backend(OfflineBackend())
     try:
-        p = TPrivKey(seed='qwe', nonce=0)
+        p = TPrivKey(seed='qwe', nonce=0, passphrase='')
         # OfflineBackend returns no UTXOs and a fresh address.
         assert p.get_unspent(confirmations=0) == []
         assert p.is_unused() is True

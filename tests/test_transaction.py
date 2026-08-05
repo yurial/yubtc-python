@@ -345,7 +345,7 @@ def test_ctransaction_id_known_answer():
 def test_sign_populates_each_input_script():
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[
@@ -368,7 +368,7 @@ def test_sign_script_ends_with_pubwif():
     """
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
@@ -384,7 +384,7 @@ def test_sign_changes_id():
     """
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
@@ -398,7 +398,7 @@ def test_sign_does_not_mutate_original():
     empty signature scripts."""
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
@@ -413,7 +413,7 @@ def test_CTransaction_sign_signers_must_match_vin_length():
     """signers (one per input) must agree with len(vin)."""
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
+    privkey = seed2privkey(seed='qwe', nonce=0, passphrase='')
     pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[

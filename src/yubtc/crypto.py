@@ -2,7 +2,7 @@ from typing import NamedTuple, TYPE_CHECKING
 
 from coincurve import PrivateKey
 
-from yubtc.fwd import TAddress, TNonce, TSatoshi, TSeed
+from yubtc.fwd import TAddress, TNonce, TSatoshi, TSeed, TPassphrase
 from yubtc.util import NotNone, require_kwargs_only
 
 if TYPE_CHECKING:
@@ -33,11 +33,65 @@ def str2list(s: str) -> list:
 
 
 @require_kwargs_only
-def seed2bin(seed: TSeed = NotNone, nonce: TNonce = NotNone) -> bytes:
+def seed2bin(seed: TSeed = NotNone,
+             nonce: TNonce = NotNone,
+             passphrase: TPassphrase = None) -> bytes:
+    """KDF: turn `(seed, nonce, passphrase)` into a 32-byte secret.
+
+    Two derivations, gated on the passphrase:
+
+    - **Empty passphrase** (the default, and what every pre-passphrase
+      caller passes): the legacy `blake2b → keccak → sha256` cascade
+      over `nonce ‖ seed`. The output is bit-for-bit identical to the
+      pre-passphrase code path, so a wallet that has been around since
+      before passphrase support still opens.
+
+    - **Non-empty passphrase**: BIP-39 + BIP-32 + BIP-44. The mnemonic
+      and passphrase are NFKD-normalized and UTF-8-encoded, then
+      stretched through standard PBKDF2-HMAC-SHA512 (salt
+      `b'mnemonic' + passphrase`, 2048 iter, 64 bytes) to produce the
+      BIP-39 seed. The BIP-32 master is derived from that seed, and the
+      final 32-byte key is the hardened-walked leaf at
+      `m/44'/0'/0'/0/<nonce>` -- the BIP-44 receiving-chain path. Any
+      BIP-44 wallet (Trezor, Ledger, Electrum, ...) with the same
+      mnemonic and passphrase will arrive at the same key for the same
+      nonce -- addresses line up bit-for-bit.
+
+    The PBKDF2 stretch is the only thing between an attacker with a
+    stolen mnemonic and the passphrase-derived funds. 2048 iterations
+    is the BIP-39 default; raising it would slow *every* derivation
+    and is not done here.
+    """
+    from hashlib import pbkdf2_hmac
     from yubtc.hash import sha256, keccak256, blake2b256
     from struct import pack
-    data = pack(">L", nonce) + str2bytes(seed)
-    return sha256(keccak256(blake2b256(data)))
+    if not passphrase:
+        # Backward-compatible path: existing wallets and tests keep
+        # producing the same bytes they always did. The branch is gated
+        # on the *string* being empty, not on the seed -- a seed of ""
+        # is rejected by `TPrivKey` / `Wallet` higher up.
+        data = pack(">L", nonce) + str2bytes(seed)
+        return sha256(keccak256(blake2b256(data)))
+    # BIP-39 → BIP-32 → BIP-44 path. yubtc walks the main receiving
+    # chain only (m/44'/0'/0'/0/<nonce>); cashback lands on the next
+    # unused index of the same chain, not on a separate change chain.
+    # Walking the full tree would be O(N×M) on every scan, which is
+    # incompatible with the wallet's no-storage, rescan-every-run model.
+    import unicodedata
+    from yubtc.bip32 import master_from_seed, derive_path
+    seed_bytes = unicodedata.normalize('NFKD', seed).encode('utf-8')
+    pass_bytes = unicodedata.normalize('NFKD', passphrase).encode('utf-8')
+    stretched = pbkdf2_hmac(
+        'sha512',
+        seed_bytes,
+        b'mnemonic' + pass_bytes,
+        2048,
+        dklen=64,
+    )
+    master_priv, master_chain = master_from_seed(seed=stretched)
+    path = "m/44'/0'/0'/0/{nonce}".format(nonce=nonce)
+    child_priv, _ = derive_path(master_priv=master_priv, master_chain=master_chain, path=path)
+    return child_priv
 
 
 def bin2privkey(data: bytes) -> bytes:
@@ -56,8 +110,10 @@ def bin2privkey(data: bytes) -> bytes:
 
 
 @require_kwargs_only
-def seed2privkey(seed: TSeed = NotNone, nonce: TNonce = NotNone) -> PrivateKey:
-    return PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=nonce)))
+def seed2privkey(seed: TSeed = NotNone,
+                 nonce: TNonce = NotNone,
+                 passphrase: TPassphrase = '') -> PrivateKey:
+    return PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=nonce, passphrase=passphrase)))
 
 
 @require_kwargs_only

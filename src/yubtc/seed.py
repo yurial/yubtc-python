@@ -205,10 +205,74 @@ def generate_seed(count: int = NotNone, allow_dups: bool = NotNone) -> str:
     return ' '.join(_generate_seed(count=count, allow_dups=allow_dups))
 
 
-def get_seed() -> str:
+@require_kwargs_only
+def get_seed(echo: bool = NotNone) -> str:
+    """Read the seed from the user.
+
+    On a tty, the seed is read with `input()` (echoed) when `echo=True`;
+    otherwise `getpass` is used and the seed stays silent. The flag
+    lets the caller pick: the passphrase-aware path sets `echo=True`
+    so the user sees what they're typing once a passphrase is in play,
+    and the no-passphrase path sets `echo=False` (silent) because the
+    seed alone is enough to spend the wallet.
+
+    On a non-tty stdin (piped input, test fixtures) the read goes
+    through `readline` regardless of `echo` -- a pipe never echoes the
+    data back through this code path.
+    """
+    from sys import stdin
+    if stdin.isatty():
+        if echo:
+            return input('seed: ')
+        from getpass import getpass
+        return getpass('seed: ')
+    return stdin.readline().rstrip()
+
+
+@require_kwargs_only
+def get_passphrase(prompt: str = NotNone) -> str:
+    """Prompt for an optional passphrase.
+
+    Mirrors `get_seed`'s tty/non-tty split: on a tty the user types the
+    passphrase silently (`getpass` echoes nothing); on a non-tty
+    (piped input) the next line is read directly so scripts can drive
+    the same flow with two `printf` lines.
+
+    The passphrase is the BIP-39 "25th word": an empty string here is
+    the legitimate "no passphrase" answer, so the helper returns `""`
+    rather than refusing. The decision is recorded by the empty
+    password going to `seed2bin` and taking the legacy branch -- nothing
+    on disk, nothing in env, nothing in argv.
+    """
     from sys import stdin
     if stdin.isatty():
         from getpass import getpass
-        return getpass('seed: ')
-    else:
-        return stdin.readline().rstrip()
+        return getpass(prompt)
+    return stdin.readline().rstrip('\n').rstrip('\r')
+
+
+def get_seed_and_passphrase() -> tuple:
+    """Prompt for the seed and the optional passphrase, in that order.
+
+    The passphrase is asked first; an empty answer is the legitimate
+    "no passphrase" choice and keeps the seed on the legacy KDF path
+    (no PBKDF2 stretch). A non-empty answer routes the derivation
+    through PBKDF2, which raises the cost of a brute-force attempt on
+    a stolen seed+passphrase pair; in that case the seed is read with
+    echo so the user can sanity-check what they typed. With an empty
+    passphrase the seed is read silently (`getpass`), since the seed
+    alone is enough to spend the wallet.
+
+    On a non-tty stdin (piped input, tests) the read goes through
+    `readline` either way -- a pipe never echoes through this code.
+
+    Returns `(seed, passphrase)`. The passphrase is always a string
+    and may be `""` -- the caller forwards it to `Wallet` and the KDF
+    branches on emptiness.
+    """
+    passphrase = get_passphrase(prompt='passphrase (empty for none): ')
+    # Passphrase set -> seed is shown (echo=True); passphrase empty ->
+    # seed is silent (echo=False), since a visible seed alone is
+    # enough to spend the wallet.
+    seed = get_seed(echo=bool(passphrase))
+    return seed, passphrase

@@ -16,7 +16,7 @@ from yubtc.fwd import (
     TBTC,
 )
 from yubtc.wallet import Wallet
-from yubtc.seed import generate_seed, get_seed
+from yubtc.seed import generate_seed, get_seed_and_passphrase
 from yubtc.util import NotNone, require_kwargs_only
 
 
@@ -32,8 +32,13 @@ def cli() -> None:
               default=False, required=False, is_flag=True)
 def newseed(n: int, unique: bool) -> None:
     seed = generate_seed(count=n, allow_dups=not unique)
+    # `newseed` prints the address derived from a freshly generated
+    # seed. There is no passphrase concept here -- the seed is brand
+    # new, the wallet has no funds, and the user will be asked for a
+    # passphrase on the next command that opens an existing wallet.
+    # Pass `''` explicitly so the decorator doesn't reject the call.
     wallet = Wallet(seed=seed, nonce=DEFAULT_NONCE,
-                    new_addresses=DEFAULT_NEW_ADDRESSES)
+                    new_addresses=DEFAULT_NEW_ADDRESSES, passphrase='')
     print('{seed}\r\nAddress: {address}'.format(seed=seed,
                                                 address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
@@ -44,7 +49,9 @@ def newseed(n: int, unique: bool) -> None:
 @click.option('--new', help='Count of new unused addresses',
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
 def address(nonce: TNonce, new: int) -> None:
-    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
+    seed, passphrase = get_seed_and_passphrase()
+    wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
+                    passphrase=passphrase)
     print(wallet.privkeys[0].get_p2pkh_address().decode('ascii'))
 
 
@@ -52,7 +59,9 @@ def address(nonce: TNonce, new: int) -> None:
 @click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 def dumpprivkey(nonce: TNonce) -> None:
-    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES)
+    seed, passphrase = get_seed_and_passphrase()
+    wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
+                    passphrase=passphrase)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
     print(wallet.privkeys[0].get_privwif().decode('ascii'))
 
@@ -71,7 +80,9 @@ def dumpprivkey(nonce: TNonce) -> None:
 def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: bool) -> None:
     from yubtc.misc import satoshi2btc
     total = TBTC(0)
-    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
+    seed, passphrase = get_seed_and_passphrase()
+    wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
+                    passphrase=passphrase)
     for privkey in wallet.privkeys:
         txs = privkey.get_unspent(confirmations=confirmations)
         in_amount = 0
@@ -135,7 +146,9 @@ def send(
         interactive: bool,
         yes: bool) -> None:
     amount = None if amount == 'ALL' else TBTC(amount)
-    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES)
+    seed, passphrase = get_seed_and_passphrase()
+    wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
+                    passphrase=passphrase)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
     def on_address(tp, unspent):
