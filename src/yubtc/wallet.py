@@ -19,6 +19,35 @@ class TxResult(NamedTuple):
     fee: TSatoshi
 
 
+def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool) -> None:
+    """Print the signed tx dump and (optionally) push it to the network.
+
+    Used by both `Wallet.send` and the interactive CLI path so they
+    surface the same id + amount summary + rawtx and prompt identically
+    before broadcasting.
+    """
+    from yubtc.misc import satoshi2btc, yesno
+    from yubtc.net import sendTx
+    cashback_btc = satoshi2btc(result.cashback)
+    amount_btc = satoshi2btc(result.amount)
+    fee_btc = satoshi2btc(result.fee)
+    rawtx = result.tx.serialize()
+    print('id: {id}'.format(id=result.tx.id().hex()))
+    print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
+        amount=amount_btc, dst=dst, cashback=cashback_btc, fee=fee_btc,
+        txsize=len(rawtx)))
+    print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
+    if broadcast:
+        if yesno('broadcast? '):
+            sendTx(rawtx)
+    else:
+        # No --broadcast: the tx is fully signed and shown above, but
+        # never reaches the network. Print a clear note so the
+        # operator doesn't mistake the raw tx for a sent one.
+        print('Not broadcast: pass --broadcast (or run sendTx manually) '
+              'to push this transaction to the network.')
+
+
 class TPrivKey(object):
     @require_kwargs_only
     def __init__(
@@ -96,39 +125,15 @@ class Wallet(object):
             broadcast: bool = NotNone,
             scan: bool = NotNone,
             on_address: object = None) -> None:
-        from yubtc.misc import yesno, satoshi2btc, btc2satoshi
-        from yubtc.net import sendTx
+        from yubtc.misc import btc2satoshi
         # amount=None is a "drain" sentinel passed through to make_transaction.
-        if amount is None:
-            converted_amount = None
-        else:
-            converted_amount = btc2satoshi(amount)
+        converted_amount = None if amount is None else btc2satoshi(amount)
         satoshi_fee = btc2satoshi(fee)
         result = self.make_transaction(
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
             confirmations=confirmations, scan=scan,
             sources=None, cashback_addr=None, on_address=on_address)
-        cashback_btc = satoshi2btc(result.cashback)
-        amount_btc = satoshi2btc(result.amount)
-        fee_btc = satoshi2btc(result.fee)
-        rawtx = result.tx.serialize()
-        print('id: {id}'.format(id=result.tx.id().hex()))
-        print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
-            amount=amount_btc,
-            dst=dst,
-            cashback=cashback_btc,
-            fee=fee_btc,
-            txsize=len(rawtx)))
-        print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
-        if broadcast:
-            if yesno('broadcast? '):
-                sendTx(rawtx)
-        else:
-            # No --broadcast: the tx is fully signed and shown above, but
-            # never reaches the network. Print a clear note so the
-            # operator doesn't mistake the raw tx for a sent one.
-            print('Not broadcast: pass --broadcast (or run sendTx manually) '
-                  'to push this transaction to the network.')
+        _announce_tx(result=result, dst=dst, broadcast=broadcast)
 
     @require_kwargs_only
     def _make_vin(self, sources: list = NotNone) -> tuple:
@@ -227,6 +232,54 @@ class Wallet(object):
         return sources, cashback_addr
 
     @require_kwargs_only
+    def _select_inputs(
+            self,
+            sources: list = None,
+            amount: TSatoshi = None,
+            scan: bool = NotNone,
+            confirmations: int = NotNone,
+            cashback_addr: TAddress = None,
+            on_address: object = None) -> tuple:
+        """Pick `(vin_sources, src)` for the next transaction.
+
+        Three input modes:
+        - `sources` provided: caller has already selected inputs (e.g.
+          via the interactive TUI). `cashback_addr` is the destination
+          for any change; the scan is skipped.
+        - `scan=True`: walk the seed forward collecting UTXOs until
+          `amount` is met or the gap limit is hit. Cashback goes to the
+          last sourced address, or to the gap-limit unused address.
+        - otherwise: use the wallet's primary address's UTXOs only;
+          cashback goes back to the same address.
+
+        `amount` is consulted only in scan mode (as the stop target).
+        Returns `(vin_sources, src)`: a list of `(TPrivKey, unspent)`
+        pairs ready to feed into `_make_vin`, and the address to send
+        any change output to.
+        """
+        if sources is not None:
+            # Caller pre-selected (e.g. the interactive UI). The cashback
+            # address is whatever the caller picked -- normally the gap-
+            # limit unused address so a fresh receive slot gets the change.
+            if cashback_addr is None:
+                raise Exception('cashback_addr not set')
+            return sources, cashback_addr
+        if scan:
+            # When scanning, fetch UTXOs from every address starting at
+            # nonce 0 until either the target amount is met or an unused
+            # address is hit. Cashback goes to the last input or to the
+            # unused address (when the scan halted via gap limit).
+            return self._scan_inputs(
+                target=amount, confirmations=confirmations,
+                on_address=on_address)
+        # Default: just the primary address's UTXOs.
+        from yubtc.crypto import privkey2pubkey, pubkey2addr
+        pubkey = privkey2pubkey(self.privkeys[0].privkey)
+        src = pubkey2addr(pubkey=pubkey)
+        unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
+        return [(self.privkeys[0], unspent)], src
+
+    @require_kwargs_only
     def make_transaction(
             self,
             dst: TAddress = NotNone,
@@ -240,37 +293,15 @@ class Wallet(object):
             on_address: object = None) -> TxResult:
         """Build and sign a transaction.
 
-        Three input modes:
-        - `sources` provided: caller has already selected inputs (e.g.
-          via the interactive TUI). `cashback_addr` is the destination
-          for any change; the scan is skipped.
-        - `scan=True`: walk the seed forward collecting UTXOs until the
-          target is met or the gap limit is hit. Cashback goes to the
-          last sourced address, or to the gap-limit unused address.
-        - otherwise: use the wallet's primary address's UTXOs only.
+        Input selection is delegated to `_select_inputs`; this method
+        handles only the build/sign/fee-tune loop and the TxResult
+        assembly.
         """
-        from yubtc.crypto import privkey2pubkey, pubkey2addr, make_vout
-        pubkey = privkey2pubkey(self.privkeys[0].privkey)
-        if sources is not None:
-            # Caller pre-selected (e.g. the interactive UI). The cashback
-            # address is whatever the caller picked -- normally the gap-
-            # limit unused address so a fresh receive slot gets the change.
-            if cashback_addr is None:
-                raise Exception('cashback_addr not set')
-            src = cashback_addr
-            vin_sources = sources
-        elif scan:
-            # When scanning, fetch UTXOs from every address starting at
-            # nonce 0 until either the target amount is met or an unused
-            # address is hit. Cashback goes to the last input or to the
-            # unused address (when the scan halted via gap limit).
-            vin_sources, src = self._scan_inputs(
-                target=amount, confirmations=confirmations,
-                on_address=on_address)
-        else:
-            src = pubkey2addr(pubkey=pubkey)
-            unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
-            vin_sources = [(self.privkeys[0], unspent)]
+        from yubtc.crypto import make_vout
+        vin_sources, src = self._select_inputs(
+            sources=sources, amount=amount, scan=scan,
+            confirmations=confirmations, cashback_addr=cashback_addr,
+            on_address=on_address)
         vin, in_amount, signers = self._make_vin(sources=vin_sources)
         _fee = fee
         while True:

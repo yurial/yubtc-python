@@ -167,10 +167,10 @@ def _send_interactive(
         broadcast: bool = NotNone,
         on_address=None) -> None:
     """send --interactive: scan to gap, run ncurses UI, build and broadcast tx."""
-    from yubtc.misc import btc2satoshi, satoshi2btc, yesno
-    from yubtc.net import sendTx
+    from yubtc.misc import btc2satoshi, satoshi2btc
     from yubtc.tui import run_selection
     from yubtc.select import selection_to_sources
+    from yubtc.wallet import _announce_tx
 
     # Scan to gap (target=None) so the user sees every available UTXO.
     sources, cashback_addr = wallet._scan_inputs(
@@ -214,21 +214,4 @@ def _send_interactive(
         confirmations=confirmations, scan=False,
         sources=grouped, cashback_addr=cashback_addr, on_address=None,
     )
-    cashback_btc = satoshi2btc(result.cashback)
-    sent_btc = satoshi2btc(result.amount)
-    fee_btc = satoshi2btc(result.fee)
-    rawtx = result.tx.serialize()
-    print('id: {id}'.format(id=result.tx.id().hex()))
-    print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
-        amount=sent_btc, dst=address, cashback=cashback_btc, fee=fee_btc,
-        txsize=len(rawtx)))
-    print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
-    if broadcast:
-        if yesno('broadcast? '):
-            sendTx(rawtx)
-    else:
-        # No --broadcast: the tx is fully signed and shown above, but
-        # never reaches the network. Print a clear note so the
-        # operator doesn't mistake the raw tx for a sent one.
-        print('Not broadcast: pass --broadcast (or run sendTx manually) '
-              'to push this transaction to the network.')
+    _announce_tx(result=result, dst=address, broadcast=broadcast)
