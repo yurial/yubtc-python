@@ -2,6 +2,9 @@ import pytest
 from unittest.mock import MagicMock
 from click.testing import CliRunner
 
+import yubtc
+import yubtc.net
+
 # Vectors below are the same ones asserted in test_crypto.py, reached through
 # the CLI instead of the crypto helpers.
 SEED = 'qwe'
@@ -21,7 +24,6 @@ def _stub_offline(monkeypatch, unspent=None, info=None, used_nonces=0):
         nonces until it finds an unused address; pin how many are used so the
         loop terminates.
     """
-    import yubtc.misc
     if unspent is None:
         unspent = []
     if info is None:
@@ -34,8 +36,8 @@ def _stub_offline(monkeypatch, unspent=None, info=None, used_nonces=0):
     def fake_info(address):
         counters['n'] += 1
         return used if counters['n'] <= used_nonces else info
-    monkeypatch.setattr(yubtc.misc, 'get_address_info', fake_info)
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: unspent)
+    monkeypatch.setattr(yubtc.net, 'get_address_info', fake_info)
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', lambda address, **kwargs: unspent)
 
 
 @pytest.fixture
@@ -132,10 +134,9 @@ def test_balance_shows_unspent_amount(monkeypatch):
     # format (tx, out_n, amount) before returning.
     raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 100_000_000,
             'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'}]
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent',
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent',
                         lambda address, **kwargs: raw)
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     output = run(['balance'], stdin=SEED + '\n')
     assert '1.00000000 BTC' in output
@@ -155,10 +156,9 @@ def test_balance_verbose_prints_each_utxo(monkeypatch):
             'confirmations': 10,
             'script': '76a914' + 'bb' * 20 + '88ac'},
            ]
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent',
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent',
                         lambda address, **kwargs: raw)
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     output = run(['balance', '-v'], stdin=SEED + '\n')
     assert 'a' * 64 in output
@@ -180,10 +180,9 @@ def test_balance_filters_low_confirmation_utxos(monkeypatch):
             'confirmations': 10,
             'script': '76a914' + 'bb' * 20 + '88ac'},
            ]
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent',
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent',
                         lambda address, **kwargs: raw)
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     # With -c 5 and -v, only the second UTXO's txid is shown.
     output = run(['balance', '-v', '-c', '5'], stdin=SEED + '\n')

@@ -1,4 +1,4 @@
-from yubtc.fwd import TAddress, TSatoshi, TBTC, DEFAULT_TIMEOUT_HTTP
+from yubtc.fwd import TSatoshi, TBTC
 
 raw_input = input
 
@@ -42,32 +42,9 @@ def btc2satoshi(btc: TBTC) -> TSatoshi:
     return TSatoshi(btc * TBTC((0, (1,), 8)))
 
 
-def unpack_address(address: TAddress) -> tuple:
+def unpack_address(address) -> tuple:
     from yubtc.base58check import base58CheckDecode
     data = base58CheckDecode(address)
     prefix = data[0]
     dsthash = data[1:]
     return prefix, dsthash
-
-
-def get_address_unspent(address: TAddress) -> list:
-    import requests
-    from json.decoder import JSONDecodeError
-    address = address.decode('ascii')
-    try:
-        url = 'https://blockchain.info/unspent?active={address}'.format(address=address)
-        return requests.get(url, timeout=DEFAULT_TIMEOUT_HTTP).json()['unspent_outputs']
-    except JSONDecodeError:
-        return []
-
-
-def get_address_info(address: TAddress) -> dict:
-    import requests
-    from json.decoder import JSONDecodeError
-    address = address.decode('ascii')
-    try:
-        url = 'https://blockchain.info/balance?active={address}'.format(address=address)
-        response = requests.get(url, timeout=DEFAULT_TIMEOUT_HTTP)
-        return response.json()[address]
-    except JSONDecodeError:
-        return {'total_received': 0}

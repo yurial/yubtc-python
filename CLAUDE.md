@@ -29,7 +29,7 @@ follow the same shape:
 
 ## Test conventions
 
-- Tests run fully offline; `yubtc.misc.get_address_info` and
+- Tests run fully offline; `yubtc.net.get_address_info` and
   `get_address_unspent` are monkeypatched.
 - Random sources (e.g. `random.SystemRandom.choices`) are monkeypatched when
   the test depends on the chosen value.

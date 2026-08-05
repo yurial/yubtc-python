@@ -46,7 +46,7 @@ class TPrivKey(object):
         return privkey2addr(privkey=self.privkey, compressed=compressed)
 
     def get_info(self) -> dict:
-        from yubtc.misc import get_address_info
+        from yubtc.net import get_address_info
         if not self._info:
             self._info = get_address_info(self.get_p2pkh_address(self.compressed))
         return self._info
@@ -56,7 +56,7 @@ class TPrivKey(object):
         return total_received == 0
 
     def get_unspent(self, confirmations: Optional[int] = None) -> list:
-        from yubtc.misc import get_address_unspent
+        from yubtc.net import get_address_unspent
         if confirmations is None:
             raise Exception('confirmations not set')
         result = list()

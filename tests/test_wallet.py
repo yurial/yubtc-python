@@ -11,6 +11,8 @@ import pytest
 from decimal import Decimal
 from unittest.mock import MagicMock
 
+import yubtc
+
 
 # ---------------------------------------------------------------------------
 # TPrivKey: kwargs-only construction.
@@ -137,8 +139,7 @@ def test_TPrivKey_get_info_caches(monkeypatch):
     def fake_info(address):
         calls.append(address)
         return {'total_received': 0, 'final_balance': 0, 'n_tx': 0}
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_info', fake_info)
+    monkeypatch.setattr(yubtc.net, 'get_address_info', fake_info)
 
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
     a = p.get_info()
@@ -150,8 +151,7 @@ def test_TPrivKey_get_info_caches(monkeypatch):
 def test_TPrivKey_get_info_returns_cached_dict(monkeypatch):
     """The cached dict is returned, not re-fetched."""
     from yubtc.wallet import TPrivKey
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 1, 'n_tx': 1})
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
     assert p.get_info() == {'total_received': 1, 'n_tx': 1}
@@ -163,8 +163,7 @@ def test_TPrivKey_get_info_returns_cached_dict(monkeypatch):
 
 def test_TPrivKey_is_unused_when_total_received_is_zero(monkeypatch):
     import yubtc.wallet
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0, compressed=True)
     assert p.is_unused() is True
@@ -172,8 +171,7 @@ def test_TPrivKey_is_unused_when_total_received_is_zero(monkeypatch):
 
 def test_TPrivKey_is_used_when_total_received_is_nonzero(monkeypatch):
     import yubtc.wallet
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 1, 'n_tx': 1})
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0, compressed=True)
     assert p.is_unused() is False
@@ -185,8 +183,7 @@ def test_TPrivKey_is_used_when_total_received_is_nonzero(monkeypatch):
 
 def test_TPrivKey_get_unspent_returns_empty_when_no_utxos(monkeypatch):
     import yubtc.wallet
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: [])
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', lambda address, **kwargs: [])
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0, compressed=True)
     assert p.get_unspent(confirmations=0) == []
 
@@ -195,10 +192,9 @@ def test_TPrivKey_get_unspent_renames_api_fields(monkeypatch):
     """The blockchain.info format uses tx_hash / tx_output_n / value / script.
     The wallet's internal format renames these to tx / out_n / amount / script."""
     import yubtc.wallet
-    import yubtc.misc
     raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000,
             'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'}, ]
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: raw)
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', lambda address, **kwargs: raw)
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0, compressed=True)
     out = p.get_unspent(confirmations=0)
     assert out == [
@@ -208,7 +204,6 @@ def test_TPrivKey_get_unspent_renames_api_fields(monkeypatch):
 
 def test_TPrivKey_get_unspent_filters_low_confirmation_utxos(monkeypatch):
     import yubtc.wallet
-    import yubtc.misc
     raw = [{'tx_hash': 'a' * 64,
             'tx_output_n': 0,
             'value': 50_000,
@@ -220,7 +215,7 @@ def test_TPrivKey_get_unspent_filters_low_confirmation_utxos(monkeypatch):
             'confirmations': 10,
             'script': '76a914' + 'bb' * 20 + '88ac'},
            ]
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: raw)
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', lambda address, **kwargs: raw)
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0, compressed=True)
     out = p.get_unspent(confirmations=5)
     assert len(out) == 1
@@ -230,10 +225,9 @@ def test_TPrivKey_get_unspent_filters_low_confirmation_utxos(monkeypatch):
 def test_TPrivKey_get_unspent_includes_equal_confirmation(monkeypatch):
     """Boundary: confirmations >= threshold (inclusive)."""
     import yubtc.wallet
-    import yubtc.misc
     raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000,
             'confirmations': 5, 'script': '76a914' + 'aa' * 20 + '88ac'}, ]
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', lambda address, **kwargs: raw)
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', lambda address, **kwargs: raw)
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0, compressed=True)
     assert len(p.get_unspent(confirmations=5)) == 1
 
@@ -262,7 +256,7 @@ def test_Wallet_from_privkey_creates_single_privkey(monkeypatch):
     """privkey=... -> a Wallet with one TPrivKey (no seed-scan)."""
     from yubtc.wallet import Wallet
     from yubtc.crypto import seed2privkey
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     w = Wallet(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True, new_addresses=1)
     assert len(w.privkeys) == 1
@@ -273,7 +267,7 @@ def test_Wallet_from_privwif_creates_single_privkey(monkeypatch):
     """privwif=... -> Wallet with one TPrivKey whose privkey matches the WIF."""
     from yubtc.wallet import Wallet
     from yubtc.crypto import privkey2privwif, seed2privkey
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     privkey = seed2privkey(seed='qwe', nonce=0)
     wif = privkey2privwif(privkey=privkey, compressed=True)
@@ -290,7 +284,7 @@ def test_Wallet_with_no_source_leaves_privkeys_unset(monkeypatch):
     list, leaving the attribute at the placeholder None.
     """
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     w = Wallet()
     assert w.privkeys is None
@@ -299,10 +293,9 @@ def test_Wallet_with_no_source_leaves_privkeys_unset(monkeypatch):
 def test_Wallet_send_rejects_positional_args(monkeypatch):
     """send(arg, ...) is invalid -- only kwargs are accepted."""
     from yubtc.wallet import Wallet
-    import yubtc.misc
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     with pytest.raises(Exception, match='only kwargs allowed'):
         w.send('positional')
@@ -319,8 +312,8 @@ def test_Wallet_from_seed_stops_at_first_unused_address(monkeypatch):
         used = {'total_received': 1, 'n_tx': 1}
         fresh = {'total_received': 0, 'n_tx': 0}
         return used if counters['n'] == 1 else fresh
-    monkeypatch.setattr('yubtc.misc.get_address_info', fake_info)
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', lambda address, **kwargs: [])
+    monkeypatch.setattr('yubtc.net.get_address_info', fake_info)
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     # Walked over nonce 0 (used), then nonce 1 (fresh) -> stop.
@@ -332,9 +325,9 @@ def test_Wallet_from_seed_stops_at_first_unused_address(monkeypatch):
 def test_Wallet_init_with_explicit_compressed(monkeypatch):
     """Explicit `compressed=True/False` flows through without hitting the default body."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', lambda address, **kwargs: [])
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     # compressed=True and compressed=False both go through, no default applied.
     for c in (True, False):
         w = Wallet(seed='qwe', nonce=0, compressed=c, new_addresses=1)
@@ -348,9 +341,9 @@ def test_Wallet_from_seed_with_new_addresses(monkeypatch):
     Then `new_addresses` fresh addresses are appended starting from that nonce.
     """
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', lambda address, **kwargs: [])
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=3)
     # Nonce 0 is the first unused (no scan); then 3 fresh addresses appended.
@@ -366,8 +359,8 @@ def test_Wallet_from_seed_scan_then_appends(monkeypatch):
     def fake_info(address):
         counters['n'] += 1
         return {'total_received': 1, 'n_tx': 1} if counters['n'] <= 2 else {'total_received': 0, 'n_tx': 0}
-    monkeypatch.setattr('yubtc.misc.get_address_info', fake_info)
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', lambda address, **kwargs: [])
+    monkeypatch.setattr('yubtc.net.get_address_info', fake_info)
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=2)
     # Nonces 0,1 used (appended); nonce 2 is the first fresh (dropped); then
@@ -383,9 +376,9 @@ def test_Wallet_from_seed_scan_then_appends(monkeypatch):
 def test_Wallet_send_dry_run_prints_raw_tx(monkeypatch, monkeypatch_input):
     """With send=False the raw tx hex is printed; sendTx is not called."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
 
     sent = MagicMock()
     import yubtc.net
@@ -403,11 +396,10 @@ def test_Wallet_send_with_amount_none_skips_btc2satoshi(monkeypatch, monkeypatch
     Exercises the `if amount is not None:` short-circuit in Wallet.send.
     """
     from yubtc.wallet import Wallet
-    import yubtc.misc
     import yubtc.net
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'sendTx', sent)
 
@@ -423,9 +415,9 @@ def test_Wallet_send_with_broadcast_calls_sendTx(monkeypatch, monkeypatch_input)
     import yubtc.net
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'sendTx', sent)
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     dry_run_send(w, monkeypatch_input, dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount='0.0005', send=True)
@@ -435,12 +427,11 @@ def test_Wallet_send_with_broadcast_calls_sendTx(monkeypatch, monkeypatch_input)
 def test_Wallet_send_declined_prints_nothing(monkeypatch):
     """User answering 'n' to the confirmation prompt -> no tx, no send."""
     from yubtc.wallet import Wallet
-    import yubtc.misc
     import yubtc.net
 
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'sendTx', sent)
 
@@ -460,11 +451,10 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
     `amount` is the exception: it stays None to mean "drain all available funds".
     """
     from yubtc.wallet import Wallet
-    import yubtc.misc
     import yubtc.net
-    monkeypatch.setattr(yubtc.misc, 'get_address_info',
+    monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr(yubtc.misc, 'get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'sendTx', sent)
 
@@ -487,9 +477,9 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
 def test_Wallet_init_raises_when_compressed_or_new_addresses_missing(monkeypatch):
     """Wallet.__init__ requires `compressed` and `new_addresses`; None raises."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', lambda address, **kwargs: [])
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     with pytest.raises(Exception, match='compressed not set'):
         Wallet(seed='qwe', nonce=0)
     with pytest.raises(Exception, match='new_addresses not set'):
@@ -506,9 +496,9 @@ def test_Wallet_init_raises_when_compressed_or_new_addresses_missing(monkeypatch
 def test_Wallet_rejects_empty_seed(monkeypatch):
     """Empty seed string is rejected (distinct from "not set")."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', lambda address, **kwargs: [])
+    monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     with pytest.raises(Exception, match='seed cannot be empty'):
         Wallet(seed='', nonce=0, compressed=True, new_addresses=1)
 
@@ -522,9 +512,9 @@ def test_Wallet_make_vin_builds_cin_for_each_utxo(monkeypatch):
     from yubtc.wallet import Wallet
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
     from yubtc.hash import hash160
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_two_utxos())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_two_utxos())
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
@@ -542,9 +532,9 @@ def test_Wallet_make_vin_builds_cin_for_each_utxo(monkeypatch):
 def test_Wallet_make_vin_rejects_utxo_with_mismatched_pubkey(monkeypatch):
     """A UTXO whose lock script doesn't match our pubkey hash is rejected."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     with pytest.raises(Exception, match='unknown pubkey required'):
@@ -559,9 +549,9 @@ def test_Wallet_make_vin_rejects_utxo_with_mismatched_pubkey(monkeypatch):
 def test_Wallet_make_transaction_drains_input_when_amount_is_none(monkeypatch):
     """amount=None -> no change output; all funds go to the destination."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     stx, cashback, amount, fee = w.make_transaction(
@@ -577,9 +567,9 @@ def test_Wallet_make_transaction_drains_input_when_amount_is_none(monkeypatch):
 def test_Wallet_make_transaction_drains_when_amount_plus_fee_equals_input(monkeypatch):
     """Explicit drain: amount + fee == in_amount."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     stx, cashback, amount, fee = w.make_transaction(
@@ -593,9 +583,9 @@ def test_Wallet_make_transaction_drains_when_amount_plus_fee_equals_input(monkey
 def test_Wallet_make_transaction_adds_change_output(monkeypatch):
     """amount + fee < in_amount -> a change output back to the source."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     stx, cashback, amount, fee = w.make_transaction(
@@ -614,9 +604,9 @@ def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
     """The signed tx's input scripts use the wallet's owner privkey."""
     from yubtc.wallet import Wallet
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     stx, _, _, _ = w.make_transaction(
@@ -634,9 +624,9 @@ def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
 def test_Wallet_make_transaction_recurses_until_fee_is_stable(monkeypatch):
     """When fee is not provided, the loop iterates until the fee rate is stable."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo(amount=200_000))
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=200_000))
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     # Use feekb so the fee is set iteratively; no fixed fee.
@@ -653,9 +643,9 @@ def test_Wallet_make_transaction_recurses_until_fee_is_stable(monkeypatch):
 def test_Wallet_make_transaction_raises_when_confirmations_or_feekb_missing(monkeypatch):
     """make_transaction requires `confirmations` and `feekb`; `fee` may be None."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
@@ -668,9 +658,9 @@ def test_Wallet_make_transaction_raises_when_confirmations_or_feekb_missing(monk
 
 def test_Wallet_make_transaction_raises_when_dst_missing(monkeypatch):
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
                 fee=1_000, feekb=2_000, confirmations=0)
@@ -680,9 +670,9 @@ def test_Wallet_make_transaction_raises_when_dst_missing(monkeypatch):
 
 def test_Wallet_make_vin_raises_when_pubhash_or_unspent_missing(monkeypatch):
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     with pytest.raises(Exception, match='pubhash not set'):
         w._make_vin(unspent=[])
@@ -693,9 +683,9 @@ def test_Wallet_make_vin_raises_when_pubhash_or_unspent_missing(monkeypatch):
 def test_Wallet_methods_reject_positional_args(monkeypatch):
     """send / make_transaction / _make_vin all require kwargs-only calls."""
     from yubtc.wallet import Wallet
-    monkeypatch.setattr('yubtc.misc.get_address_info',
+    monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
-    monkeypatch.setattr('yubtc.misc.get_address_unspent', fake_unspent_with_one_utxo())
+    monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     # send: positional dst is no longer allowed -- 'only kwargs allowed'.
     with pytest.raises(Exception, match='only kwargs allowed'):
