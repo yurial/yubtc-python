@@ -325,6 +325,45 @@ def test_make_vout_sends_change_back_to_src():
     assert vouts[1].script.hex() == '76a914d9d50a8ac051c555bf9a514aee0e4835efb3273888ac'
 
 
+def test_make_vout_drain_raises_when_input_does_not_cover_fee():
+    """amount=None with in_amount < fee: the drain would go negative."""
+    from yubtc.crypto import make_vout, seed2privkey, privkey2addr
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    with pytest.raises(Exception, match='input does not cover fee'):
+        make_vout(src=src, dst=dst, in_amount=500, amount=None, fee=1_000)
+
+
+def test_make_vout_drain_raises_when_input_equals_fee():
+    """amount=None with in_amount == fee: still valid (sends 0 to dst)."""
+    from yubtc.crypto import make_vout, seed2privkey, privkey2addr
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=1_000, amount=None, fee=1_000)
+    assert amount == 0
+    assert cashback == 0
+    assert vouts[0].amount == 0
+
+
+def test_make_vout_raises_when_amount_plus_fee_exceeds_input():
+    """Non-drain: amount + fee > in_amount would produce a negative cashback."""
+    from yubtc.crypto import make_vout, seed2privkey, privkey2addr
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    with pytest.raises(Exception, match=r'amount \+ fee exceeds input'):
+        make_vout(src=src, dst=dst, in_amount=10_000, amount=50_000, fee=1_000)
+
+
+def test_make_vout_exact_no_change_does_not_trip_drain_check():
+    """amount + fee == in_amount is the "exact spend" branch -- no error."""
+    from yubtc.crypto import make_vout, seed2privkey, privkey2addr
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
+    vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=11_000, amount=10_000, fee=1_000)
+    assert cashback == 0
+    assert amount == 10_000
+
+
 def test_seed2bin_raises_when_seed_missing():
     """seed=None must raise -- callers must pass it explicitly."""
     from yubtc.crypto import seed2bin

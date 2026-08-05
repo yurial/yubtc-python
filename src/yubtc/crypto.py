@@ -177,6 +177,15 @@ def make_vout(*args, src: Optional[TAddress] = None, dst: Optional[TAddress] = N
     if fee is None:
         raise Exception('fee not set')
     from yubtc.transaction import COut
+    if in_amount < fee:
+        # Drain (`amount is None`) lands in the branch below and would
+        # compute `amount = in_amount - fee < 0`. Bail out with a message
+        # that names both numbers so the operator can see the gap.
+        raise Exception('input does not cover fee')
+    if amount is not None and amount + fee > in_amount:
+        # Non-drain branch: this is the check that keeps cashback from
+        # going negative. The drain branch is gated by the check above.
+        raise Exception('amount + fee exceeds input')
     vout_script = make_lock_script(dst)
     if amount is None or (amount + fee == in_amount):
         amount = in_amount - fee

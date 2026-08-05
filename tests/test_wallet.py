@@ -811,6 +811,77 @@ def test_Wallet_scan_change_goes_to_unused_address_at_gap(monkeypatch):
     assert retback_addr == unused_addr
 
 
+def test_Wallet_scan_continues_past_drained_address(monkeypatch):
+    """An address that was paid to but is now drained is not a gap.
+
+    Scan must walk past drained addresses to reach later addresses that
+    may hold fresh UTXOs. Treating "no current UTXOs" as a gap would
+    truncate the scan whenever an earlier address had been fully spent.
+    """
+    from yubtc.wallet import Wallet
+    from yubtc.crypto import seed2privkey, privkey2addr
+
+    drained_addr = privkey2addr(
+        privkey=seed2privkey(seed='qwe', nonce=0)).decode('ascii')
+
+    def get_info(address):
+        address = address.decode('ascii') if isinstance(address, bytes) else address
+        if address == drained_addr:
+            # Once received funds; now fully spent.
+            return {'total_received': 100, 'n_tx': 1}
+        return {'total_received': 0, 'n_tx': 0}
+
+    monkeypatch.setattr('yubtc.net.get_address_info', get_info)
+    # nonce 0 is used but drained, nonce 1 has UTXOs, nonce 2 is the true gap.
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent_per_nonce({1: [60_000]}))
+
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    sources, retback_addr = w._scan_inputs(target=200_000, confirmations=0)
+
+    # The drained nonce 0 contributes nothing; nonce 1 is the only source.
+    assert len(sources) == 1
+    assert sources[0][0].nonce == 1
+    # True gap sits at nonce 2 -- retback goes there.
+    gap_addr = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=2))
+    assert retback_addr == gap_addr
+
+
+def test_Wallet_make_transaction_scan_drains_past_drained_address(monkeypatch):
+    """make_transaction's scan path also walks past drained addresses.
+
+    The drained address contributes no inputs; later addresses are
+    drained in full (amount=None).
+    """
+    from yubtc.wallet import Wallet
+    from yubtc.crypto import seed2privkey, privkey2addr
+
+    drained_addr = privkey2addr(
+        privkey=seed2privkey(seed='qwe', nonce=0)).decode('ascii')
+
+    def get_info(address):
+        address = address.decode('ascii') if isinstance(address, bytes) else address
+        if address == drained_addr:
+            return {'total_received': 100, 'n_tx': 1}
+        return {'total_received': 0, 'n_tx': 0}
+
+    monkeypatch.setattr('yubtc.net.get_address_info', get_info)
+    # nonce 0 drained, nonce 1 holds the funds, nonce 2 is the gap.
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent_per_nonce({1: [40_000]}))
+
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1)
+    stx, cashback, amount, fee = w.make_transaction(
+        dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None, fee=1_000,
+        feekb=2_000, confirmations=0, scan=True,
+    )
+    # One input from nonce 1; drained nonce 0 contributes nothing.
+    assert len(stx.vin) == 1
+    # amount=None drains everything collected.
+    assert cashback == 0
+    assert amount == 40_000 - fee
+
+
 def test_Wallet_scan_inputs_invokes_on_address_for_each_source(monkeypatch):
     """on_address(tp, unspent) is called once per sourced address, not for the gap-limit stop."""
     from yubtc.wallet import Wallet

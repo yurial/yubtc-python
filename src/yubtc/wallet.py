@@ -212,7 +212,8 @@ class Wallet(object):
 
         Stops when either:
         - the running total of satoshis >= `target` (when target is not None), or
-        - an address with no UTXOs is found (gap limit).
+        - an address that has never received funds AND currently has no
+          UTXOs is found (the BIP-44 gap limit).
 
         `on_address`, if provided, is invoked as `on_address(tp, unspent)`
         for every address that contributes a UTXO. The gap-limit stop and
@@ -227,6 +228,12 @@ class Wallet(object):
           unused address itself (the wallet's next address, which is
           hidden in the gap and ready to receive change);
         - otherwise retback_addr is the last sourced address.
+
+        Note on gap detection: an address that *was* paid to but has
+        since been fully spent returns [] from get_unspent() yet is not
+        unused by the wallet-init definition (which checks
+        total_received). Treating that as a gap would truncate the scan
+        and miss later addresses with fresh UTXOs.
         """
         if args:
             raise Exception('only kwargs allowed')
@@ -239,15 +246,17 @@ class Wallet(object):
         while True:
             pk = TPrivKey(seed=self._seed, nonce=nonce)
             unspent = pk.get_unspent(confirmations=confirmations)
-            if not unspent:
-                # Gap limit: retback goes to this unused address.
+            if pk.is_unused() and not unspent:
+                # True gap: this address has never received anything and
+                # has nothing to spend. Retback goes here.
                 retback_addr = pk.get_p2pkh_address()
                 break
-            sources.append((pk, unspent))
-            for u in unspent:
-                total += u['amount']
-            if on_address is not None:
-                on_address(pk, unspent)
+            if unspent:
+                sources.append((pk, unspent))
+                for u in unspent:
+                    total += u['amount']
+                if on_address is not None:
+                    on_address(pk, unspent)
             if target is not None and total >= target:
                 # Target met: retback goes to the last sourced address.
                 retback_addr = pk.get_p2pkh_address()
