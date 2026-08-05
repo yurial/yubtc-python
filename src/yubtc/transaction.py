@@ -1,7 +1,5 @@
 from typing import Optional
 
-from coincurve import PrivateKey
-
 
 def script2pkh(script: bytes) -> bytes:
     from yubtc.script import OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG
@@ -145,13 +143,13 @@ class CTransaction(object):
         result += pack(b"<L", self.locktime)
         return result
 
-    def sign(self, *args, privkey: Optional[PrivateKey] = None, pubwif: Optional[bytes] = None) -> 'CTransaction':
+    def sign(self, *args, signers: Optional[list] = None) -> 'CTransaction':
         if args:
             raise Exception('only kwargs allowed')
-        if privkey is None:
-            raise Exception('privkey not set')
-        if pubwif is None:
-            raise Exception('pubwif not set')
+        if signers is None:
+            raise Exception('signers not set')
+        if len(signers) != len(self.vin):
+            raise Exception('signers length must match vin length')
         from copy import deepcopy
         from yubtc.crypto import sign_data
         from yubtc.script import CScript
@@ -160,12 +158,13 @@ class CTransaction(object):
         scripts = list()
         SIGHASH_ALL = 0x01
         for i in range(len(tx.vin)):
+            k, w = signers[i]
             for z in range(len(tx.vin)):
                 tx.vin[z].script = b''
             tx.vin[i] = deepcopy(self.vin[i])
             sigdata = tx.serialize() + pack(b'<L', SIGHASH_ALL)
-            signature = sign_data(privkey=privkey, data=sigdata) + pack(b'<B', SIGHASH_ALL)
-            scripts.append(CScript([signature, pubwif]))
+            signature = sign_data(privkey=k, data=sigdata) + pack(b'<B', SIGHASH_ALL)
+            scripts.append(CScript([signature, w]))
         for i in range(len(tx.vin)):
             tx.vin[i].script = scripts[i]
         return tx

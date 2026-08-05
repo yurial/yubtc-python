@@ -210,7 +210,7 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=50_000, script=b'\xac')],
         locktime=0,
-    ).sign(privkey=privkey, pubwif=pubwif)
+    ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
@@ -238,7 +238,7 @@ def test_send_amount_all_means_none(monkeypatch):
             vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
             vout=[COut(amount=0, script=b'\xac')],
             locktime=0,
-        ).sign(privkey=privkey, pubwif=pubwif)
+        ).sign(signers=[(privkey, pubwif)])
         return tx, 0, 0, 1_000
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
     run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'], stdin=SEED + '\ny\n')
@@ -256,7 +256,7 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
         locktime=0,
-    ).sign(privkey=privkey, pubwif=pubwif)
+    ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
@@ -285,7 +285,7 @@ def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
         locktime=0,
-    ).sign(privkey=privkey, pubwif=pubwif)
+    ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
@@ -318,7 +318,7 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
         locktime=0,
-    ).sign(privkey=privkey, pubwif=pubwif)
+    ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
         return fake_tx, 0, 50_000, 1_000
@@ -332,6 +332,67 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
     run(['send', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
         stdin=SEED + '\ny\n')
     sent.assert_called_once()
+
+
+def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
+    """--scan routes through Wallet.send with scan=True."""
+    import yubtc.net as net
+    import yubtc.wallet as wallet_mod
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    privkey = seed2privkey(seed='qwe', nonce=0)
+    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    fake_tx = CTransaction(
+        vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+        vout=[COut(amount=0, script=b'\xac')],
+        locktime=0,
+    ).sign(signers=[(privkey, pubwif)])
+
+    captured = {}
+
+    def fake_make_transaction(self, **kwargs):
+        captured['scan'] = kwargs.get('scan')
+        return fake_tx, 0, 50_000, 1_000
+
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+    sent = MagicMock()
+    monkeypatch.setattr(net, 'sendTx', sent)
+
+    run(['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+        stdin=SEED + '\n')
+    assert captured['scan'] is True
+    sent.assert_not_called()
+
+
+def test_send_with_scan_and_all_drains(monkeypatch):
+    """--scan + ALL drains every scanned UTXO."""
+    import yubtc.net as net
+    import yubtc.wallet as wallet_mod
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    privkey = seed2privkey(seed='qwe', nonce=0)
+    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    fake_tx = CTransaction(
+        vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
+        vout=[COut(amount=80_000, script=b'\xac')],
+        locktime=0,
+    ).sign(signers=[(privkey, pubwif)])
+
+    captured = {}
+
+    def fake_make_transaction(self, **kwargs):
+        captured['amount'] = kwargs.get('amount')
+        captured['scan'] = kwargs.get('scan')
+        return fake_tx, 0, 80_000, 1_000
+
+    monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
+    monkeypatch.setattr(net, 'sendTx', MagicMock())
+
+    run(['send', '--scan', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'],
+        stdin=SEED + '\n')
+    assert captured['scan'] is True
+    # amount=None is the drain sentinel.
+    assert captured['amount'] is None
 
 
 # ---------------------------------------------------------------------------

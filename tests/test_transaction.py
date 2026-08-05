@@ -173,18 +173,12 @@ def test_ctransaction_raises_when_vin_or_vout_missing():
         CTransaction(**{**base, 'vout': None})
 
 
-def test_sign_raises_when_privkey_or_pubwif_missing():
-    """sign requires `privkey` and `pubwif`."""
+def test_sign_raises_when_signers_missing():
+    """sign requires `signers`."""
     from yubtc.transaction import CTransaction, COut
     tx = CTransaction(vin=[], vout=[COut(amount=0, script=b'\xac')], locktime=0)
-    with pytest.raises(Exception, match='privkey not set'):
-        tx.sign(pubwif=b'\x02' + b'\x00' * 32)
-    with pytest.raises(Exception, match='privkey not set'):
-        tx.sign(privkey=None, pubwif=b'\x02' + b'\x00' * 32)
-    with pytest.raises(Exception, match='pubwif not set'):
-        tx.sign(privkey=b'\x11' * 32)
-    with pytest.raises(Exception, match='pubwif not set'):
-        tx.sign(privkey=b'\x11' * 32, pubwif=None)
+    with pytest.raises(Exception, match='signers not set'):
+        tx.sign()
 
 
 def test_multi_arg_transaction_methods_reject_positional_args():
@@ -202,7 +196,7 @@ def test_multi_arg_transaction_methods_reject_positional_args():
     # sign: build a tx first, then attempt positional sign.
     tx = CTransaction(vin=[], vout=[COut(amount=0, script=b'\xac')], locktime=0)
     with pytest.raises(Exception, match='only kwargs allowed'):
-        tx.sign(b'\x11' * 32, b'\x02' + b'\x00' * 32)
+        tx.sign([(None, None)])
 
 
 def test_cin_serialize_known_answer():
@@ -368,7 +362,7 @@ def test_sign_populates_each_input_script():
         vout=[COut(amount=1000, script=b'\x76\xa9')],
         locktime=0,
     )
-    signed = tx.sign(privkey=privkey, pubwif=pubwif)
+    signed = tx.sign(signers=[(privkey, pubwif), (privkey, pubwif)])
     for i, vin in enumerate(signed.vin):
         assert len(vin.script) > 0, f'input {i} has empty script'
 
@@ -386,7 +380,7 @@ def test_sign_script_ends_with_pubwif():
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
-    signed = tx.sign(privkey=privkey, pubwif=pubwif)
+    signed = tx.sign(signers=[(privkey, pubwif)])
     assert signed.vin[0].script.endswith(pubwif)
 
 
@@ -402,7 +396,7 @@ def test_sign_changes_id():
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
-    signed = tx.sign(privkey=privkey, pubwif=pubwif)
+    signed = tx.sign(signers=[(privkey, pubwif)])
     assert signed.id() != tx.id()
 
 
@@ -417,6 +411,22 @@ def test_sign_does_not_mutate_original():
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
     original_bytes = tx.serialize()
-    tx.sign(privkey=privkey, pubwif=pubwif)
+    tx.sign(signers=[(privkey, pubwif)])
     assert tx.serialize() == original_bytes
     assert tx.vin[0].script == b''
+
+
+def test_CTransaction_sign_signers_must_match_vin_length():
+    """signers (one per input) must agree with len(vin)."""
+    from yubtc.transaction import CIn, COut, CTransaction
+    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    privkey = seed2privkey(seed='qwe', nonce=0)
+    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    tx = CTransaction(
+        vin=[
+            CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff),
+            CIn(txhash=TXHASH, n=1, script=b'', sequence=0xffffffff),
+        ],
+        vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
+    with pytest.raises(Exception, match='signers length must match vin length'):
+        tx.sign(signers=[(privkey, pubwif)])

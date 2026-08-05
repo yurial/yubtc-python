@@ -108,6 +108,9 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
               default=MINIMAL_FEE, required=False, nargs=1, type=int)
 @click.option('--broadcast', help='Broadcast the transaction; otherwise print the raw tx to console.',
               default=False, is_flag=True)
+@click.option('--scan', help='Scan addresses starting at --nonce until the target amount is reached '
+              'or an unused address is found; spend all collected inputs.',
+              default=False, is_flag=True)
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
 def send(
@@ -117,9 +120,11 @@ def send(
         feekb: TSatoshi,
         address: TAddress,
         amount: TAmount,
-        broadcast: bool) -> None:
+        broadcast: bool,
+        scan: bool) -> None:
     amount = None if amount == 'ALL' else TBTC(amount)
     wallet = Wallet(seed=get_seed(), nonce=nonce,
                     compressed=DEFAULT_COMPRESSED, new_addresses=DEFAULT_NEW_ADDRESSES)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
-    wallet.send(dst=address, amount=amount, fee=fee, feekb=feekb, confirmations=confirmations, broadcast=broadcast)
+    wallet.send(dst=address, amount=amount, fee=fee, feekb=feekb,
+                confirmations=confirmations, broadcast=broadcast, scan=scan)
