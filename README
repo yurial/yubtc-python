@@ -16,6 +16,81 @@ Commands:
   balance      Show the balance.
   send         Send BTC to an address.
   dumpprivkey  Show the private key in WIF format.
+  pushtx       Broadcast a pre-signed raw transaction from stdin.
+
+Network providers
+=================
+
+By default every command that talks to the network hits
+blockchain.info. Switch providers with `--provider NAME`:
+
+    $ yubtc balance --provider blockstream
+    $ yubtc balance --provider mempool.space
+
+Registered providers:
+  blockchain.info  blockchain.info's public API (default)
+  blockstream      blockstream.info's Esplora API
+  mempool.space    mempool.space's Esplora API
+
+The blockstream and mempool.space backends share the same JSON schema
+(Esplora); only the base URL differs. Confirmations are computed
+locally from each UTXO's block height and the chain tip, so a slow
+provider can't break the gap scan.
+
+An unknown `--provider` name is rejected by click before any network
+work runs -- no silent fallback to the default.
+
+Key derivation
+==============
+
+yuBTC supports two key derivation paths, gated on whether a passphrase
+is set:
+
+* **No passphrase** (the default): the legacy path. For each nonce the
+  32-byte secret is `sha256(keccak256(blake2b256(nonce ‖ seed)))`. Each
+  nonce is independent -- reusing a seed with the same passphrase at a
+  different nonce gives a different address, but two different seeds at
+  the same nonce are also independent. The wallet is compatible with
+  the original yubtc behaviour: an old wallet with no passphrase opens
+  to the same addresses as it always did.
+
+* **With passphrase**: BIP-39 + BIP-32 + BIP-44. The mnemonic is
+  NFKD-normalised, stretched through PBKDF2-HMAC-SHA512 (2048 iter,
+  salt `b'mnemonic' + passphrase`, 64 bytes) to produce the BIP-39
+  seed. The BIP-32 master is derived from that seed, and the final
+  32-byte key is the leaf at the **main path**:
+
+      m/44'/0'/0'/0/<nonce>
+
+  (`purpose / coin_type / account / chain / address_index`).
+
+  Same mnemonic + passphrase + nonce yields the same address in Trezor,
+  Ledger, Electrum, etc. The wallet walks only the receiving chain
+  (`chain = 0`) and uses the next unused index of the same chain for
+  cashback -- a single-account, single-chain tree, in line with the
+  wallet's no-storage rescan-on-every-run model. A full BIP-44 walk
+  would be O(N×M) per scan with no upside for this use case.
+
+Private key formats
+===================
+
+`dumpprivkey` returns a **WIF (Wallet Import Format)** string --
+compressed, mainnet, base58check-encoded. Concretely, the bytes are:
+
+    0x80 || <32-byte secret> || 0x01
+
+The trailing `0x01` is the compressed-pubkey flag; the prefix `0x80`
+is the mainnet private-key prefix. The whole 34-byte payload is then
+base58check-encoded so a typo in the WIF is detected by checksum, not
+by silently signing for the wrong key.
+
+Only compressed WIF is supported on import (`privwif2privkey`); an
+uncompressed WIF (33-byte body, no trailing `0x01`) raises
+`'uncompressed wif not supported'` rather than silently downgrading.
+
+Inside the wallet the privkey is held as a 32-byte secret. yubtc does
+not store anything, so the WIF is the only thing to keep between
+sessions -- paste it into another BIP-39-aware wallet to recover.
 
 Usage from a checkout (no installation needed):
 $ pip install -r requirements.txt
