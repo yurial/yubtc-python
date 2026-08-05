@@ -3,7 +3,6 @@
 import click
 
 from yubtc.fwd import (
-    DEFAULT_COMPRESSED,
     DEFAULT_CONFIRMATIONS,
     DEFAULT_FEE,
     DEFAULT_NEW_ADDRESSES,
@@ -33,7 +32,7 @@ def cli() -> None:
 def newseed(n: int, unique: bool) -> None:
     seed = generate_seed(count=n, allow_dups=not unique)
     wallet = Wallet(seed=seed, nonce=DEFAULT_NONCE,
-                    compressed=DEFAULT_COMPRESSED, new_addresses=DEFAULT_NEW_ADDRESSES)
+                    new_addresses=DEFAULT_NEW_ADDRESSES)
     print('{seed}\r\nAddress: {address}'.format(seed=seed,
                                                 address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
@@ -44,8 +43,7 @@ def newseed(n: int, unique: bool) -> None:
 @click.option('--new', help='Count of new unused addresses',
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
 def address(nonce: TNonce, new: int) -> None:
-    wallet = Wallet(seed=get_seed(), nonce=nonce,
-                    compressed=DEFAULT_COMPRESSED, new_addresses=new)
+    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
     print(wallet.privkeys[0].get_p2pkh_address().decode('ascii'))
 
 
@@ -53,8 +51,7 @@ def address(nonce: TNonce, new: int) -> None:
 @click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 def dumpprivkey(nonce: TNonce) -> None:
-    wallet = Wallet(seed=get_seed(), nonce=nonce,
-                    compressed=DEFAULT_COMPRESSED, new_addresses=DEFAULT_NEW_ADDRESSES)
+    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
     print(wallet.privkeys[0].get_privwif().decode('ascii'))
 
@@ -73,8 +70,7 @@ def dumpprivkey(nonce: TNonce) -> None:
 def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: bool) -> None:
     from yubtc.misc import satoshi2btc
     total = TBTC(0)
-    wallet = Wallet(seed=get_seed(), nonce=nonce,
-                    compressed=DEFAULT_COMPRESSED, new_addresses=new)
+    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=new)
     for privkey in wallet.privkeys:
         txs = privkey.get_unspent(confirmations=confirmations)
         in_amount = 0
@@ -123,8 +119,7 @@ def send(
         broadcast: bool,
         scan: bool) -> None:
     amount = None if amount == 'ALL' else TBTC(amount)
-    wallet = Wallet(seed=get_seed(), nonce=nonce,
-                    compressed=DEFAULT_COMPRESSED, new_addresses=DEFAULT_NEW_ADDRESSES)
+    wallet = Wallet(seed=get_seed(), nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
     wallet.send(dst=address, amount=amount, fee=fee, feekb=feekb,
                 confirmations=confirmations, broadcast=broadcast, scan=scan)

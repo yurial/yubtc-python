@@ -96,7 +96,7 @@ def test_newseed_address_matches_seed(offline):
     seed, shown = output.strip().split('\n')
     assert len(seed.split()) == 5
     expected = privkey2addr(
-        privkey=seed2privkey(seed=seed, nonce=0), compressed=True,
+        privkey=seed2privkey(seed=seed, nonce=0),
     ).decode('ascii')
     assert shown == 'Address: ' + expected
 
@@ -203,9 +203,9 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
     monkeypatch.setattr(net, 'sendTx', sent)
     # Replace make_transaction with a stub that returns a known tx.
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     fake_tx = CTransaction(
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=50_000, script=b'\xac')],
@@ -231,9 +231,9 @@ def test_send_amount_all_means_none(monkeypatch):
     def fake_make_transaction(self, **kwargs):
         captured['amount'] = kwargs['amount']
         from yubtc.transaction import CIn, COut, CTransaction
-        from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+        from yubtc.crypto import seed2privkey, privkey2pubkey
         privkey = seed2privkey(seed='qwe', nonce=0)
-        pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+        pubwif = privkey2pubkey(privkey=privkey)
         tx = CTransaction(
             vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
             vout=[COut(amount=0, script=b'\xac')],
@@ -249,9 +249,9 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
     """With --broadcast, answering 'n' to the confirm prompt skips sendTx but the dump is still printed."""
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     fake_tx = CTransaction(
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
@@ -278,9 +278,9 @@ def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
     """Without --broadcast, no confirmation prompt is asked -- the dump just prints."""
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     fake_tx = CTransaction(
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
@@ -311,9 +311,9 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
     import yubtc.net as net
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     fake_tx = CTransaction(
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
@@ -339,9 +339,9 @@ def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
     import yubtc.net as net
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     fake_tx = CTransaction(
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=0, script=b'\xac')],
@@ -369,9 +369,9 @@ def test_send_with_scan_and_all_drains(monkeypatch):
     import yubtc.net as net
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     fake_tx = CTransaction(
         vin=[CIn(txhash=b'\xab' * 32, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=80_000, script=b'\xac')],

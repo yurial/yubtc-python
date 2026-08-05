@@ -11,8 +11,7 @@ class TPrivKey(object):
             *args,
             privkey: Optional[bytes] = None,
             seed: Optional[TSeed] = None,
-            nonce: Optional[TNonce] = None,
-            compressed: Optional[bool] = None):
+            nonce: Optional[TNonce] = None):
         from yubtc.crypto import seed2privkey
         if args:
             raise Exception('only kwargs allowed')
@@ -27,28 +26,21 @@ class TPrivKey(object):
             if nonce is None:
                 raise Exception('nonce not set')
             self.privkey = seed2privkey(seed=seed, nonce=nonce)
-        if compressed is None:
-            raise Exception('compressed not set')
         self.nonce = nonce
-        self.compressed = compressed
         self._info = None
 
-    def get_privwif(self, compressed: Optional[bool] = None) -> str:
+    def get_privwif(self) -> str:
         from yubtc.crypto import privkey2privwif
-        if compressed is None:
-            compressed = self.compressed
-        return privkey2privwif(privkey=self.privkey, compressed=compressed)
+        return privkey2privwif(privkey=self.privkey)
 
-    def get_p2pkh_address(self, compressed: Optional[bool] = None) -> bytes:
+    def get_p2pkh_address(self) -> bytes:
         from yubtc.crypto import privkey2addr
-        if compressed is None:
-            compressed = self.compressed
-        return privkey2addr(privkey=self.privkey, compressed=compressed)
+        return privkey2addr(privkey=self.privkey)
 
     def get_info(self) -> dict:
         from yubtc.net import get_address_info
         if not self._info:
-            self._info = get_address_info(self.get_p2pkh_address(self.compressed))
+            self._info = get_address_info(self.get_p2pkh_address())
         return self._info
 
     def is_unused(self) -> bool:
@@ -60,7 +52,7 @@ class TPrivKey(object):
         if confirmations is None:
             raise Exception('confirmations not set')
         result = list()
-        for x in get_address_unspent(self.get_p2pkh_address(self.compressed)):
+        for x in get_address_unspent(self.get_p2pkh_address()):
             if x['confirmations'] >= confirmations:
                 result.append({
                     'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
@@ -74,7 +66,6 @@ class Wallet(object):
             self,
             *args,
             seed: Optional[TSeed] = None,
-            compressed: Optional[bool] = None,
             nonce: Optional[TNonce] = None,
             new_addresses: Optional[int] = None):
         if args:
@@ -83,21 +74,18 @@ class Wallet(object):
             raise Exception('seed not set')
         if not seed:
             raise Exception('seed cannot be empty')
-        if compressed is None:
-            raise Exception('compressed not set')
         if new_addresses is None:
             raise Exception('new_addresses not set')
-        self.compressed = compressed
         self._seed = seed
         self.privkeys = []
         while True:
-            privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
+            privkey = TPrivKey(seed=seed, nonce=nonce)
             if privkey.is_unused():
                 break
             self.privkeys.append(privkey)
             nonce = nonce + 1
         for i in range(new_addresses):
-            privkey = TPrivKey(seed=seed, nonce=nonce, compressed=compressed)
+            privkey = TPrivKey(seed=seed, nonce=nonce)
             self.privkeys.append(privkey)
             nonce = nonce + 1
 
@@ -191,15 +179,14 @@ class Wallet(object):
         if sources is None:
             raise Exception('sources not set')
         from yubtc.hash import hash160
-        from yubtc.crypto import privkey2pubkey, pubkey2pubwif
+        from yubtc.crypto import privkey2pubkey
         from yubtc.transaction import script2pkh, CIn
         vin = list()
         in_amount = 0
         signers = list()
         for tp, unspent in sources:
             pubkey = privkey2pubkey(tp.privkey)
-            pubwif = pubkey2pubwif(pubkey=pubkey, compressed=self.compressed)
-            pubhash = hash160(pubwif)
+            pubhash = hash160(pubkey)
             for u in unspent:
                 in_amount += u['amount']
                 tx_lock_script = bytes.fromhex(u['script'])
@@ -211,7 +198,7 @@ class Wallet(object):
                     txhash=txhash, n=u['out_n'],
                     script=tx_lock_script, sequence=0xffffffff,
                 ))
-                signers.append((tp.privkey, pubwif))
+                signers.append((tp.privkey, pubkey))
         return vin, in_amount, signers
 
     def _scan_inputs(
@@ -242,7 +229,7 @@ class Wallet(object):
         nonce = 0
         retback_addr = None
         while True:
-            pk = TPrivKey(seed=self._seed, nonce=nonce, compressed=self.compressed)
+            pk = TPrivKey(seed=self._seed, nonce=nonce)
             unspent = pk.get_unspent(confirmations=confirmations)
             if not unspent:
                 # Gap limit: retback goes to this unused address.
@@ -271,7 +258,7 @@ class Wallet(object):
             raise Exception('only kwargs allowed')
         if dst is None:
             raise Exception('dst not set')
-        from yubtc.crypto import privkey2pubkey, pubkey2pubwif, pubkey2addr, make_vout
+        from yubtc.crypto import privkey2pubkey, pubkey2addr, make_vout
         from yubtc.transaction import CTransaction
         if confirmations is None:
             raise Exception('confirmations not set')
@@ -280,7 +267,6 @@ class Wallet(object):
         if scan is None:
             raise Exception('scan not set')
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
-        pubwif = pubkey2pubwif(pubkey=pubkey, compressed=self.compressed)
         if scan:
             # When scanning, fetch UTXOs from every address starting at
             # nonce 0 until either the target amount is met or an unused
@@ -290,12 +276,12 @@ class Wallet(object):
                 target=amount, confirmations=confirmations)
             vin, in_amount, signers = self._make_vin_multi(sources=sources)
         else:
-            src = pubkey2addr(pubkey=pubkey, compressed=self.compressed)
+            src = pubkey2addr(pubkey=pubkey)
             unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
             from yubtc.hash import hash160
-            pubhash = hash160(pubwif)
+            pubhash = hash160(pubkey)
             vin, in_amount = self._make_vin(pubhash=pubhash, unspent=unspent)
-            signers = [(self.privkeys[0].privkey, pubwif)]
+            signers = [(self.privkeys[0].privkey, pubkey)]
         _fee = fee
         while True:
             vout, _cashback, _amount = make_vout(src=src, dst=dst, in_amount=in_amount, amount=amount, fee=_fee)

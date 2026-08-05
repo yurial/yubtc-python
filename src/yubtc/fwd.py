@@ -10,7 +10,6 @@ TNonce = int
 # Defaults for function signatures. Centralised so callers can override one
 # place and have every signature pick up the change.
 DEFAULT_NONCE: TNonce = 0
-DEFAULT_COMPRESSED: bool = True
 DEFAULT_LOCKTIME: int = 0
 DEFAULT_SEED_WORDS: int = 15
 DEFAULT_ALLOW_DUPS: bool = True

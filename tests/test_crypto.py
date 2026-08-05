@@ -1,34 +1,22 @@
 import pytest
 
 
-@pytest.mark.parametrize('compressed, seed, privhex, privwif, address',
-                         [(False,
-                           'qwe',
+@pytest.mark.parametrize('seed, privhex, privwif, address',
+                         [('qwe',
                            '1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455',
-                           b'5Hztg9Lf6fPida3GtdxhzmC6gTh98oQ6dGPotiFWMBSanCVcqBb',
-                           b'16toxZ1pUrKbw7Ripem1X4aGxmY6b5qSCz'),
-                          (True,
-                           'qwe',
-                             '1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455',
-                             b'Kx2X5mom9zTGkQq38v8swx3z5ApAuRnwq4wfyF52Y55v6Ke5dRq5',
-                             b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'),
-                             (False,
-                              '12345',
-                              '28820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d49',
-                              b'5J88JQkRPEffAwVL73kwtDzGFqtBFiCsFXajzb9ytmCZbs4VSUY',
-                              b'1MN1fFX2xmKS1qZXyhw5EUpS9Laa2HaeYX'),
-                             (True,
-                              '12345',
-                              '28820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d49',
-                              b'KxaTDqped9KdUsW3KhAyF6KkLWktFvsNo7yvmBke7U62tWmMs8dk',
-                              b'1sW6JDNWppzUjQr8jjQ9KJmVx92ooKEd6'),
+                           b'Kx2X5mom9zTGkQq38v8swx3z5ApAuRnwq4wfyF52Y55v6Ke5dRq5',
+                           b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'),
+                          ('12345',
+                           '28820488de48082a13c570e68e1295e0207c6ef826a685c220d10fd6d8b95d49',
+                           b'KxaTDqped9KdUsW3KhAyF6KkLWktFvsNo7yvmBke7U62tWmMs8dk',
+                           b'1sW6JDNWppzUjQr8jjQ9KJmVx92ooKEd6'),
                           ])
-def test(compressed, seed, privhex, privwif, address):
+def test(seed, privhex, privwif, address):
     from yubtc.crypto import seed2privkey, privkey2privwif, privkey2addr
     privkey = seed2privkey(seed=seed, nonce=0)
     assert privkey.secret.hex() == privhex
-    assert privkey2privwif(privkey=privkey, compressed=compressed) == privwif
-    assert privkey2addr(privkey=privkey, compressed=compressed) == address
+    assert privkey2privwif(privkey=privkey) == privwif
+    assert privkey2addr(privkey=privkey) == address
 
 
 """
@@ -150,57 +138,26 @@ def test_seed2privkey_nonce_changes_privkey():
     (0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140).to_bytes(32, 'big'),
     # n / 2: middle of the order.
     (0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0).to_bytes(32, 'big'),
-    # the canonical "qwe" seed test vector (compressed/uncompressed wif answers rely on this).
+    # the canonical "qwe" seed test vector.
     bytes.fromhex('1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455'),
 ])
 def test_privwif_roundtrip(privkey):
     from coincurve import PrivateKey
     from yubtc.crypto import privkey2privwif, privwif2privkey
-    for compressed in (True, False):
-        wif = privkey2privwif(privkey=PrivateKey(privkey), compressed=compressed)
-        decoded, c = privwif2privkey(wif)
-        assert decoded == PrivateKey(privkey)
-        assert c == compressed
+    wif = privkey2privwif(privkey=PrivateKey(privkey))
+    assert privwif2privkey(wif) == PrivateKey(privkey)
 
 
-def test_privwif_raises_when_compressed_missing():
-    """privkey2privwif's `compressed` is required -- callers must pass it."""
-    from yubtc.crypto import privkey2privwif
-    privkey = b'\x11' * 32
-    with pytest.raises(Exception, match='compressed not set'):
-        privkey2privwif(privkey=privkey)
-    with pytest.raises(Exception, match='compressed not set'):
-        privkey2privwif(privkey=privkey, compressed=None)
-
-
-def test_privkey2addr_raises_when_compressed_missing():
-    """privkey2addr's `compressed` is required -- callers must pass it."""
-    from yubtc.crypto import privkey2addr, seed2privkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
-    with pytest.raises(Exception, match='compressed not set'):
-        privkey2addr(privkey=privkey)
-    with pytest.raises(Exception, match='compressed not set'):
-        privkey2addr(privkey=privkey, compressed=None)
-
-
-def test_pubkey2pubwif_raises_when_compressed_missing():
-    """pubkey2pubwif's `compressed` is required -- callers must pass it."""
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
-    pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
-    with pytest.raises(Exception, match='compressed not set'):
-        pubkey2pubwif(pubkey=pubkey)
-    with pytest.raises(Exception, match='compressed not set'):
-        pubkey2pubwif(pubkey=pubkey, compressed=None)
-
-
-def test_pubkey2addr_raises_when_compressed_missing():
-    """pubkey2addr's `compressed` is required -- callers must pass it."""
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2addr
-    pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
-    with pytest.raises(Exception, match='compressed not set'):
-        pubkey2addr(pubkey=pubkey)
-    with pytest.raises(Exception, match='compressed not set'):
-        pubkey2addr(pubkey=pubkey, compressed=None)
+def test_privwif2privkey_rejects_uncompressed_wif():
+    """Only the compressed form (33 bytes with 0x01 suffix) is accepted."""
+    from yubtc.base58check import base58CheckEncode
+    from yubtc.crypto import PREFIX_PRIVKEY, privwif2privkey
+    # Hand-roll an uncompressed WIF: PREFIX_PRIVKEY || secret (no 0x01 suffix).
+    uncompressed_wif = base58CheckEncode(
+        bytes([PREFIX_PRIVKEY]) + b'\x11' * 32,
+    )
+    with pytest.raises(Exception, match='uncompressed wif not supported'):
+        privwif2privkey(uncompressed_wif)
 
 
 def test_privwif2privkey_rejects_bad_prefix():
@@ -212,55 +169,30 @@ def test_privwif2privkey_rejects_bad_prefix():
 
 
 # ---------------------------------------------------------------------------
-# privkey2pubkey / pubkey2pubwif: public-key derivation and serialisation.
+# privkey2pubkey / pubkey2addr: 33-byte compressed pubkey -> P2PKH address.
 # ---------------------------------------------------------------------------
 
 def test_privkey2pubkey_length_and_determinism():
-    """The pubkey is 64 bytes (uncompressed, no leading 0x04) and deterministic."""
+    """The pubkey is 33 bytes (compressed) and deterministic."""
     from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
     a = privkey2pubkey(privkey=privkey)
     b = privkey2pubkey(privkey=privkey)
-    assert len(a) == 64
+    assert len(a) == 33
     assert a == b
 
 
 def test_privkey2pubkey_known_answer():
     from yubtc.crypto import seed2privkey, privkey2pubkey
-    expected = 'eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0' \
-               '24d7de8d887bee3288e5afb66ff648f05f47cd6e6d21978c805a5cfe0983f301'
+    expected = '03eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0'
     assert privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0)).hex() == expected
 
 
-@pytest.mark.parametrize('compressed, expected', [
-    (True, '03eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0'),
-    (False, '04eff5d63eedb62d21b86780b468e5ca9c2f938be2f0b23c05cd76ae1508a178d0'
-            '24d7de8d887bee3288e5afb66ff648f05f47cd6e6d21978c805a5cfe0983f301'),
-])
-def test_pubkey2pubwif_serialisation(compressed, expected):
-    """Compressed: 33 bytes, prefix 0x02/0x03 by parity of y. Uncompressed: 65 bytes, prefix 0x04."""
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+def test_privkey2pubkey_prefix_signals_y_parity():
+    """The leading byte is 0x02 or 0x03 depending on the parity of y."""
+    from yubtc.crypto import seed2privkey, privkey2pubkey, PREFIX_PUBKEY
     pubkey = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
-    out = pubkey2pubwif(pubkey=pubkey, compressed=compressed)
-    assert len(out) == (33 if compressed else 65)
-    assert out.hex() == expected
-
-
-def test_pubkey2pubwif_picks_even_prefix_for_even_y():
-    """The last byte of y determines the prefix under compressed serialisation."""
-    from yubtc.crypto import pubkey2pubwif, PREFIX_PUBKEY_EVEN, PREFIX_PUBKEY_ODD
-    # 32 zero bytes -> last byte 0x00, even parity -> 0x02
-    assert pubkey2pubwif(pubkey=b'\x00' * 32 + b'\x00' * 32, compressed=True)[0] == PREFIX_PUBKEY_EVEN
-    # 32 zero bytes + 0x01 -> odd parity -> 0x03
-    assert pubkey2pubwif(pubkey=b'\x00' * 32 + b'\x01' * 32, compressed=True)[0] == PREFIX_PUBKEY_ODD
-    # 0xFF -> odd parity -> 0x03
-    assert pubkey2pubwif(pubkey=b'\x00' * 32 + b'\xff' * 32, compressed=True)[0] == PREFIX_PUBKEY_ODD
-
-
-def test_pubkey2pubwif_uncompressed_uses_full_prefix():
-    from yubtc.crypto import pubkey2pubwif, PREFIX_PUBKEY_FULL
-    out = pubkey2pubwif(pubkey=b'\x00' * 64, compressed=False)
-    assert out[0] == PREFIX_PUBKEY_FULL
+    assert pubkey[0] in (PREFIX_PUBKEY, PREFIX_PUBKEY | 1)
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +250,7 @@ def test_sign_data_verifies():
 def test_make_lock_script_p2pkh():
     """A P2PKH address produces the standard OP_DUP OP_HASH160 <20B> OP_EQUALVERIFY OP_CHECKSIG."""
     from yubtc.crypto import make_lock_script, seed2privkey, privkey2addr
-    addr = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
+    addr = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     # OP_DUP(0x76) OP_HASH160(0xa9) <20B> OP_EQUALVERIFY(0x88) OP_CHECKSIG(0xac)
     assert make_lock_script(addr).hex() == '76a914e96b5b4561e70170c16f51ca30a9429e3bede97788ac'
 
@@ -355,8 +287,8 @@ def test_make_lock_script_unknown_prefix_raises():
 def test_make_vout_drains_when_amount_is_none():
     """`amount=None` means "send everything available"."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0), compressed=True)
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
     vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=100_000, amount=None, fee=1_000)
     assert cashback == 0
     assert amount == 99_000
@@ -369,8 +301,8 @@ def test_make_vout_drains_when_amount_is_none():
 def test_make_vout_drains_when_amount_plus_fee_equals_input():
     """`amount + fee == in_amount` is the explicit form of "send everything"."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0), compressed=True)
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
     vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=100_000, amount=99_000, fee=1_000)
     assert cashback == 0
     assert amount == 99_000
@@ -380,8 +312,8 @@ def test_make_vout_drains_when_amount_plus_fee_equals_input():
 def test_make_vout_sends_change_back_to_src():
     """Anything left over after amount+fee is routed back to the source address."""
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
-    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0), compressed=True)
-    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0), compressed=True)
+    src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
+    dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
     vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=100_000, amount=40_000, fee=1_000)
     assert cashback == 59_000
     assert amount == 40_000
@@ -415,36 +347,27 @@ def test_privwif_raises_when_privkey_missing():
     """privkey2privwif's `privkey` is required -- callers must pass it."""
     from yubtc.crypto import privkey2privwif
     with pytest.raises(Exception, match='privkey not set'):
-        privkey2privwif(compressed=True)
+        privkey2privwif()
     with pytest.raises(Exception, match='privkey not set'):
-        privkey2privwif(privkey=None, compressed=True)
+        privkey2privwif(privkey=None)
 
 
 def test_privkey2addr_raises_when_privkey_missing():
     """privkey2addr's `privkey` is required -- callers must pass it."""
     from yubtc.crypto import privkey2addr
     with pytest.raises(Exception, match='privkey not set'):
-        privkey2addr(compressed=True)
+        privkey2addr()
     with pytest.raises(Exception, match='privkey not set'):
-        privkey2addr(privkey=None, compressed=True)
-
-
-def test_pubkey2pubwif_raises_when_pubkey_missing():
-    """pubkey2pubwif's `pubkey` is required -- callers must pass it."""
-    from yubtc.crypto import pubkey2pubwif
-    with pytest.raises(Exception, match='pubkey not set'):
-        pubkey2pubwif(compressed=True)
-    with pytest.raises(Exception, match='pubkey not set'):
-        pubkey2pubwif(pubkey=None, compressed=True)
+        privkey2addr(privkey=None)
 
 
 def test_pubkey2addr_raises_when_pubkey_missing():
     """pubkey2addr's `pubkey` is required -- callers must pass it."""
     from yubtc.crypto import pubkey2addr
     with pytest.raises(Exception, match='pubkey not set'):
-        pubkey2addr(compressed=True)
+        pubkey2addr()
     with pytest.raises(Exception, match='pubkey not set'):
-        pubkey2addr(pubkey=None, compressed=True)
+        pubkey2addr(pubkey=None)
 
 
 def test_sign_hash_raises_when_privkey_missing():
@@ -510,7 +433,7 @@ def test_multi_arg_functions_reject_positional_args():
     """Functions taking >1 argument must be called kwargs-only."""
     from yubtc.crypto import (
         seed2bin, seed2privkey, privkey2privwif, sign_hash, sign_data,
-        pubkey2pubwif, pubkey2addr, privkey2addr, make_vout,
+        pubkey2addr, privkey2addr, make_vout,
     )
     from yubtc.crypto import seed2privkey as sk
     seed2privkey(seed='qwe', nonce=0)  # sanity: kwargs path still works
@@ -529,9 +452,6 @@ def test_multi_arg_functions_reject_positional_args():
     # sign_data
     with pytest.raises(Exception, match='only kwargs allowed'):
         sign_data(b'\x11' * 32, b'data')
-    # pubkey2pubwif
-    with pytest.raises(Exception, match='only kwargs allowed'):
-        pubkey2pubwif(b'\x00' * 64, True)
     # pubkey2addr
     with pytest.raises(Exception, match='only kwargs allowed'):
         pubkey2addr(b'\x00' * 64, True)

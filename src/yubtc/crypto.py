@@ -9,9 +9,7 @@ if TYPE_CHECKING:
 
 SUFFIX_PRIVKEY_COMPRESSED = 0x01
 PREFIX_P2PKH = 0x00  # Public Key Hash
-PREFIX_PUBKEY_EVEN = 0x02
-PREFIX_PUBKEY_ODD = 0x03
-PREFIX_PUBKEY_FULL = 0x04
+PREFIX_PUBKEY = 0x02  # Compressed pubkey prefix; the low bit signals parity of y.
 PREFIX_P2SH = 0x05  # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch07.asciidoc#pay-to-script-hash-p2sh
 PREFIX_TESTNET_P2PKH = 0x6F
 PREFIX_TESTNET_P2SH = 0xc4
@@ -71,36 +69,35 @@ def seed2privkey(*args, seed: Optional[TSeed] = None, nonce: Optional[TNonce] = 
     return PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=nonce)))
 
 
-def privkey2privwif(*args, privkey: Optional[PrivateKey] = None, compressed: Optional[bool] = None) -> str:
+def privkey2privwif(*args, privkey: Optional[PrivateKey] = None) -> str:
     if args:
         raise Exception('only kwargs allowed')
     if privkey is None:
         raise Exception('privkey not set')
-    if compressed is None:
-        raise Exception('compressed not set')
     from yubtc.base58check import base58CheckEncode
     # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
-    suffix = bytes([SUFFIX_PRIVKEY_COMPRESSED]) if compressed else b''
-    return base58CheckEncode(bytes([PREFIX_PRIVKEY]) + privkey.secret + suffix)
+    return base58CheckEncode(
+        bytes([PREFIX_PRIVKEY]) + privkey.secret + bytes([SUFFIX_PRIVKEY_COMPRESSED]))
 
 
-def privwif2privkey(privwif: str) -> tuple:
+def privwif2privkey(privwif: str) -> PrivateKey:
     from yubtc.base58check import base58CheckDecode
-    privkey = base58CheckDecode(privwif)
-    if privkey[0] != PREFIX_PRIVKEY:
+    decoded = base58CheckDecode(privwif)
+    if decoded[0] != PREFIX_PRIVKEY:
         raise Exception('prefix mismatch')
-    else:
-        privkey = privkey[1:]
-    if len(privkey) == 33 and privkey[-1] == SUFFIX_PRIVKEY_COMPRESSED:
-        # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
-        return (PrivateKey(privkey[:-1]), True)
-    return (PrivateKey(privkey), False)
+    body = decoded[1:]
+    # Compressed WIFs are 33 bytes with the 0x01 suffix; uncompressed WIFs
+    # are 32 bytes. Only compressed is supported.
+    if len(body) != 33 or body[-1] != SUFFIX_PRIVKEY_COMPRESSED:
+        raise Exception('uncompressed wif not supported')
+    return PrivateKey(body[:-1])
 
 
 def privkey2pubkey(privkey: PrivateKey) -> bytes:
-    # coincurve's uncompressed form is 65 bytes with the 0x04 prefix; strip it
-    # so callers receive the 64-byte (X || Y) form the rest of the wallet expects.
-    return privkey.public_key.format(compressed=False)[1:]
+    # 33-byte compressed form: PREFIX_PUBKEY || X. The low bit of the prefix
+    # carries the parity of y, so the receiving side can recover the full
+    # point on the curve from X alone.
+    return privkey.public_key.format(compressed=True)
 
 
 def sign_hash(*args, privkey: Optional[PrivateKey] = None, datahash: Optional[bytes] = None) -> bytes:
@@ -127,42 +124,22 @@ def sign_data(*args, privkey: Optional[PrivateKey] = None, data: Optional[bytes]
     return privkey.sign(sha256(sha256(data)), hasher=None)
 
 
-def pubkey2pubwif(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> bytes:
+def pubkey2addr(*args, pubkey: Optional[bytes] = None) -> bytes:
     if args:
         raise Exception('only kwargs allowed')
     if pubkey is None:
         raise Exception('pubkey not set')
-    if compressed is None:
-        raise Exception('compressed not set')
-    if not compressed:
-        return bytes([PREFIX_PUBKEY_FULL]) + pubkey
-    x, y = pubkey[:32], pubkey[32:]
-    prefix = PREFIX_PUBKEY_EVEN if (y[-1] % 2) == 0 else PREFIX_PUBKEY_ODD
-    return bytes([prefix]) + x
-
-
-def pubkey2addr(*args, pubkey: Optional[bytes] = None, compressed: Optional[bool] = None) -> bytes:
-    if args:
-        raise Exception('only kwargs allowed')
-    if pubkey is None:
-        raise Exception('pubkey not set')
-    if compressed is None:
-        raise Exception('compressed not set')
     from yubtc.base58check import base58CheckEncode
     from yubtc.hash import hash160
-    pubwif = pubkey2pubwif(pubkey=pubkey, compressed=compressed)
-    return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubwif))
+    return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubkey))
 
 
-def privkey2addr(*args, privkey: Optional[PrivateKey] = None, compressed: Optional[bool] = None) -> bytes:
+def privkey2addr(*args, privkey: Optional[PrivateKey] = None) -> bytes:
     if args:
         raise Exception('only kwargs allowed')
     if privkey is None:
         raise Exception('privkey not set')
-    if compressed is None:
-        raise Exception('compressed not set')
-    pubkey = privkey.public_key.format(compressed=False)[1:]
-    return pubkey2addr(pubkey=pubkey, compressed=compressed)
+    return pubkey2addr(pubkey=privkey2pubkey(privkey))
 
 
 """

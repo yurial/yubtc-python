@@ -351,9 +351,9 @@ def test_ctransaction_id_known_answer():
 
 def test_sign_populates_each_input_script():
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[
             CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff),
@@ -370,13 +370,13 @@ def test_sign_populates_each_input_script():
 def test_sign_script_ends_with_pubwif():
     """The signature script convention is: <signature> <pubkey>.
 
-    The last 33 bytes must be the compressed pubwif (the constant we
+    The last 33 bytes must be the compressed pubkey (the constant we
     passed in). Anything else means the script is misshapen.
     """
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
@@ -390,9 +390,9 @@ def test_sign_changes_id():
     either serialization is broken or the signature scripts are empty.
     """
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
@@ -404,9 +404,9 @@ def test_sign_does_not_mutate_original():
     """`sign` uses deepcopy internally; the original tx must keep its
     empty signature scripts."""
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)],
         vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
@@ -419,9 +419,9 @@ def test_sign_does_not_mutate_original():
 def test_CTransaction_sign_signers_must_match_vin_length():
     """signers (one per input) must agree with len(vin)."""
     from yubtc.transaction import CIn, COut, CTransaction
-    from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
+    from yubtc.crypto import seed2privkey, privkey2pubkey
     privkey = seed2privkey(seed='qwe', nonce=0)
-    pubwif = pubkey2pubwif(pubkey=privkey2pubkey(privkey=privkey), compressed=True)
+    pubwif = privkey2pubkey(privkey=privkey)
     tx = CTransaction(
         vin=[
             CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff),
