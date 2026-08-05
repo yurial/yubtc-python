@@ -231,14 +231,20 @@ class Wallet(object):
             self,
             *args,
             target: Optional[TSatoshi] = None,
-            confirmations: Optional[int] = None) -> list:
+            confirmations: Optional[int] = None) -> tuple:
         """Walk forward from nonce 0 collecting addresses' UTXOs.
 
         Stops when either:
         - the running total of satoshis >= `target` (when target is not None), or
         - an address with no UTXOs is found (gap limit).
 
-        Returns a list of (privkey, unspent) tuples in scan order.
+        Returns (sources, retback_addr) where sources is a list of
+        (TPrivKey, unspent) tuples in scan order and retback_addr is the
+        address to send any change to:
+        - if the scan stopped due to the gap limit, retback_addr is the
+          unused address itself (the wallet's next address, which is
+          hidden in the gap and ready to receive change);
+        - otherwise retback_addr is the last sourced address.
         """
         if args:
             raise Exception('only kwargs allowed')
@@ -247,18 +253,23 @@ class Wallet(object):
         sources = []
         total = 0
         nonce = 0
+        retback_addr = None
         while True:
             pk = TPrivKey(seed=self._seed, nonce=nonce, compressed=self.compressed)
             unspent = pk.get_unspent(confirmations=confirmations)
             if not unspent:
+                # Gap limit: retback goes to this unused address.
+                retback_addr = pk.get_p2pkh_address()
                 break
             sources.append((pk, unspent))
             for u in unspent:
                 total += u['amount']
             if target is not None and total >= target:
+                # Target met: retback goes to the last sourced address.
+                retback_addr = pk.get_p2pkh_address()
                 break
             nonce += 1
-        return sources
+        return sources, retback_addr
 
     def make_transaction(
             self,
@@ -282,18 +293,19 @@ class Wallet(object):
         if scan is None:
             raise Exception('scan not set')
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
-        src = pubkey2addr(pubkey=pubkey, compressed=self.compressed)
         pubwif = pubkey2pubwif(pubkey=pubkey, compressed=self.compressed)
         if scan:
             # When scanning, fetch UTXOs from every address starting at
             # nonce 0 until either the target amount is met or an unused
-            # address is hit. Change still goes back to the primary address.
+            # address is hit. Retback goes to the last input or to the
+            # unused address (when the scan halted via gap limit).
             if self._seed is None:
                 raise Exception('scan not available without seed')
-            sources = self._scan_inputs(
+            sources, src = self._scan_inputs(
                 target=amount, confirmations=confirmations)
             vin, in_amount, signers = self._make_vin_multi(sources=sources)
         else:
+            src = pubkey2addr(pubkey=pubkey, compressed=self.compressed)
             unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
             from yubtc.hash import hash160
             pubhash = hash160(pubwif)

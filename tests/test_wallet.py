@@ -12,6 +12,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import yubtc
+import yubtc.net
 
 
 # ---------------------------------------------------------------------------
@@ -893,6 +894,52 @@ def test_Wallet_make_transaction_scan_with_all_drains(monkeypatch):
     assert amount == 80_000 - fee
     assert len(stx.vout) == 1
     assert stx.vout[0].amount == 80_000 - fee
+
+
+def test_Wallet_scan_change_goes_to_unused_address_at_gap(monkeypatch):
+    """When scan halts via gap limit, retback goes to the unused address."""
+    from yubtc.wallet import Wallet
+    from yubtc.crypto import seed2privkey, privkey2addr
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    # Nonces 0 and 1 have UTXOs; nonce 2 is empty -> stop.
+    # The target is intentionally unreachable so the scan stops at the gap.
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent_per_nonce({0: [60_000], 1: [60_000]}))
+
+    w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
+    sources, retback_addr = w._scan_inputs(target=200_000, confirmations=0)
+
+    assert len(sources) == 2
+    unused_addr = privkey2addr(
+        privkey=seed2privkey(seed='qwe', nonce=2), compressed=True)
+    assert retback_addr == unused_addr
+
+
+def test_Wallet_make_transaction_scan_change_goes_to_last_input(monkeypatch):
+    """When scan halts at the target, change goes to the last input's address."""
+    from yubtc.wallet import Wallet
+    from yubtc.transaction import script2pkh
+    from yubtc.base58check import base58CheckEncode
+    monkeypatch.setattr('yubtc.net.get_address_info',
+                        lambda address: {'total_received': 0, 'n_tx': 0})
+    # Nonces 0, 1, 2 all have UTXOs. Target=50_000 -> stop after nonce 1.
+    monkeypatch.setattr('yubtc.net.get_address_unspent',
+                        fake_unspent_per_nonce({0: [30_000], 1: [30_000], 2: [30_000]}))
+
+    w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
+    stx, cashback, _, _ = w.make_transaction(
+        dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
+        feekb=2_000, confirmations=0, scan=True,
+    )
+    # Cashback > 0 -> first vout is the change output.
+    assert cashback > 0
+    change_addr = base58CheckEncode(b'\x00' + script2pkh(bytes(stx.vout[0].script))).decode('ascii')
+    # The last input is at nonce 1 (the scan stopped at total >= 50_000).
+    from yubtc.crypto import seed2privkey, privkey2addr
+    last_input_addr = privkey2addr(
+        privkey=seed2privkey(seed='qwe', nonce=1), compressed=True).decode('ascii')
+    assert change_addr == last_input_addr
 
 
 def test_Wallet_make_transaction_scan_signs_with_privkey_per_input(monkeypatch):
