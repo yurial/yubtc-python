@@ -456,6 +456,105 @@ def test_send_with_yes_without_broadcast_does_not_send(monkeypatch):
     sent.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# pushtx: read raw tx hex from stdin and broadcast it.
+# ---------------------------------------------------------------------------
+
+def _invoke(args, stdin=None):
+    """Run the CLI without asserting exit -- some tests check the error path.
+
+    `stdin` maps to CliRunner's `input` kwarg (the bytes/str fed to the
+    command's stdin). Returns the result object so callers can inspect
+    `output`, `exit_code`, and `exception`.
+    """
+    from click.testing import CliRunner
+    from yubtc.cli import cli
+    return CliRunner().invoke(cli, args, input=stdin)
+
+
+def test_pushtx_reads_hex_from_stdin_and_broadcasts(offline, monkeypatch):
+    """`pushtx` parses hex from stdin and calls broadcastTx with the bytes."""
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    rawtx_hex = 'deadbeef00ff'
+    result = _invoke(['pushtx', '--yes'], stdin=rawtx_hex)
+    assert result.exit_code == 0, result.output
+    sent.assert_called_once_with(bytes.fromhex(rawtx_hex))
+
+
+def test_pushtx_short_yes_flag_works(offline, monkeypatch):
+    """`-y` is the short form of `--yes`."""
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    result = _invoke(['pushtx', '-y'], stdin='aabbcc')
+    assert result.exit_code == 0, result.output
+    sent.assert_called_once_with(b'\xaa\xbb\xcc')
+
+
+def test_pushtx_prints_txid_size_and_rawtx(offline, monkeypatch):
+    """The output shows the txid, txsize, and the original hex."""
+    from yubtc.hash import sha256
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    rawtx_hex = 'deadbeef'
+    rawtx = bytes.fromhex(rawtx_hex)
+    expected_txid = sha256(sha256(rawtx))[::-1].hex()
+    result = _invoke(['pushtx', '--yes'], stdin=rawtx_hex)
+    assert result.exit_code == 0, result.output
+    assert f'id: {expected_txid}' in result.output
+    assert 'txsize=4' in result.output
+    assert f'rawtx: {rawtx_hex}' in result.output
+
+
+def test_pushtx_without_yes_prompts_and_broadcasts_on_yes(offline, monkeypatch):
+    """Without --yes, the prompt is asked; answering 'y' triggers the broadcast."""
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    result = _invoke(['pushtx'], stdin='aabb\ny\n')
+    assert result.exit_code == 0, result.output
+    sent.assert_called_once_with(b'\xaa\xbb')
+
+
+def test_pushtx_without_yes_and_user_says_no_does_not_broadcast(offline, monkeypatch):
+    """A 'n' answer at the prompt cancels; broadcastTx is not called."""
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    result = _invoke(['pushtx'], stdin='aabb\nn\n')
+    assert result.exit_code == 0, result.output
+    sent.assert_not_called()
+    assert 'Cancelled' in result.output
+
+
+def test_pushtx_strips_whitespace_around_hex(offline, monkeypatch):
+    """Leading/trailing whitespace on stdin is tolerated."""
+    sent = MagicMock()
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
+    result = _invoke(['pushtx', '--yes'], stdin='  aabbcc  \n')
+    assert result.exit_code == 0, result.output
+    sent.assert_called_once_with(b'\xaa\xbb\xcc')
+
+
+def test_pushtx_empty_stdin_errors(offline):
+    """Empty stdin -> non-zero exit and a clear message on stderr."""
+    result = _invoke(['pushtx', '--yes'], stdin='')
+    assert result.exit_code != 0
+    assert 'No transaction on stdin' in result.output
+
+
+def test_pushtx_whitespace_only_stdin_errors(offline):
+    """A line that's only whitespace also counts as empty after .strip()."""
+    result = _invoke(['pushtx', '--yes'], stdin='   \n')
+    assert result.exit_code != 0
+    assert 'No transaction on stdin' in result.output
+
+
+def test_pushtx_invalid_hex_errors(offline):
+    """Non-hex characters on stdin -> non-zero exit."""
+    result = _invoke(['pushtx', '--yes'], stdin='not-hex-zzz')
+    assert result.exit_code != 0
+    assert 'Invalid hex' in result.output
+
+
 def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
     """--scan routes through Wallet.send with scan=True."""
     captured = {}

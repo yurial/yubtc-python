@@ -220,3 +220,44 @@ def _send_interactive(
         sources=grouped, cashback_addr=cashback_addr, on_address=None,
     )
     _announce_tx(result=result, dst=address, broadcast=broadcast, yes=yes)
+
+
+@cli.command('pushtx', help='Push a signed raw transaction to the network. The transaction is '
+             'read from stdin as hex. The txid is computed from the raw bytes (double-SHA256, '
+             'reversed) and printed before the broadcast prompt.')
+@click.option('-y', '--yes', help='Skip the broadcast confirmation prompt.',
+              default=False, is_flag=True)
+def pushtx(yes: bool) -> None:
+    import sys
+    from yubtc.hash import sha256
+    from yubtc.misc import yesno
+    from yubtc.net import broadcastTx
+
+    # `input()` reads one line, leaving the rest of stdin available for
+    # the confirmation prompt. `sys.stdin.read()` would consume
+    # everything and the prompt would see EOF.
+    try:
+        rawtx_hex = input().strip()
+    except EOFError:
+        print('No transaction on stdin', file=sys.stderr)
+        sys.exit(1)
+    if not rawtx_hex:
+        print('No transaction on stdin', file=sys.stderr)
+        sys.exit(1)
+    try:
+        rawtx = bytes.fromhex(rawtx_hex)
+    except ValueError as e:
+        print('Invalid hex on stdin: {err}'.format(err=e), file=sys.stderr)
+        sys.exit(1)
+
+    # txid is the double-SHA256 of the serialized transaction, displayed
+    # in reversed byte order (Bitcoin convention). Computed from the raw
+    # bytes -- the command does not need to parse the transaction.
+    txid = sha256(sha256(rawtx))[::-1].hex()
+    print('id: {id}'.format(id=txid))
+    print('txsize={size}'.format(size=len(rawtx)))
+    print('rawtx: {rawtx}'.format(rawtx=rawtx_hex))
+    if not yes and not yesno('broadcast? '):
+        print('Cancelled')
+        return
+    broadcastTx(rawtx)
