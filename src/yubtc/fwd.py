@@ -1,10 +1,34 @@
+import decimal
 from decimal import Decimal
+
+
+class TBTC(Decimal):
+    """BTC amount: a Decimal subclass with a friendlier parse error.
+
+    The CLI converts user-supplied strings ("0.5", "1.234", or, through
+    typos, "abc" or "") to `TBTC` via the click `type=TBTC` option and
+    the `TBTC(amount)` call in `send`. `Decimal`'s default behaviour for
+    unparseable input is to raise `decimal.InvalidOperation`, which is
+    tedious to catch generically (the surrounding code may not import
+    `decimal` at all). `ValueError` is the standard Python idiom for
+    invalid input and `click` already wraps it in `BadParameter`, so
+    the CLI shows a useful "Invalid value" message.
+
+    All other Decimal behaviour -- arithmetic, the (sign, digits, exp)
+    tuple form, `Decimal(...)` interop -- is unchanged.
+    """
+    def __new__(cls, value='0'):
+        try:
+            return super().__new__(cls, value)
+        except decimal.InvalidOperation as e:
+            raise ValueError(
+                'not a valid BTC amount: {value!r}'.format(value=value)) from e
+
 
 TSeed = str
 TAddress = str
 TAmount = str
 TSatoshi = int
-TBTC = Decimal
 TNonce = int
 
 # Defaults for function signatures. Centralised so callers can override one

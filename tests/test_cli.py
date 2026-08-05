@@ -882,6 +882,17 @@ def test_send_interactive_raises_when_required_kwarg_missing():
         kwargs = {k: v for k, v in base.items() if k != missing}
         with pytest.raises(Exception, match=f'{missing} not set'):
             _send_interactive(**kwargs)
+
+
+def test_send_invalid_amount_shows_friendly_error():
+    """`-f foo` (where `foo` isn't a number) is caught by click and prints
+    a sensible message rather than a Decimal traceback."""
+    from yubtc.cli import cli
+    result = CliRunner().invoke(cli, ['send', '-f', 'abc', 'ADDR', '0.5'],
+                                input=SEED + '\n')
+    assert result.exit_code != 0
+    # Click wraps the ValueError raised by TBTC() in BadParameter.
+    assert 'not a valid BTC amount' in result.output or 'Invalid value' in result.output
 # This block was removed from cli.py -- yubtc/__main__.py already invokes
 # `cli`, so the guard was redundant. See test_main.py for the real entry-point
 # test.

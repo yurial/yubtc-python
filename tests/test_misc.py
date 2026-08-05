@@ -79,6 +79,48 @@ def test_satoshi_roundtrip(value):
 
 
 # ---------------------------------------------------------------------------
+# TBTC: a Decimal subclass that converts parse errors to ValueError.
+# ---------------------------------------------------------------------------
+
+def test_TBTC_is_decimal_subclass():
+    """TBTC is a Decimal -- arithmetic and Decimal interop work unchanged."""
+    from yubtc.fwd import TBTC
+    assert issubclass(TBTC, Decimal)
+    assert TBTC('0.5') == Decimal('0.5')
+    assert TBTC(0) * TBTC(2) == Decimal('0')
+    # The (sign, digits, exp) tuple form used by satoshi2btc still works.
+    assert TBTC((0, (1,), -8)) == Decimal('0.00000001')
+
+
+@pytest.mark.parametrize('value', ['abc', '', '1.2.3', 'not-a-number'])
+def test_TBTC_invalid_string_raises_value_error(value):
+    """Unparseable input -> ValueError (not decimal.InvalidOperation).
+
+    ValueError is the standard Python idiom for invalid input and click
+    already wraps it in BadParameter, so the CLI shows a usable message.
+    """
+    from yubtc.fwd import TBTC
+    with pytest.raises(ValueError, match='not a valid BTC amount'):
+        TBTC(value)
+
+
+def test_TBTC_invalid_value_error_is_catchable_as_value_error():
+    """The error is a ValueError; callers don't need to import `decimal`."""
+    import decimal
+    from yubtc.fwd import TBTC
+    raised = None
+    try:
+        TBTC('abc')
+    except ValueError as e:
+        raised = e
+    assert raised is not None
+    # InvalidOperation is a subclass of ArithmeticError, not ValueError.
+    # Catchers that only know ValueError (the standard "bad input"
+    # convention) don't accidentally trip on it.
+    assert not isinstance(raised, decimal.InvalidOperation)
+
+
+# ---------------------------------------------------------------------------
 # unpack_address: returns (prefix, dsthash) for a base58check address.
 # ---------------------------------------------------------------------------
 
