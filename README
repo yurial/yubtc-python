@@ -1,14 +1,14 @@
 YuBTC - put your money in your head.
 
-Console BTC client that nothing download and store on HDD.
-Private key generating from seed.
+A console BTC client. Downloads nothing, stores nothing on disk: private keys
+are derived from a seed on each invocation.
 
-YuBTC support next commands:
-  newseed      Generate new seed.
-  address      Show native (P2PKH) address and exit.
-  balance      Show balance and exit.
-  send         Send BTC to address.
-  dumpprivkey  Show private key in WIF format and exit.
+Commands:
+  newseed      Generate a new seed.
+  address      Show the native (P2PKH) address.
+  balance      Show the balance.
+  send         Send BTC to an address.
+  dumpprivkey  Show the private key in WIF format.
 
 Usage from a checkout (no installation needed):
 $ pip install -r requirements.txt

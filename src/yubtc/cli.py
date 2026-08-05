@@ -28,7 +28,7 @@ def cli() -> None:
 @cli.command('newseed', help='Generate new seed.')
 @click.option('-n', help='Count of words (default=15).',
               default=DEFAULT_SEED_WORDS, required=False, nargs=1, type=int)
-@click.option('-u', '--unique', help='Only unique words is seed.',
+@click.option('-u', '--unique', help='Only unique words in seed.',
               default=False, required=False, is_flag=True)
 def newseed(n: int, unique: bool) -> None:
     seed = generate_seed(count=n, allow_dups=not unique)
@@ -39,7 +39,7 @@ def newseed(n: int, unique: bool) -> None:
 
 
 @cli.command('address', help='Show native (P2PKH) address and exit.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+@click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('--new', help='Count of new unused addresses',
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
@@ -50,7 +50,7 @@ def address(nonce: TNonce, new: int) -> None:
 
 
 @cli.command('dumpprivkey', help='Show private key in WIF format and exit.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+@click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 def dumpprivkey(nonce: TNonce) -> None:
     wallet = Wallet(seed=get_seed(), nonce=nonce,
@@ -60,7 +60,7 @@ def dumpprivkey(nonce: TNonce) -> None:
 
 
 @cli.command('balance', help='Show balance and exit.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+@click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('-c', '--confirmations', help='Minimal confirmations for inputs.',
               default=DEFAULT_CONFIRMATIONS, required=False, nargs=1, type=int)
@@ -98,7 +98,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
 
 @cli.command('send', help='Send BTC to address. ADDRESS - Destination address. Only P2PKH or P2SH addresses supported. '
              'AMOUNT - value to send in decimal. Set "ALL" to send all available funds.')
-@click.option('-n', '--nonce', help='Scan adresses from given nonce',
+@click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('-c', '--confirmations', help='Minimal confirmations for inputs.',
               default=DEFAULT_CONFIRMATIONS, required=False, nargs=1, type=int)
@@ -106,7 +106,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
               default=DEFAULT_FEE, required=False, nargs=1, type=TBTC)
 @click.option('-k', '--feekb', help='Set fee per kilobyte (1000 bytes). Value in satoshi.',
               default=MINIMAL_FEE, required=False, nargs=1, type=int)
-@click.option('--send', help='Send transaction to network, just print to console.',
+@click.option('--send', help='Broadcast the transaction; otherwise print the raw tx to console.',
               default=False, is_flag=True)
 @click.argument('address', type=str)
 @click.argument('amount', type=str)

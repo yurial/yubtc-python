@@ -8,13 +8,13 @@ if TYPE_CHECKING:
     from yubtc.script import CScript
 
 SUFFIX_PRIVKEY_COMPRESSED = 0x01
-PREFIX_P2PKH = 0x00  # Publick Key Hash
+PREFIX_P2PKH = 0x00  # Public Key Hash
 PREFIX_PUBKEY_EVEN = 0x02
 PREFIX_PUBKEY_ODD = 0x03
 PREFIX_PUBKEY_FULL = 0x04
 PREFIX_P2SH = 0x05  # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch07.asciidoc#pay-to-script-hash-p2sh
 PREFIX_TESTNET_P2PKH = 0x6F
-PREFIX_TESTNEY_P2SH = 0xc4
+PREFIX_TESTNET_P2SH = 0xc4
 PREFIX_PRIVKEY = 0x80
 PREFIX_ENCPRIVKEY = 0x0142  # BIP-38
 PREFIX_EXTPUBKEY = 0x0488B21E  # BIP-32
@@ -88,7 +88,7 @@ def privwif2privkey(privwif: str) -> tuple:
     from yubtc.base58check import base58CheckDecode
     privkey = base58CheckDecode(privwif)
     if privkey[0] != PREFIX_PRIVKEY:
-        raise Exception('prefix missmatch')
+        raise Exception('prefix mismatch')
     else:
         privkey = privkey[1:]
     if len(privkey) == 33 and privkey[-1] == SUFFIX_PRIVKEY_COMPRESSED:
