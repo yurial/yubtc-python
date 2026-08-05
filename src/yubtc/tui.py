@@ -6,10 +6,10 @@ from yubtc.fwd import TSatoshi
 
 def run_selection(
         sources,
-        target: Optional[TSatoshi] = None,
+        target: TSatoshi = None,
         fee: TSatoshi = 0,
         feekb: TSatoshi = 1000,
-        cashback_addr: Optional[bytes] = None):
+        cashback_addr: bytes = None):
     """Open an ncurses UI for selecting UTXOs.
 
     `sources`: list of (TPrivKey, unspent_list) tuples in scan order.
@@ -32,7 +32,7 @@ def run_selection(
 
 def _loop(stdscr, sources, target: Optional[TSatoshi],
           fee: TSatoshi = 0, feekb: TSatoshi = 1000,
-          cashback_addr: Optional[bytes] = None) -> Optional[list]:
+          cashback_addr: bytes = None) -> Optional[list]:
     """Run the selection loop on the given screen object.
 
     `stdscr` is expected to provide the curses screen API: clear(),
@@ -215,7 +215,7 @@ def materialise(sources, selected_set: set) -> list:
 def render(stdscr, rows: list, selected_set: set, cursor: int,
            total: int, target: Optional[TSatoshi],
            fee: TSatoshi, size: int,
-           cashback_addr: Optional[bytes] = None) -> None:
+           cashback_addr: bytes = None) -> None:
     """Draw the selection UI to the screen."""
     stdscr.clear()
     h, w = stdscr.getmaxyx()
@@ -254,7 +254,7 @@ def format_row(row: dict, selected_set: set, width: int) -> str:
 
 def format_status(total: int, target: Optional[TSatoshi],
                   fee: TSatoshi, size: int,
-                  cashback_addr: Optional[bytes] = None) -> str:
+                  cashback_addr: bytes = None) -> str:
     """Render the bottom status line.
 
     Layout (target mode):

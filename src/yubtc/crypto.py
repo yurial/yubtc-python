@@ -1,8 +1,9 @@
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from coincurve import PrivateKey
 
 from yubtc.fwd import TAddress, TNonce, TSatoshi, TSeed
+from yubtc.util import NotNone, require_kwargs_only
 
 if TYPE_CHECKING:
     from yubtc.script import CScript
@@ -31,13 +32,8 @@ def str2list(s: str) -> list:
     return [c for c in s]
 
 
-def seed2bin(*args, seed: Optional[TSeed] = None, nonce: Optional[TNonce] = None) -> bytes:
-    if args:
-        raise Exception('only kwargs allowed')
-    if seed is None:
-        raise Exception('seed not set')
-    if nonce is None:
-        raise Exception('nonce not set')
+@require_kwargs_only
+def seed2bin(seed: TSeed = NotNone, nonce: TNonce = NotNone) -> bytes:
     from yubtc.hash import sha256, keccak256, blake2b256
     from struct import pack
     data = pack(">L", nonce) + str2bytes(seed)
@@ -59,21 +55,13 @@ def bin2privkey(data: bytes) -> bytes:
     return bytes(privkey)
 
 
-def seed2privkey(*args, seed: Optional[TSeed] = None, nonce: Optional[TNonce] = None) -> PrivateKey:
-    if args:
-        raise Exception('only kwargs allowed')
-    if seed is None:
-        raise Exception('seed not set')
-    if nonce is None:
-        raise Exception('nonce not set')
+@require_kwargs_only
+def seed2privkey(seed: TSeed = NotNone, nonce: TNonce = NotNone) -> PrivateKey:
     return PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=nonce)))
 
 
-def privkey2privwif(*args, privkey: Optional[PrivateKey] = None) -> str:
-    if args:
-        raise Exception('only kwargs allowed')
-    if privkey is None:
-        raise Exception('privkey not set')
+@require_kwargs_only
+def privkey2privwif(privkey: PrivateKey = NotNone) -> str:
     from yubtc.base58check import base58CheckEncode
     # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
     return base58CheckEncode(
@@ -100,45 +88,29 @@ def privkey2pubkey(privkey: PrivateKey) -> bytes:
     return privkey.public_key.format(compressed=True)
 
 
-def sign_hash(*args, privkey: Optional[PrivateKey] = None, datahash: Optional[bytes] = None) -> bytes:
-    if args:
-        raise Exception('only kwargs allowed')
-    if privkey is None:
-        raise Exception('privkey not set')
-    if datahash is None:
-        raise Exception('datahash not set')
+@require_kwargs_only
+def sign_hash(privkey: PrivateKey = NotNone, datahash: bytes = NotNone) -> bytes:
     # hasher=None: sign the 32-byte digest directly. libsecp256k1 already
     # produces DER-encoded, low-s signatures by default.
     return privkey.sign(datahash, hasher=None)
 
 
-def sign_data(*args, privkey: Optional[PrivateKey] = None, data: Optional[bytes] = None) -> bytes:
-    if args:
-        raise Exception('only kwargs allowed')
-    if privkey is None:
-        raise Exception('privkey not set')
-    if data is None:
-        raise Exception('data not set')
+@require_kwargs_only
+def sign_data(privkey: PrivateKey = NotNone, data: bytes = NotNone) -> bytes:
     from yubtc.hash import sha256
     # Bitcoin transaction-hash: double-SHA256, then ECDSA.
     return privkey.sign(sha256(sha256(data)), hasher=None)
 
 
-def pubkey2addr(*args, pubkey: Optional[bytes] = None) -> bytes:
-    if args:
-        raise Exception('only kwargs allowed')
-    if pubkey is None:
-        raise Exception('pubkey not set')
+@require_kwargs_only
+def pubkey2addr(pubkey: bytes = NotNone) -> bytes:
     from yubtc.base58check import base58CheckEncode
     from yubtc.hash import hash160
     return base58CheckEncode(bytes([PREFIX_P2PKH]) + hash160(pubkey))
 
 
-def privkey2addr(*args, privkey: Optional[PrivateKey] = None) -> bytes:
-    if args:
-        raise Exception('only kwargs allowed')
-    if privkey is None:
-        raise Exception('privkey not set')
+@require_kwargs_only
+def privkey2addr(privkey: PrivateKey = NotNone) -> bytes:
     return pubkey2addr(pubkey=privkey2pubkey(privkey))
 
 
@@ -163,19 +135,10 @@ def make_lock_script(address: TAddress) -> 'CScript':
         raise Exception('address not supported')
 
 
-def make_vout(*args, src: Optional[TAddress] = None, dst: Optional[TAddress] = None,
-              in_amount: Optional[TSatoshi] = None, amount: Optional[TSatoshi] = None,
-              fee: Optional[TSatoshi] = None) -> tuple:
-    if args:
-        raise Exception('only kwargs allowed')
-    if src is None:
-        raise Exception('src not set')
-    if dst is None:
-        raise Exception('dst not set')
-    if in_amount is None:
-        raise Exception('in_amount not set')
-    if fee is None:
-        raise Exception('fee not set')
+@require_kwargs_only
+def make_vout(src: TAddress = NotNone, dst: TAddress = NotNone,
+              in_amount: TSatoshi = NotNone, amount: TSatoshi = None,
+              fee: TSatoshi = NotNone) -> tuple:
     from yubtc.transaction import COut
     if in_amount < fee:
         # Drain (`amount is None`) lands in the branch below and would

@@ -26,16 +26,6 @@ def test_TPrivKey_rejects_positional_args():
         TPrivKey('positional')
 
 
-def test_TPrivKey_passes_through_known_privkey():
-    """`privkey=...` is used directly; no derivation happens."""
-    from yubtc.wallet import TPrivKey
-    from yubtc.crypto import seed2privkey
-    privkey = seed2privkey(seed='qwe', nonce=0)
-    p = TPrivKey(privkey=privkey)
-    assert p.privkey == privkey
-    assert p.nonce is None  # not set when constructed from raw privkey
-
-
 def test_TPrivKey_derives_privkey_from_seed_and_nonce():
     """`seed=...` + `nonce=...` -> privkey via seed2privkey."""
     from yubtc.wallet import TPrivKey
@@ -199,8 +189,6 @@ def test_TPrivKey_get_unspent_raises_when_confirmations_missing():
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0)
     with pytest.raises(Exception, match='confirmations not set'):
         p.get_unspent()
-    with pytest.raises(Exception, match='confirmations not set'):
-        p.get_unspent(confirmations=None)
 
 
 # ---------------------------------------------------------------------------
@@ -398,17 +386,17 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
                 amount=None, fee=Decimal('0.00001'), feekb=2_000,
                 confirmations=0, broadcast=False, scan=False)
     with pytest.raises(Exception, match='dst not set'):
-        w.send(**{**base, 'dst': None})
+        w.send(**{k: v for k, v in base.items() if k != 'dst'})
     with pytest.raises(Exception, match='fee not set'):
-        w.send(**{**base, 'fee': None})
+        w.send(**{k: v for k, v in base.items() if k != 'fee'})
     with pytest.raises(Exception, match='feekb not set'):
-        w.send(**{**base, 'feekb': None})
+        w.send(**{k: v for k, v in base.items() if k != 'feekb'})
     with pytest.raises(Exception, match='confirmations not set'):
-        w.send(**{**base, 'confirmations': None})
+        w.send(**{k: v for k, v in base.items() if k != 'confirmations'})
     with pytest.raises(Exception, match='broadcast not set'):
-        w.send(**{**base, 'broadcast': None})
+        w.send(**{k: v for k, v in base.items() if k != 'broadcast'})
     with pytest.raises(Exception, match='scan not set'):
-        w.send(**{**base, 'scan': None})
+        w.send(**{k: v for k, v in base.items() if k != 'scan'})
 
 
 def test_Wallet_init_raises_when_seed_missing(monkeypatch):
@@ -491,6 +479,7 @@ def test_Wallet_make_transaction_drains_input_when_amount_is_none(monkeypatch):
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
+        sources=None, cashback_addr=None, on_address=None,
     )
     assert cashback == 0
     assert amount == 99_000
@@ -509,6 +498,7 @@ def test_Wallet_make_transaction_drains_when_amount_plus_fee_equals_input(monkey
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=99_000, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
+        sources=None, cashback_addr=None, on_address=None,
     )
     assert cashback == 0
     assert len(stx.vout) == 1
@@ -525,6 +515,7 @@ def test_Wallet_make_transaction_adds_change_output(monkeypatch):
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
+        sources=None, cashback_addr=None, on_address=None,
     )
     assert cashback == 49_000
     assert amount == 50_000
@@ -546,6 +537,7 @@ def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
     stx, _, _, _ = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
+        sources=None, cashback_addr=None, on_address=None,
     )
     pubwif = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
     # The signed signature script ends with the pubwif.
@@ -564,6 +556,7 @@ def test_Wallet_make_transaction_recurses_until_fee_is_stable(monkeypatch):
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=0, feekb=2000,
         confirmations=0, scan=False,
+        sources=None, cashback_addr=None, on_address=None,
     )
     # txsize is small enough that the second iteration converges.
     assert fee > 0
@@ -582,9 +575,9 @@ def test_Wallet_make_transaction_raises_when_confirmations_or_feekb_missing(monk
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
                 fee=1_000, feekb=2_000, confirmations=0, scan=False)
     with pytest.raises(Exception, match='confirmations not set'):
-        w.make_transaction(**{**base, 'confirmations': None})
+        w.make_transaction(**{k: v for k, v in base.items() if k != 'confirmations'})
     with pytest.raises(Exception, match='feekb not set'):
-        w.make_transaction(**{**base, 'feekb': None})
+        w.make_transaction(**{k: v for k, v in base.items() if k != 'feekb'})
 
 
 def test_Wallet_make_transaction_raises_when_dst_missing(monkeypatch):
@@ -596,7 +589,7 @@ def test_Wallet_make_transaction_raises_when_dst_missing(monkeypatch):
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
                 fee=1_000, feekb=2_000, confirmations=0, scan=False)
     with pytest.raises(Exception, match='dst not set'):
-        w.make_transaction(**{**base, 'dst': None})
+        w.make_transaction(**{k: v for k, v in base.items() if k != 'dst'})
 
 
 def test_Wallet_make_vin_raises_when_pubhash_or_unspent_missing(monkeypatch):
@@ -656,7 +649,7 @@ def test_Wallet_make_transaction_uses_caller_sources_and_cashback_addr(monkeypat
     stx, cashback_sat, sent_sat, fee_sat = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=99_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=False,
-        sources=sources, cashback_addr=cashback,
+        sources=sources, cashback_addr=cashback, on_address=None,
     )
     # Exact spend: no cashback, single output.
     assert cashback_sat == 0
@@ -792,6 +785,7 @@ def test_Wallet_make_transaction_scan_stops_at_unused_address(monkeypatch):
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=80_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
+        sources=None, cashback_addr=None, on_address=None,
     )
     # Two addresses scanned, both contributed one input.
     assert len(stx.vin) == 2
@@ -814,6 +808,7 @@ def test_Wallet_make_transaction_scan_stops_at_target(monkeypatch):
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
+        sources=None, cashback_addr=None, on_address=None,
     )
     assert len(stx.vin) == 2
     assert cashback + amount + fee == 60_000
@@ -831,6 +826,7 @@ def test_Wallet_make_transaction_scan_with_all_drains(monkeypatch):
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
+        sources=None, cashback_addr=None, on_address=None,
     )
     # amount=None + scan drains what's collected; cashback=0.
     assert cashback == 0
@@ -922,6 +918,7 @@ def test_Wallet_make_transaction_scan_drains_past_drained_address(monkeypatch):
     stx, cashback, amount, fee = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
+        sources=None, cashback_addr=None, on_address=None,
     )
     # One input from nonce 1; drained nonce 0 contributes nothing.
     assert len(stx.vin) == 1
@@ -983,6 +980,7 @@ def test_Wallet_make_transaction_scan_change_goes_to_last_input(monkeypatch):
     stx, cashback, _, _ = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
+        sources=None, cashback_addr=None, on_address=None,
     )
     # Cashback > 0 -> first vout is the change output.
     assert cashback > 0
@@ -1007,6 +1005,7 @@ def test_Wallet_make_transaction_scan_signs_with_privkey_per_input(monkeypatch):
     stx, _, _, _ = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
+        sources=None, cashback_addr=None, on_address=None,
     )
     pubwif_0 = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
     pubwif_1 = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=1))
@@ -1026,7 +1025,8 @@ def test_Wallet_make_transaction_raises_when_scan_missing(monkeypatch):
     with pytest.raises(Exception, match='scan not set'):
         w.make_transaction(
             dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
-            feekb=2_000, confirmations=0, scan=None,
+            feekb=2_000, confirmations=0,
+            sources=None, cashback_addr=None, on_address=None,
         )
 
 

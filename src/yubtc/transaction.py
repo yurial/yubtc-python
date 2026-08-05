@@ -1,4 +1,4 @@
-from typing import Optional
+from yubtc.util import NotNone, require_kwargs_only
 
 
 def script2pkh(script: bytes) -> bytes:
@@ -31,16 +31,9 @@ def toVarInt(value: int) -> bytes:
 
 
 class CIn(object):
-    def __init__(self, *args, txhash: Optional[bytes] = None, n: Optional[int] = None,
-                 script: bytes = b'', sequence: Optional[int] = None):
-        if args:
-            raise Exception('only kwargs allowed')
-        if txhash is None:
-            raise Exception('txhash not set')
-        if n is None:
-            raise Exception('n not set')
-        if sequence is None:
-            raise Exception('sequence not set')
+    @require_kwargs_only
+    def __init__(self, txhash: bytes = NotNone, n: int = NotNone,
+                 script: bytes = b'', sequence: int = NotNone):
         if len(txhash) != 32:
             raise Exception('txhash should be 32 bytes length')
         if n < 0:
@@ -77,11 +70,8 @@ class CIn(object):
 
 
 class COut(object):
-    def __init__(self, *args, amount: Optional[int] = None, script: bytes = b''):
-        if args:
-            raise Exception('only kwargs allowed')
-        if amount is None:
-            raise Exception('amount not set')
+    @require_kwargs_only
+    def __init__(self, amount: int = NotNone, script: bytes = b''):
         if amount < 0:
             raise Exception('amount should be non-negative')
         if amount > 0xffffffffffffffff:
@@ -104,16 +94,9 @@ class COut(object):
 
 
 class CTransaction(object):
-    def __init__(self, *args, vin: Optional[list] = None, vout: Optional[list] = None,
-                 locktime: Optional[int] = None):
-        if args:
-            raise Exception('only kwargs allowed')
-        if vin is None:
-            raise Exception('vin not set')
-        if vout is None:
-            raise Exception('vout not set')
-        if locktime is None:
-            raise Exception('locktime not set')
+    @require_kwargs_only
+    def __init__(self, vin: list = NotNone, vout: list = NotNone,
+                 locktime: int = NotNone):
         self.version = 2
         self.vin = vin
         self.vout = vout
@@ -143,11 +126,8 @@ class CTransaction(object):
         result += pack(b"<L", self.locktime)
         return result
 
-    def sign(self, *args, signers: Optional[list] = None) -> 'CTransaction':
-        if args:
-            raise Exception('only kwargs allowed')
-        if signers is None:
-            raise Exception('signers not set')
+    @require_kwargs_only
+    def sign(self, signers: list = NotNone) -> 'CTransaction':
         if len(signers) != len(self.vin):
             raise Exception('signers length must match vin length')
         from copy import deepcopy

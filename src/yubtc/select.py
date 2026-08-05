@@ -1,9 +1,7 @@
-from typing import Optional
-
 from yubtc.fwd import TSatoshi
 
 
-def default_selection(sources, target: Optional[TSatoshi] = None) -> set:
+def default_selection(sources, target: TSatoshi = None) -> set:
     """Greedy default: smallest set from earliest addresses that meets target.
 
     `sources`: list of (TPrivKey, unspent_list) tuples in scan order.

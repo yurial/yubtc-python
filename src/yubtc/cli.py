@@ -17,6 +17,7 @@ from yubtc.fwd import (
 )
 from yubtc.wallet import Wallet
 from yubtc.seed import generate_seed, get_seed
+from yubtc.util import NotNone, require_kwargs_only
 
 
 @click.group()
@@ -155,31 +156,17 @@ def send(
     )
 
 
+@require_kwargs_only
 def _send_interactive(
-        *args,
-        wallet=None,
-        address: TAddress = None,
+        wallet: object = NotNone,
+        address: TAddress = NotNone,
         amount=None,
-        fee: TBTC = None,
-        feekb: TSatoshi = None,
-        confirmations: int = None,
-        broadcast: bool = None,
+        fee: TBTC = NotNone,
+        feekb: TSatoshi = NotNone,
+        confirmations: int = NotNone,
+        broadcast: bool = NotNone,
         on_address=None) -> None:
     """send --interactive: scan to gap, run ncurses UI, build and broadcast tx."""
-    if args:
-        raise Exception('only kwargs allowed')
-    if wallet is None:
-        raise Exception('wallet not set')
-    if address is None:
-        raise Exception('address not set')
-    if fee is None:
-        raise Exception('fee not set')
-    if feekb is None:
-        raise Exception('feekb not set')
-    if confirmations is None:
-        raise Exception('confirmations not set')
-    if broadcast is None:
-        raise Exception('broadcast not set')
     from yubtc.misc import btc2satoshi, satoshi2btc, yesno
     from yubtc.net import sendTx
     from yubtc.tui import run_selection
@@ -225,7 +212,7 @@ def _send_interactive(
     stx, cashback, sent, fee_used = wallet.make_transaction(
         dst=address, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
         confirmations=confirmations, scan=False,
-        sources=grouped, cashback_addr=cashback_addr,
+        sources=grouped, cashback_addr=cashback_addr, on_address=None,
     )
     cashback_btc = satoshi2btc(cashback)
     sent_btc = satoshi2btc(sent)

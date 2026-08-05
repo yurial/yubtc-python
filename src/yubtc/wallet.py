@@ -1,31 +1,17 @@
-from typing import Optional
-
-from coincurve import PrivateKey
-
 from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
+from yubtc.util import NotNone, require_kwargs_only
 
 
 class TPrivKey(object):
+    @require_kwargs_only
     def __init__(
             self,
-            *args,
-            privkey: Optional[bytes] = None,
-            seed: Optional[TSeed] = None,
-            nonce: Optional[TNonce] = None):
+            seed: TSeed = NotNone,
+            nonce: TNonce = NotNone):
         from yubtc.crypto import seed2privkey
-        if args:
-            raise Exception('only kwargs allowed')
-        if privkey is not None:
-            # accept either raw 32 bytes or an already-wrapped PrivateKey
-            self.privkey = privkey if isinstance(privkey, PrivateKey) else PrivateKey(privkey)
-        else:
-            if seed is None:
-                raise Exception('seed not set')
-            if not seed:
-                raise Exception('seed cannot be empty')
-            if nonce is None:
-                raise Exception('nonce not set')
-            self.privkey = seed2privkey(seed=seed, nonce=nonce)
+        if not seed:
+            raise Exception('seed cannot be empty')
+        self.privkey = seed2privkey(seed=seed, nonce=nonce)
         self.nonce = nonce
         self._info = None
 
@@ -47,10 +33,9 @@ class TPrivKey(object):
         total_received = self.get_info()['total_received']
         return total_received == 0
 
-    def get_unspent(self, confirmations: Optional[int] = None) -> list:
+    @require_kwargs_only
+    def get_unspent(self, confirmations: int = NotNone) -> list:
         from yubtc.net import get_address_unspent
-        if confirmations is None:
-            raise Exception('confirmations not set')
         result = list()
         for x in get_address_unspent(self.get_p2pkh_address()):
             if x['confirmations'] >= confirmations:
@@ -62,20 +47,14 @@ class TPrivKey(object):
 
 
 class Wallet(object):
+    @require_kwargs_only
     def __init__(
             self,
-            *args,
-            seed: Optional[TSeed] = None,
-            nonce: Optional[TNonce] = None,
-            new_addresses: Optional[int] = None):
-        if args:
-            raise Exception('only kwargs allowed')
-        if seed is None:
-            raise Exception('seed not set')
+            seed: TSeed = NotNone,
+            nonce: TNonce = NotNone,
+            new_addresses: int = NotNone):
         if not seed:
             raise Exception('seed cannot be empty')
-        if new_addresses is None:
-            raise Exception('new_addresses not set')
         self._seed = seed
         self.privkeys = []
         while True:
@@ -89,42 +68,29 @@ class Wallet(object):
             self.privkeys.append(privkey)
             nonce = nonce + 1
 
+    @require_kwargs_only
     def send(
             self,
-            *args,
-            dst: Optional[TAddress] = None,
-            amount: Optional[TBTC] = None,
-            feekb: Optional[TSatoshi] = None,
-            fee: Optional[TBTC] = None,
-            confirmations: Optional[int] = None,
-            broadcast: Optional[bool] = None,
-            scan: Optional[bool] = None,
-            on_address: Optional[object] = None) -> None:
+            dst: TAddress = NotNone,
+            amount: TBTC = None,
+            feekb: TSatoshi = NotNone,
+            fee: TBTC = NotNone,
+            confirmations: int = NotNone,
+            broadcast: bool = NotNone,
+            scan: bool = NotNone,
+            on_address: object = None) -> None:
         from yubtc.misc import yesno, satoshi2btc, btc2satoshi
         from yubtc.net import sendTx
-        if args:
-            raise Exception('only kwargs allowed')
-        if dst is None:
-            raise Exception('dst not set')
         # amount=None is a "drain" sentinel passed through to make_transaction.
         if amount is None:
             converted_amount = None
         else:
             converted_amount = btc2satoshi(amount)
-        if fee is None:
-            raise Exception('fee not set')
         satoshi_fee = btc2satoshi(fee)
-        if feekb is None:
-            raise Exception('feekb not set')
-        if confirmations is None:
-            raise Exception('confirmations not set')
-        if broadcast is None:
-            raise Exception('broadcast not set')
-        if scan is None:
-            raise Exception('scan not set')
         tx, satoshi_cashback, satoshi_amount, satoshi_fee_used = self.make_transaction(
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
-            confirmations=confirmations, scan=scan, on_address=on_address)
+            confirmations=confirmations, scan=scan,
+            sources=None, cashback_addr=None, on_address=on_address)
         cashback_btc = satoshi2btc(satoshi_cashback)
         amount_btc = satoshi2btc(satoshi_amount)
         fee_btc = satoshi2btc(satoshi_fee_used)
@@ -141,13 +107,8 @@ class Wallet(object):
             if yesno('broadcast? '):
                 sendTx(rawtx)
 
-    def _make_vin(self, *args, pubhash: Optional[bytes] = None, unspent: Optional[list] = None) -> tuple:
-        if args:
-            raise Exception('only kwargs allowed')
-        if pubhash is None:
-            raise Exception('pubhash not set')
-        if unspent is None:
-            raise Exception('unspent not set')
+    @require_kwargs_only
+    def _make_vin(self, pubhash: bytes = NotNone, unspent: list = NotNone) -> tuple:
         from yubtc.transaction import script2pkh, CIn
         vin = list()
         in_amount = 0
@@ -164,10 +125,10 @@ class Wallet(object):
             ))
         return vin, in_amount
 
+    @require_kwargs_only
     def _make_vin_multi(
             self,
-            *args,
-            sources: Optional[list] = None) -> tuple:
+            sources: list = NotNone) -> tuple:
         """Build CIn entries from multiple addresses' UTXOs.
 
         `sources` is a list of (TPrivKey, unspent) tuples. The lock
@@ -175,10 +136,6 @@ class Wallet(object):
         privkey's pubhash. Returns (vin, in_amount, signers) where
         signers is a list of (PrivateKey, pubwif) pairs, one per input.
         """
-        if args:
-            raise Exception('only kwargs allowed')
-        if sources is None:
-            raise Exception('sources not set')
         from yubtc.hash import hash160
         from yubtc.crypto import privkey2pubkey
         from yubtc.transaction import script2pkh, CIn
@@ -202,12 +159,12 @@ class Wallet(object):
                 signers.append((tp.privkey, pubkey))
         return vin, in_amount, signers
 
+    @require_kwargs_only
     def _scan_inputs(
             self,
-            *args,
-            target: Optional[TSatoshi] = None,
-            confirmations: Optional[int] = None,
-            on_address: Optional[object] = None) -> tuple:
+            target: TSatoshi = None,
+            confirmations: int = NotNone,
+            on_address: object = None) -> tuple:
         """Walk forward from nonce 0 collecting addresses' UTXOs.
 
         Stops when either:
@@ -235,10 +192,6 @@ class Wallet(object):
         total_received). Treating that as a gap would truncate the scan
         and miss later addresses with fresh UTXOs.
         """
-        if args:
-            raise Exception('only kwargs allowed')
-        if confirmations is None:
-            raise Exception('confirmations not set')
         sources = []
         total = 0
         nonce = 0
@@ -264,18 +217,18 @@ class Wallet(object):
             nonce += 1
         return sources, cashback_addr
 
+    @require_kwargs_only
     def make_transaction(
             self,
-            *args,
-            dst: Optional[TAddress] = None,
-            amount: Optional[TBTC] = None,
-            feekb: Optional[TSatoshi] = None,
-            fee: Optional[TSatoshi] = None,
-            confirmations: Optional[int] = None,
-            scan: Optional[bool] = None,
-            sources: Optional[list] = None,
-            cashback_addr: Optional[TAddress] = None,
-            on_address: Optional[object] = None) -> tuple:
+            dst: TAddress = NotNone,
+            amount: TBTC = None,
+            feekb: TSatoshi = NotNone,
+            fee: TSatoshi = NotNone,
+            confirmations: int = NotNone,
+            scan: bool = NotNone,
+            sources: list = None,
+            cashback_addr: TAddress = None,
+            on_address: object = None) -> tuple:
         """Build and sign a transaction.
 
         Three input modes:
@@ -287,18 +240,8 @@ class Wallet(object):
           last sourced address, or to the gap-limit unused address.
         - otherwise: use the wallet's primary address's UTXOs only.
         """
-        if args:
-            raise Exception('only kwargs allowed')
-        if dst is None:
-            raise Exception('dst not set')
         from yubtc.crypto import privkey2pubkey, pubkey2addr, make_vout
         from yubtc.transaction import CTransaction
-        if confirmations is None:
-            raise Exception('confirmations not set')
-        if feekb is None:
-            raise Exception('feekb not set')
-        if scan is None:
-            raise Exception('scan not set')
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
         if sources is not None:
             # Caller pre-selected (e.g. the interactive UI). The cashback

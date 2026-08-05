@@ -54,12 +54,10 @@ def test_seed2bin_nonce_changes_output():
 
 
 def test_seed2bin_raises_when_nonce_missing():
-    """nonce=None must raise -- callers must pass it explicitly."""
+    """nonce is required -- callers must pass it explicitly."""
     from yubtc.crypto import seed2bin
     with pytest.raises(Exception, match='nonce not set'):
         seed2bin(seed='qwe')
-    with pytest.raises(Exception, match='nonce not set'):
-        seed2bin(seed='qwe', nonce=None)
 
 
 def test_seed2privkey_raises_when_nonce_missing():
@@ -67,8 +65,6 @@ def test_seed2privkey_raises_when_nonce_missing():
     from yubtc.crypto import seed2privkey
     with pytest.raises(Exception, match='nonce not set'):
         seed2privkey(seed='qwe')
-    with pytest.raises(Exception, match='nonce not set'):
-        seed2privkey(seed='qwe', nonce=None)
 
 
 # ---------------------------------------------------------------------------
@@ -365,12 +361,10 @@ def test_make_vout_exact_no_change_does_not_trip_drain_check():
 
 
 def test_seed2bin_raises_when_seed_missing():
-    """seed=None must raise -- callers must pass it explicitly."""
+    """seed is required -- callers must pass it explicitly."""
     from yubtc.crypto import seed2bin
     with pytest.raises(Exception, match='seed not set'):
         seed2bin(nonce=0)
-    with pytest.raises(Exception, match='seed not set'):
-        seed2bin(seed=None, nonce=0)
 
 
 def test_seed2privkey_raises_when_seed_missing():
@@ -378,8 +372,6 @@ def test_seed2privkey_raises_when_seed_missing():
     from yubtc.crypto import seed2privkey
     with pytest.raises(Exception, match='seed not set'):
         seed2privkey(nonce=0)
-    with pytest.raises(Exception, match='seed not set'):
-        seed2privkey(seed=None, nonce=0)
 
 
 def test_privwif_raises_when_privkey_missing():
@@ -387,8 +379,6 @@ def test_privwif_raises_when_privkey_missing():
     from yubtc.crypto import privkey2privwif
     with pytest.raises(Exception, match='privkey not set'):
         privkey2privwif()
-    with pytest.raises(Exception, match='privkey not set'):
-        privkey2privwif(privkey=None)
 
 
 def test_privkey2addr_raises_when_privkey_missing():
@@ -396,8 +386,6 @@ def test_privkey2addr_raises_when_privkey_missing():
     from yubtc.crypto import privkey2addr
     with pytest.raises(Exception, match='privkey not set'):
         privkey2addr()
-    with pytest.raises(Exception, match='privkey not set'):
-        privkey2addr(privkey=None)
 
 
 def test_pubkey2addr_raises_when_pubkey_missing():
@@ -405,16 +393,12 @@ def test_pubkey2addr_raises_when_pubkey_missing():
     from yubtc.crypto import pubkey2addr
     with pytest.raises(Exception, match='pubkey not set'):
         pubkey2addr()
-    with pytest.raises(Exception, match='pubkey not set'):
-        pubkey2addr(pubkey=None)
 
 
 def test_sign_hash_raises_when_privkey_missing():
     from yubtc.crypto import sign_hash
     with pytest.raises(Exception, match='privkey not set'):
         sign_hash(datahash=b'\x42' * 32)
-    with pytest.raises(Exception, match='privkey not set'):
-        sign_hash(privkey=None, datahash=b'\x42' * 32)
 
 
 def test_sign_hash_raises_when_datahash_missing():
@@ -422,16 +406,12 @@ def test_sign_hash_raises_when_datahash_missing():
     privkey = seed2privkey(seed='qwe', nonce=0)
     with pytest.raises(Exception, match='datahash not set'):
         sign_hash(privkey=privkey)
-    with pytest.raises(Exception, match='datahash not set'):
-        sign_hash(privkey=privkey, datahash=None)
 
 
 def test_sign_data_raises_when_privkey_missing():
     from yubtc.crypto import sign_data
     with pytest.raises(Exception, match='privkey not set'):
         sign_data(data=b'abc')
-    with pytest.raises(Exception, match='privkey not set'):
-        sign_data(privkey=None, data=b'abc')
 
 
 def test_sign_data_raises_when_data_missing():
@@ -439,22 +419,21 @@ def test_sign_data_raises_when_data_missing():
     privkey = seed2privkey(seed='qwe', nonce=0)
     with pytest.raises(Exception, match='data not set'):
         sign_data(privkey=privkey)
-    with pytest.raises(Exception, match='data not set'):
-        sign_data(privkey=privkey, data=None)
 
 
 def test_make_vout_raises_when_required_kwarg_missing():
     from yubtc.crypto import make_vout
-    # src is the only positional; all of dst/in_amount/fee are kwarg-only.
+    # Each required kwarg is omitted in turn; an explicit `None` is a
+    # valid value (drain sentinel) and must NOT trigger this guard.
     base = dict(src=b'\x00' * 20, dst=b'\x00' * 20, in_amount=100_000, fee=1_000)
     with pytest.raises(Exception, match='src not set'):
-        make_vout(**{**base, 'src': None})
+        make_vout(**{k: v for k, v in base.items() if k != 'src'})
     with pytest.raises(Exception, match='dst not set'):
-        make_vout(**{**base, 'dst': None})
+        make_vout(**{k: v for k, v in base.items() if k != 'dst'})
     with pytest.raises(Exception, match='in_amount not set'):
-        make_vout(**{**base, 'in_amount': None})
+        make_vout(**{k: v for k, v in base.items() if k != 'in_amount'})
     with pytest.raises(Exception, match='fee not set'):
-        make_vout(**{**base, 'fee': None})
+        make_vout(**{k: v for k, v in base.items() if k != 'fee'})
 
 
 def test_str2bytes_encodes_as_latin1():

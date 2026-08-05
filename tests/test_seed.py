@@ -121,7 +121,7 @@ def test_generate_seed_raises_when_count_missing():
     from yubtc.seed import generate_seed
     with pytest.raises(Exception, match='count not set'):
         generate_seed()
-    with pytest.raises(Exception, match='count not set'):
+    with pytest.raises(Exception, match='count is None'):
         generate_seed(count=None, allow_dups=True)
     with pytest.raises(Exception, match='allow_dups not set'):
         generate_seed(count=12)
@@ -132,11 +132,11 @@ def test__generate_seed_raises_when_count_or_allow_dups_missing():
     from yubtc.seed import _generate_seed
     with pytest.raises(Exception, match='count not set'):
         _generate_seed()
-    with pytest.raises(Exception, match='count not set'):
+    with pytest.raises(Exception, match='count is None'):
         _generate_seed(count=None, allow_dups=True)
     with pytest.raises(Exception, match='allow_dups not set'):
         _generate_seed(count=5)
-    with pytest.raises(Exception, match='allow_dups not set'):
+    with pytest.raises(Exception, match='allow_dups is None'):
         _generate_seed(count=5, allow_dups=None)
 
 

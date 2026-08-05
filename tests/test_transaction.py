@@ -141,8 +141,6 @@ def test_cin_raises_when_sequence_missing():
     from yubtc.transaction import CIn
     with pytest.raises(Exception, match='sequence not set'):
         CIn(txhash=TXHASH, n=0, script=b'')
-    with pytest.raises(Exception, match='sequence not set'):
-        CIn(txhash=TXHASH, n=0, script=b'', sequence=None)
 
 
 def test_cin_raises_when_txhash_or_n_missing():
@@ -159,18 +157,15 @@ def test_cout_raises_when_amount_missing():
     from yubtc.transaction import COut
     with pytest.raises(Exception, match='amount not set'):
         COut(script=b'')
-    with pytest.raises(Exception, match='amount not set'):
-        COut(amount=None, script=b'')
 
 
 def test_ctransaction_raises_when_vin_or_vout_missing():
     """CTransaction requires both `vin` and `vout`."""
     from yubtc.transaction import COut, CTransaction
-    base = dict(vin=[], vout=[COut(amount=0, script=b'')], locktime=0)
     with pytest.raises(Exception, match='vin not set'):
-        CTransaction(**{**base, 'vin': None})
+        CTransaction(vout=[COut(amount=0, script=b'')], locktime=0)
     with pytest.raises(Exception, match='vout not set'):
-        CTransaction(**{**base, 'vout': None})
+        CTransaction(vin=[], locktime=0)
 
 
 def test_sign_raises_when_signers_missing():
@@ -290,8 +285,6 @@ def test_ctransaction_raises_when_locktime_missing():
     from yubtc.transaction import CTransaction
     with pytest.raises(Exception, match='locktime not set'):
         CTransaction(vin=[], vout=[])
-    with pytest.raises(Exception, match='locktime not set'):
-        CTransaction(vin=[], vout=[], locktime=None)
 
 
 def test_ctransaction_serialize_known_answer():

@@ -2,16 +2,11 @@
 # The BIP-39 wordlist has long words (up to 8 chars) packed densely per line;
 # splitting them differently would just shuffle E501 hits around without
 # improving readability. Suppress E501 for the whole file.
-from typing import Optional
+from yubtc.util import NotNone, require_kwargs_only
 
 
-def _generate_seed(*args, count: Optional[int] = None, allow_dups: Optional[bool] = None) -> list:
-    if args:
-        raise Exception('only kwargs allowed')
-    if count is None:
-        raise Exception('count not set')
-    if allow_dups is None:
-        raise Exception('allow_dups not set')
+@require_kwargs_only
+def _generate_seed(count: int = NotNone, allow_dups: bool = NotNone) -> list:
     wordList = ('abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract', 'absurd', 'abuse', 'access',
                 'accident', 'account', 'accuse', 'achieve', 'acid', 'acoustic', 'acquire', 'across', 'act', 'action',
                 'actor', 'actress', 'actual', 'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
@@ -205,13 +200,8 @@ def _generate_seed(*args, count: Optional[int] = None, allow_dups: Optional[bool
     return sysrandom.choices(wordList, k=count)
 
 
-def generate_seed(*args, count: Optional[int] = None, allow_dups: Optional[bool] = None) -> str:
-    if args:
-        raise Exception('only kwargs allowed')
-    if count is None:
-        raise Exception('count not set')
-    if allow_dups is None:
-        raise Exception('allow_dups not set')
+@require_kwargs_only
+def generate_seed(count: int = NotNone, allow_dups: bool = NotNone) -> str:
     return ' '.join(_generate_seed(count=count, allow_dups=allow_dups))
 
 
