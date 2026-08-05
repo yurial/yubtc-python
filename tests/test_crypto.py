@@ -425,7 +425,7 @@ def test_make_vout_raises_when_required_kwarg_missing():
     from yubtc.crypto import make_vout
     # Each required kwarg is omitted in turn; an explicit `None` is a
     # valid value (drain sentinel) and must NOT trigger this guard.
-    base = dict(src=b'\x00' * 20, dst=b'\x00' * 20, in_amount=100_000, fee=1_000)
+    base = dict(src=b'\x00' * 20, dst=b'\x00' * 20, in_amount=100_000, amount=None, fee=1_000)
     with pytest.raises(TypeError, match='src not set'):
         make_vout(**{k: v for k, v in base.items() if k != 'src'})
     with pytest.raises(TypeError, match='dst not set'):

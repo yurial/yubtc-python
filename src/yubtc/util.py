@@ -3,12 +3,15 @@ import inspect
 
 
 class _NotNoneType:
-    """Sentinel type marking a required kwarg.
+    """Sentinel type marking "this parameter must be supplied with a real
+    value -- `None` does not count".
 
     A parameter declared as `foo: T = NotNone` is required: the caller
-    must pass it explicitly. The decorator checks `kwargs[name] is not
-    None` rather than just membership, so the caller's `None` is also
-    rejected (a real value, not a missing argument).
+    must pass it explicitly, and the value must not be `None`. A
+    parameter declared as `foo: T = None` is also required (the caller
+    must pass it explicitly), but `None` is a legitimate value -- it
+    means "the caller decided to pass nothing". A parameter with a
+    concrete default (an int, a string, `b''`, ...) is fully optional.
     """
 
     _instance = None
@@ -32,52 +35,40 @@ class _NotNoneType:
 NotNone = _NotNoneType()
 
 
-def _required_kwargs(func) -> tuple:
-    """Names of the function's kwargs whose default is `NotNone`.
-
-    A "required" kwarg is one whose default is the `NotNone` sentinel:
-    the caller must pass it explicitly. Any other default (`None`, a
-    concrete value, or a mutable like `b''`) marks the parameter as
-    optional -- it has a real "no value" representation the caller can
-    legitimately use, including `None` itself.
-    """
-    sig = inspect.signature(func)
-    params = list(sig.parameters.items())
-    if params and params[0][0] in ('self', 'cls'):
-        params = params[1:]
-    return tuple(
-        name for name, param in params
-        if param.default is NotNone
-    )
-
-
 def require_kwargs_only(func):
     """Reject positional args and require explicitly-passed kwargs.
 
-    A kwarg is "required" when its default is the `NotNone` sentinel
-    declared in this module. The wrapper checks two conditions:
-    - `name in kwargs` -- the caller must pass the kwarg explicitly.
-    - `kwargs[name] is not None` -- a real value is required; an explicit
-      `None` is rejected. The two failure modes produce different messages
-      so callers can see whether they forgot the kwarg or passed `None`.
+    Every parameter must be passed by name. A `NameError` substitutes for
+    a missing argument -- the call must supply each parameter the
+    function declares. The `NotNone` sentinel picks out parameters that
+    additionally reject `None` as a value: for those, the wrapper raises
+    `ValueError('<name> is None')` instead of forwarding a `None`. The
+    check `p.default is not None` covers the `NotNone` sentinel and
+    any concrete default (a string, `b''`, an int, ...) -- it skips
+    only parameters declared as `= None`, which legitimately accept
+    `None`.
 
     For methods, the first positional argument (`self` / `cls`) is
     treated as the bound instance and is *not* counted as a positional
     call to the wrapped function -- only positional args past the first
     one trigger the `only kwargs allowed` check.
 
-    Raises the same messages the hand-written checks used before:
+    Raises:
     - `TypeError('only kwargs allowed')` when the caller passes any
       positional argument beyond `self`/`cls`.
-    - `TypeError('<name> not set')` for a required kwarg that wasn't
-      passed.
-    - `ValueError('<name> is None')` for a required kwarg that was passed
-      explicitly as `None`.
+    - `TypeError('<name> not set')` for a parameter that wasn't passed
+      by name (including parameters with a concrete default -- the
+      wrapper doesn't treat any default as "optional").
+    - `ValueError('<name> is None')` when a parameter whose default is
+      not `None` (i.e. `NotNone` or a concrete value) was passed
+      explicitly as `None`. The exception is the `NotNone` sentinel's
+      primary signal; concrete-default parameters rarely hit it in
+      practice.
     """
     sig = inspect.signature(func)
-    params = list(sig.parameters.items())
-    is_method = bool(params) and params[0][0] in ('self', 'cls')
-    required = _required_kwargs(func)
+    params = list(sig.parameters.values())
+    is_method = bool(params) and params[0].name in ('self', 'cls')
+    required = params[1:] if is_method else params
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -85,12 +76,11 @@ def require_kwargs_only(func):
             raise TypeError('only kwargs allowed')
         if not is_method and args:
             raise TypeError('only kwargs allowed')
-        for name in required:
-            if name in kwargs:
-                if kwargs[name] is None:
-                    raise ValueError(f'{name} is None')
-            else:
-                raise TypeError(f'{name} not set')
+        for p in required:
+            if p.name not in kwargs:
+                raise TypeError(f'{p.name} not set')
+            if p.default is not None and kwargs[p.name] is None:
+                raise ValueError(f'{p.name} is None')
         return func(*args, **kwargs)
 
     return wrapper

@@ -14,7 +14,7 @@ def test_require_kwargs_only_rejects_positional_args():
 
 def test_require_kwargs_only_rejects_missing_required_kwarg():
     @require_kwargs_only
-    def f(foo=NotNone, bar=NotNone):
+    def f(foo=NotNone, bar=None):
         return (foo, bar)
 
     with pytest.raises(TypeError, match='foo not set'):
@@ -48,12 +48,15 @@ def test_require_kwargs_only_returns_value_when_all_set():
 
 
 def test_require_kwargs_only_ignores_extra_kwargs():
-    """Extra kwargs beyond the required set are passed through untouched."""
+    """`**kwargs` itself is required by the wrapper; the caller must
+    pass it explicitly (any value, including `{}`). The wrapper then
+    forwards it through to the wrapped function."""
     @require_kwargs_only
     def f(foo=NotNone, **kwargs):
         return (foo, kwargs)
 
-    assert f(foo=1, extra='x') == (1, {'extra': 'x'})
+    assert f(foo=1, kwargs={'extra': 'x'}) == (1, {'kwargs': {'extra': 'x'}})
+    assert f(foo=1, kwargs={}) == (1, {'kwargs': {}})
 
 
 def test_require_kwargs_only_preserves_metadata():
@@ -79,21 +82,30 @@ def test_require_kwargs_only_falsy_non_none_values_pass():
 
 
 def test_require_kwargs_only_only_checks_notnone_default_params():
-    """Kwargs with a default other than `NotNone` are optional.
+    """Kwargs without a concrete default are required, even if it's `None`.
 
-    `= None` declares a param that may legitimately receive `None` (a real
-    value); `= 'default'` (or any other concrete value) marks it as
-    optional with a fallback. The decorator skips both.
+    A "concrete" default is a real value (a string, bytes, int, ...);
+    both `None` and `NotNone` are placeholders saying "the caller
+    decides", so parameters declared with either are required. The
+    wrapper's extra check (rejection of explicit `None`) only applies to
+    `NotNone`-typed parameters -- `= None` params accept `None` freely.
+    Parameters with concrete defaults are also required (the caller
+    must still pass them explicitly); the decorator just doesn't add
+    a non-None check on top.
     """
     @require_kwargs_only
     def f(foo=NotNone, none_opt=None, opt='default'):
         return (foo, none_opt, opt)
 
-    assert f(foo=1) == (1, None, 'default')
+    assert f(foo=1, none_opt=None, opt='default') == (1, None, 'default')
     assert f(foo=1, none_opt=0, opt='x') == (1, 0, 'x')
-    assert f(foo=1, none_opt=None) == (1, None, 'default')
     with pytest.raises(TypeError, match='foo not set'):
-        f()
+        f(none_opt=None, opt='default')
+    with pytest.raises(TypeError, match='none_opt not set'):
+        f(foo=1, opt='default')
+    # opt has a concrete default but is still required.
+    with pytest.raises(TypeError, match='opt not set'):
+        f(foo=1, none_opt=None)
 
 
 def test_require_kwargs_only_skips_self_on_methods():

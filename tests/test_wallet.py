@@ -298,6 +298,7 @@ def test_Wallet_send_with_amount_none_skips_btc2satoshi(monkeypatch, monkeypatch
     """
     from yubtc.wallet import Wallet
     import yubtc.net
+    import yubtc.misc
     monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
@@ -315,6 +316,7 @@ def test_Wallet_send_with_broadcast_calls_sendTx(monkeypatch, monkeypatch_input)
     """With broadcast=True, the tx is passed to net.sendTx."""
     from yubtc.wallet import Wallet
     import yubtc.net
+    import yubtc.misc
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'sendTx', sent)
     monkeypatch.setattr('yubtc.net.get_address_info',
@@ -330,6 +332,7 @@ def test_Wallet_send_declined_prints_nothing(monkeypatch):
     """With --broadcast, answering 'n' to the prompt skips sendTx; the dump still prints."""
     from yubtc.wallet import Wallet
     import yubtc.net
+    import yubtc.misc
 
     monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -343,7 +346,8 @@ def test_Wallet_send_declined_prints_nothing(monkeypatch):
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     from decimal import Decimal
     w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0005'),
-           fee=Decimal('0.00001'), feekb=2_000, confirmations=0, broadcast=True, scan=False)
+           fee=Decimal('0.00001'), feekb=2_000, confirmations=0, broadcast=True, scan=False,
+           on_address=None)
     sent.assert_not_called()
 
 
@@ -351,6 +355,7 @@ def test_Wallet_send_dry_run_does_not_prompt(monkeypatch):
     """Without --broadcast the dump prints; no confirmation is asked."""
     from yubtc.wallet import Wallet
     import yubtc.net
+    import yubtc.misc
 
     monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -364,7 +369,8 @@ def test_Wallet_send_dry_run_does_not_prompt(monkeypatch):
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     from decimal import Decimal
     w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0005'),
-           fee=Decimal('0.00001'), feekb=2_000, confirmations=0, broadcast=False, scan=False)
+           fee=Decimal('0.00001'), feekb=2_000, confirmations=0, broadcast=False, scan=False,
+           on_address=None)
     assert prompted == []
     sent.assert_not_called()
 
@@ -376,6 +382,7 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
     """
     from yubtc.wallet import Wallet
     import yubtc.net
+    import yubtc.misc
     monkeypatch.setattr(yubtc.net, 'get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
@@ -385,7 +392,7 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
                 amount=None, fee=Decimal('0.00001'), feekb=2_000,
-                confirmations=0, broadcast=False, scan=False)
+                confirmations=0, broadcast=False, scan=False, on_address=None)
     with pytest.raises(TypeError, match='dst not set'):
         w.send(**{k: v for k, v in base.items() if k != 'dst'})
     with pytest.raises(TypeError, match='fee not set'):
@@ -671,6 +678,7 @@ def test_Wallet_make_transaction_with_sources_requires_cashback_addr(monkeypatch
             sources=[(w.privkeys[0], [{'tx_hash': 'aa' * 32, 'out_n': 0,
                                        'amount': 100_000, 'confirmations': 0,
                                        'script': '76a914' + 'aa' * 20 + '88ac'}])],
+            cashback_addr=None, on_address=None,
         )
 
 
@@ -695,7 +703,7 @@ def dry_run_send(w, input_fixture, dst, amount, broadcast=False, scan=False):
     btc_amount = Decimal(amount) if amount is not None else None
     with redirect_stdout(buf):
         w.send(dst=dst, amount=btc_amount, fee=Decimal('0.00001'), feekb=2_000,
-               confirmations=0, broadcast=broadcast, scan=scan)
+               confirmations=0, broadcast=broadcast, scan=scan, on_address=None)
     return buf.getvalue()
 
 
@@ -847,7 +855,7 @@ def test_Wallet_scan_change_goes_to_unused_address_at_gap(monkeypatch):
                         fake_unspent_per_nonce({0: [60_000], 1: [60_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    sources, cashback_addr = w._scan_inputs(target=200_000, confirmations=0)
+    sources, cashback_addr = w._scan_inputs(target=200_000, confirmations=0, on_address=None)
 
     assert len(sources) == 2
     unused_addr = privkey2addr(
@@ -881,7 +889,7 @@ def test_Wallet_scan_continues_past_drained_address(monkeypatch):
                         fake_unspent_per_nonce({1: [60_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    sources, cashback_addr = w._scan_inputs(target=200_000, confirmations=0)
+    sources, cashback_addr = w._scan_inputs(target=200_000, confirmations=0, on_address=None)
 
     # The drained nonce 0 contributes nothing; nonce 1 is the only source.
     assert len(sources) == 1
@@ -1064,7 +1072,7 @@ def test_Wallet_send_scan_passes_scan_to_make_transaction(monkeypatch, monkeypat
     from decimal import Decimal
     w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0001'),
            fee=Decimal('0.00001'), feekb=2_000, confirmations=0,
-           broadcast=False, scan=True)
+           broadcast=False, scan=True, on_address=None)
     assert captured['scan'] is True
 
 
@@ -1074,8 +1082,8 @@ def test_Wallet_scan_inputs_raises_when_confirmations_missing(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(TypeError, match='confirmations not set'):
-        w._scan_inputs()
+    with pytest.raises(TypeError, match='target not set'):
+        w._scan_inputs(confirmations=0)
 
 
 def test_Wallet_scan_inputs_rejects_positional_args(monkeypatch):
