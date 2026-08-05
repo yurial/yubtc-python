@@ -221,13 +221,13 @@ class Wallet(object):
         actually fed inputs. Callers can use this to print progress as the
         scan runs (e.g. mirroring `balance`'s per-address line).
 
-        Returns (sources, retback_addr) where sources is a list of
-        (TPrivKey, unspent) tuples in scan order and retback_addr is the
+        Returns (sources, cashback_addr) where sources is a list of
+        (TPrivKey, unspent) tuples in scan order and cashback_addr is the
         address to send any change to:
-        - if the scan stopped due to the gap limit, retback_addr is the
+        - if the scan stopped due to the gap limit, cashback_addr is the
           unused address itself (the wallet's next address, which is
           hidden in the gap and ready to receive change);
-        - otherwise retback_addr is the last sourced address.
+        - otherwise cashback_addr is the last sourced address.
 
         Note on gap detection: an address that *was* paid to but has
         since been fully spent returns [] from get_unspent() yet is not
@@ -242,14 +242,14 @@ class Wallet(object):
         sources = []
         total = 0
         nonce = 0
-        retback_addr = None
+        cashback_addr = None
         while True:
             pk = TPrivKey(seed=self._seed, nonce=nonce)
             unspent = pk.get_unspent(confirmations=confirmations)
             if pk.is_unused() and not unspent:
                 # True gap: this address has never received anything and
                 # has nothing to spend. Retback goes here.
-                retback_addr = pk.get_p2pkh_address()
+                cashback_addr = pk.get_p2pkh_address()
                 break
             if unspent:
                 sources.append((pk, unspent))
@@ -258,11 +258,11 @@ class Wallet(object):
                 if on_address is not None:
                     on_address(pk, unspent)
             if target is not None and total >= target:
-                # Target met: retback goes to the last sourced address.
-                retback_addr = pk.get_p2pkh_address()
+                # Target met: cashback goes to the last sourced address.
+                cashback_addr = pk.get_p2pkh_address()
                 break
             nonce += 1
-        return sources, retback_addr
+        return sources, cashback_addr
 
     def make_transaction(
             self,

@@ -79,6 +79,12 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
         if not empty and in_amount == 0 and not privkey.is_unused():
             continue
         address = privkey.get_p2pkh_address().decode('ascii')
+        if privkey.is_unused():
+            # Never received funds -- a fresh address from the gap.
+            # Distinguish it from a "used but currently empty" address
+            # (which prints 0.00000000 BTC when -e is set).
+            print(f'{privkey.nonce}# {address}: unused')
+            continue
         amount: TBTC = satoshi2btc(in_amount)
         total += amount
         print(f'{privkey.nonce}# {address}: {amount:0.08f} BTC')

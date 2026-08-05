@@ -23,19 +23,24 @@ def _stub_offline(monkeypatch, unspent=None, info=None, used_nonces=0):
         The remainder return the default info. Wallet's seed-scan loop walks
         nonces until it finds an unused address; pin how many are used so the
         loop terminates.
+
+    The mock is keyed on the *address* (not call order) so it stays stable
+    across the multiple `is_unused()` calls made by both Wallet.__init__
+    and the balance/send loops -- otherwise an address marked "used" during
+    init can flip to "unused" the second time it's queried.
     """
     if unspent is None:
         unspent = []
     if info is None:
         info = {'total_received': 0, 'final_balance': 0, 'n_tx': 0}
     used = {'total_received': 1, 'final_balance': 0, 'n_tx': 1}
-    # The wallet addresses we encounter are at nonce 0, 1, 2, ... in order.
-    # Cache the --used_nonces first addresses as "used"; the rest as "fresh".
-    counters = {'n': 0}
+    from yubtc.crypto import seed2privkey, privkey2addr
+    address_for = {n: privkey2addr(privkey=seed2privkey(seed=SEED, nonce=n)).decode('ascii')
+                   for n in range(used_nonces)}
 
     def fake_info(address):
-        counters['n'] += 1
-        return used if counters['n'] <= used_nonces else info
+        address = address.decode('ascii') if isinstance(address, bytes) else address
+        return used if address in address_for.values() else info
     monkeypatch.setattr(yubtc.net, 'get_address_info', fake_info)
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', lambda address, **kwargs: unspent)
 
@@ -134,10 +139,9 @@ def test_balance_shows_unspent_amount(monkeypatch):
     # format (tx, out_n, amount) before returning.
     raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 100_000_000,
             'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'}]
-    monkeypatch.setattr(yubtc.net, 'get_address_unspent',
-                        lambda address, **kwargs: raw)
-    monkeypatch.setattr(yubtc.net, 'get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
+    # Nonce 0 is "used" (has the UTXO); later nonces are unused so wallet
+    # init's seed-scan terminates.
+    _stub_offline(monkeypatch, unspent=raw, used_nonces=1)
     output = run(['balance'], stdin=SEED + '\n')
     assert '1.00000000 BTC' in output
     assert 'Total: 1.00000000' in output
@@ -156,10 +160,7 @@ def test_balance_verbose_prints_each_utxo(monkeypatch):
             'confirmations': 10,
             'script': '76a914' + 'bb' * 20 + '88ac'},
            ]
-    monkeypatch.setattr(yubtc.net, 'get_address_unspent',
-                        lambda address, **kwargs: raw)
-    monkeypatch.setattr(yubtc.net, 'get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
+    _stub_offline(monkeypatch, unspent=raw, used_nonces=1)
     output = run(['balance', '-v'], stdin=SEED + '\n')
     assert 'a' * 64 in output
     assert 'b' * 64 in output
@@ -180,14 +181,34 @@ def test_balance_filters_low_confirmation_utxos(monkeypatch):
             'confirmations': 10,
             'script': '76a914' + 'bb' * 20 + '88ac'},
            ]
-    monkeypatch.setattr(yubtc.net, 'get_address_unspent',
-                        lambda address, **kwargs: raw)
-    monkeypatch.setattr(yubtc.net, 'get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
+    _stub_offline(monkeypatch, unspent=raw, used_nonces=1)
     # With -c 5 and -v, only the second UTXO's txid is shown.
     output = run(['balance', '-v', '-c', '5'], stdin=SEED + '\n')
     assert 'a' * 64 not in output
     assert 'b' * 64 in output
+
+
+def test_balance_shows_unused_label_for_unused_addresses(monkeypatch):
+    """An address with no history (total_received=0) prints 'unused'."""
+    # No UTXOs, no history -- this is the gap-limit address that the
+    # wallet pre-generates with -n (default new_addresses=1).
+    _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0},
+                  used_nonces=0)
+    output = run(['balance'], stdin=SEED + '\n')
+    # The wallet contains one unused address; it should print 'unused'
+    # instead of '0.00000000 BTC' so the operator can tell it apart from
+    # a used-but-currently-empty address.
+    assert f'0# {ADDRESS}: unused' in output
+    assert 'Total: 0.00000000' in output
+
+
+def test_balance_used_empty_address_keeps_zero_btc_label(monkeypatch):
+    """-e shows '0.00000000 BTC' for a used-but-empty address, not 'unused'."""
+    _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0},
+                  used_nonces=1)
+    output = run(['balance', '-e'], stdin=SEED + '\n')
+    # Nonce 0 was used (total_received=1) but is now drained: '0.00000000 BTC'.
+    assert f'0# {ADDRESS}: 0.00000000 BTC' in output
 
 
 # ---------------------------------------------------------------------------

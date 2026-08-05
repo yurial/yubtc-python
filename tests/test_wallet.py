@@ -792,7 +792,7 @@ def test_Wallet_make_transaction_scan_with_all_drains(monkeypatch):
 
 
 def test_Wallet_scan_change_goes_to_unused_address_at_gap(monkeypatch):
-    """When scan halts via gap limit, retback goes to the unused address."""
+    """When scan halts via gap limit, cashback goes to the unused address."""
     from yubtc.wallet import Wallet
     from yubtc.crypto import seed2privkey, privkey2addr
     monkeypatch.setattr('yubtc.net.get_address_info',
@@ -803,12 +803,12 @@ def test_Wallet_scan_change_goes_to_unused_address_at_gap(monkeypatch):
                         fake_unspent_per_nonce({0: [60_000], 1: [60_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    sources, retback_addr = w._scan_inputs(target=200_000, confirmations=0)
+    sources, cashback_addr = w._scan_inputs(target=200_000, confirmations=0)
 
     assert len(sources) == 2
     unused_addr = privkey2addr(
         privkey=seed2privkey(seed='qwe', nonce=2))
-    assert retback_addr == unused_addr
+    assert cashback_addr == unused_addr
 
 
 def test_Wallet_scan_continues_past_drained_address(monkeypatch):
@@ -837,14 +837,14 @@ def test_Wallet_scan_continues_past_drained_address(monkeypatch):
                         fake_unspent_per_nonce({1: [60_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    sources, retback_addr = w._scan_inputs(target=200_000, confirmations=0)
+    sources, cashback_addr = w._scan_inputs(target=200_000, confirmations=0)
 
     # The drained nonce 0 contributes nothing; nonce 1 is the only source.
     assert len(sources) == 1
     assert sources[0][0].nonce == 1
-    # True gap sits at nonce 2 -- retback goes there.
+    # True gap sits at nonce 2 -- cashback goes there.
     gap_addr = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=2))
-    assert retback_addr == gap_addr
+    assert cashback_addr == gap_addr
 
 
 def test_Wallet_make_transaction_scan_drains_past_drained_address(monkeypatch):
