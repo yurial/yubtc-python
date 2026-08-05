@@ -142,7 +142,9 @@ def test_TPrivKey_get_unspent_returns_empty_when_no_utxos(monkeypatch):
 
 def test_TPrivKey_get_unspent_renames_api_fields(monkeypatch):
     """The blockchain.info format uses tx_hash / tx_output_n / value / script.
-    The wallet's internal format renames these to tx / out_n / amount / script."""
+    The wallet's internal format renames these to tx / out_n / amount / script,
+    and passes `confirmations` through so callers (notably the TUI) can
+    show how deep each input sits in the chain."""
     import yubtc.wallet
     raw = [{'tx_hash': 'a' * 64, 'tx_output_n': 0, 'value': 50_000,
             'confirmations': 10, 'script': '76a914' + 'aa' * 20 + '88ac'}, ]
@@ -150,7 +152,8 @@ def test_TPrivKey_get_unspent_renames_api_fields(monkeypatch):
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0)
     out = p.get_unspent(confirmations=0)
     assert out == [
-        {'tx': 'a' * 64, 'out_n': 0, 'amount': 50_000, 'script': '76a914' + 'aa' * 20 + '88ac'},
+        {'tx': 'a' * 64, 'out_n': 0, 'amount': 50_000, 'script': '76a914' + 'aa' * 20 + '88ac',
+         'confirmations': 10},
     ]
 
 

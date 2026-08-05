@@ -251,7 +251,14 @@ def render(stdscr, rows: list, selected_set: set, cursor: int,
 
 
 def format_row(row: dict, selected_set: set, width: int) -> str:
-    """Render a single row (address header or UTXO)."""
+    """Render a single row (address header or UTXO).
+
+    UTXO rows show the selection marker, txid:out_n, amount, and the
+    current confirmation count -- the latter lets the operator see at a
+    glance which inputs are fresh vs. deeply buried. The right-alignment
+    of the count keeps the column tidy when scrolling through a mixed
+    list; `addnstr` truncates at the terminal width.
+    """
     from yubtc.misc import satoshi2btc
     addr = row['addr']
     if isinstance(addr, bytes):
@@ -260,7 +267,9 @@ def format_row(row: dict, selected_set: set, width: int) -> str:
         return f'  {row["nonce"]}# {addr}'
     checked = '[x]' if (row['nonce'], row['out_n']) in selected_set else '[ ]'
     amount = satoshi2btc(row['utxo']['amount'])
-    return f'    {checked} ({row["utxo"]["tx"]}:{row["out_n"]}) {amount:0.08f} BTC'
+    confirmations = row['utxo']['confirmations']
+    return (f'    {checked} ({row["utxo"]["tx"]}:{row["out_n"]}) '
+            f'{amount:0.08f} BTC {confirmations:>6} conf')
 
 
 def format_status(total: int, target: Optional[TSatoshi],

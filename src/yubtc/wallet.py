@@ -94,6 +94,7 @@ class TPrivKey(object):
                 result.append({
                     'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
                     'amount': x['value'], 'script': x['script'],
+                    'confirmations': x['confirmations'],
                 })
         return result
 

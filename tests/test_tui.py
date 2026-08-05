@@ -137,20 +137,20 @@ def test_format_row_address_kind():
 def test_format_row_utxo_selected():
     row = {
         'kind': 'utxo', 'nonce': 0, 'addr': '1ABC',
-        'out_n': 2, 'utxo': {'tx': 'a' * 64, 'amount': 1234},
+        'out_n': 2, 'utxo': {'tx': 'a' * 64, 'amount': 1234, 'confirmations': 10},
     }
     assert format_row(row, {(0, 2)}, 80) == (
-        f'    [x] ({"a" * 64}:2) 0.00001234 BTC'
+        f'    [x] ({"a" * 64}:2) 0.00001234 BTC     10 conf'
     )
 
 
 def test_format_row_utxo_not_selected():
     row = {
         'kind': 'utxo', 'nonce': 0, 'addr': '1ABC',
-        'out_n': 2, 'utxo': {'tx': 'a' * 64, 'amount': 1234},
+        'out_n': 2, 'utxo': {'tx': 'a' * 64, 'amount': 1234, 'confirmations': 0},
     }
     assert format_row(row, set(), 80) == (
-        f'    [ ] ({"a" * 64}:2) 0.00001234 BTC'
+        f'    [ ] ({"a" * 64}:2) 0.00001234 BTC      0 conf'
     )
 
 
