@@ -766,7 +766,7 @@ def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
 def test_send_interactive_rejects_positional_args():
     """_send_interactive is kwargs-only."""
     from yubtc.cli import _send_interactive
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         _send_interactive(None)
 
 
@@ -781,7 +781,7 @@ def test_send_interactive_raises_when_required_kwarg_missing():
     for missing in ('wallet', 'address', 'fee', 'feekb',
                     'confirmations', 'broadcast'):
         kwargs = {k: v for k, v in base.items() if k != missing}
-        with pytest.raises(Exception, match=f'{missing} not set'):
+        with pytest.raises(TypeError, match=f'{missing} not set'):
             _send_interactive(**kwargs)
 
 

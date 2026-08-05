@@ -142,8 +142,8 @@ def test_unpack_address_p2sh():
 def test_unpack_address_invalid_checksum_raises():
     from yubtc.misc import unpack_address
     # Mutate the last char (the checksum) -- base58check must reject it.
-    with pytest.raises(Exception):
-        unpack_address(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7l')
+    with pytest.raises(ValueError, match='invalid checksum'):
+        unpack_address(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX71')
 
 
 # ---------------------------------------------------------------------------

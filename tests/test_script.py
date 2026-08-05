@@ -36,9 +36,9 @@ def test_cscript_from_bytearray_passes_through():
 
 def test_cscript_default_construction_raises():
     """`CScript()` with no argument raises -- callers must pass a value."""
-    with pytest.raises(Exception, match='value not set'):
+    with pytest.raises(TypeError, match='value not set'):
         CScript()
-    with pytest.raises(Exception, match='value not set'):
+    with pytest.raises(TypeError, match='value not set'):
         CScript(None)
 
 

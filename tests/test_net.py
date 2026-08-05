@@ -63,7 +63,7 @@ def test_sendTx_raises_on_non_2xx(monkeypatch):
     fake.text = 'Internal Server Error'
     monkeypatch.setattr(requests, 'post', lambda url, **kwargs: fake)
     from yubtc.net import sendTx
-    with pytest.raises(Exception, match='broadcast failed'):
+    with pytest.raises(RuntimeError, match='broadcast failed'):
         sendTx(b'\x00')
 
 

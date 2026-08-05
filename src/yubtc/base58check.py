@@ -16,5 +16,5 @@ def base58CheckDecode(payload: str) -> bytes:
     checksum = decoded[-4:]
     payload = decoded[:-4]
     if sha256(sha256(payload))[:4] != checksum:
-        raise Exception('invalid checksum')
+        raise ValueError('invalid checksum')
     return payload

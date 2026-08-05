@@ -43,6 +43,6 @@ def sendTx(rawtxdata: bytes) -> None:
     url = 'https://blockchain.info/pushtx'
     response = requests.post(url, data={'tx': rawtxdata.hex()}, timeout=DEFAULT_TIMEOUT_HTTP)
     if not response.ok:
-        raise Exception(
+        raise RuntimeError(
             'broadcast failed: status={status} body={body}'.format(
                 status=response.status_code, body=response.text))

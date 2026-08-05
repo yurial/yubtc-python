@@ -56,7 +56,7 @@ class TPrivKey(object):
             nonce: TNonce = NotNone):
         from yubtc.crypto import seed2privkey
         if not seed:
-            raise Exception('seed cannot be empty')
+            raise ValueError('seed cannot be empty')
         self.privkey = seed2privkey(seed=seed, nonce=nonce)
         self.nonce = nonce
         self._info = None
@@ -100,7 +100,7 @@ class Wallet(object):
             nonce: TNonce = NotNone,
             new_addresses: int = NotNone):
         if not seed:
-            raise Exception('seed cannot be empty')
+            raise ValueError('seed cannot be empty')
         self._seed = seed
         self.privkeys = []
         while True:
@@ -164,7 +164,7 @@ class Wallet(object):
                 tx_lock_script = bytes.fromhex(u['script'])
                 required_hash = script2pkh(tx_lock_script)
                 if required_hash != pubhash:
-                    raise Exception('unknown pubkey required')
+                    raise ValueError('unknown pubkey required')
                 txhash = bytes.fromhex(u['tx'])
                 vin.append(CIn(
                     txhash=txhash, n=u['out_n'],
@@ -262,7 +262,7 @@ class Wallet(object):
             # address is whatever the caller picked -- normally the gap-
             # limit unused address so a fresh receive slot gets the change.
             if cashback_addr is None:
-                raise Exception('cashback_addr not set')
+                raise TypeError('cashback_addr not set')
             return sources, cashback_addr
         if scan:
             # When scanning, fetch UTXOs from every address starting at

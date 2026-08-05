@@ -67,11 +67,11 @@ def require_kwargs_only(func):
     one trigger the `only kwargs allowed` check.
 
     Raises the same messages the hand-written checks used before:
-    - `Exception('only kwargs allowed')` when the caller passes any
+    - `TypeError('only kwargs allowed')` when the caller passes any
       positional argument beyond `self`/`cls`.
-    - `Exception('<name> not set')` for a required kwarg that wasn't
+    - `TypeError('<name> not set')` for a required kwarg that wasn't
       passed.
-    - `Exception('<name> is None')` for a required kwarg that was passed
+    - `ValueError('<name> is None')` for a required kwarg that was passed
       explicitly as `None`.
     """
     sig = inspect.signature(func)
@@ -82,15 +82,15 @@ def require_kwargs_only(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         if is_method and len(args) > 1:
-            raise Exception('only kwargs allowed')
+            raise TypeError('only kwargs allowed')
         if not is_method and args:
-            raise Exception('only kwargs allowed')
+            raise TypeError('only kwargs allowed')
         for name in required:
             if name in kwargs:
                 if kwargs[name] is None:
-                    raise Exception(f'{name} is None')
+                    raise ValueError(f'{name} is None')
             else:
-                raise Exception(f'{name} not set')
+                raise TypeError(f'{name} not set')
         return func(*args, **kwargs)
 
     return wrapper

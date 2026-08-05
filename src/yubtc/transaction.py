@@ -9,7 +9,7 @@ def script2pkh(script: bytes) -> bytes:
         or script[2] != 20
         or script[-2] != OP_EQUALVERIFY
             or script[-1] != OP_CHECKSIG):
-        raise Exception('invalid script')
+        raise ValueError('invalid script')
     return script[3:-2]
 
 
@@ -35,15 +35,15 @@ class CIn(object):
     def __init__(self, txhash: bytes = NotNone, n: int = NotNone,
                  script: bytes = b'', sequence: int = NotNone):
         if len(txhash) != 32:
-            raise Exception('txhash should be 32 bytes length')
+            raise ValueError('txhash should be 32 bytes length')
         if n < 0:
-            raise Exception('n should be non-negative')
+            raise ValueError('n should be non-negative')
         if n > 0xffffffff:
-            raise Exception('n should be less or equal than 0xffffffff')
+            raise ValueError('n should be less or equal than 0xffffffff')
         if sequence < 0:
-            raise Exception('sequence should be non-negative')
+            raise ValueError('sequence should be non-negative')
         if sequence > 0xffffffff:
-            raise Exception('sequence should be less or equal than 0xffffffff')
+            raise ValueError('sequence should be less or equal than 0xffffffff')
         self.txhash = bytes(txhash)
         self.n = n
         self.script = script
@@ -73,9 +73,9 @@ class COut(object):
     @require_kwargs_only
     def __init__(self, amount: int = NotNone, script: bytes = b''):
         if amount < 0:
-            raise Exception('amount should be non-negative')
+            raise ValueError('amount should be non-negative')
         if amount > 0xffffffffffffffff:
-            raise Exception('amount should be less or equal than 0xffffffffffffffff')
+            raise ValueError('amount should be less or equal than 0xffffffffffffffff')
         self.amount = amount
         self.script = script
 
@@ -129,7 +129,7 @@ class CTransaction(object):
     @require_kwargs_only
     def sign(self, signers: list = NotNone) -> 'CTransaction':
         if len(signers) != len(self.vin):
-            raise Exception('signers length must match vin length')
+            raise ValueError('signers length must match vin length')
         from copy import deepcopy
         from yubtc.crypto import sign_data
         from yubtc.script import CScript

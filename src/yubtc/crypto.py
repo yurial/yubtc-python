@@ -72,12 +72,12 @@ def privwif2privkey(privwif: str) -> PrivateKey:
     from yubtc.base58check import base58CheckDecode
     decoded = base58CheckDecode(privwif)
     if decoded[0] != PREFIX_PRIVKEY:
-        raise Exception('prefix mismatch')
+        raise ValueError('prefix mismatch')
     body = decoded[1:]
     # Compressed WIFs are 33 bytes with the 0x01 suffix; uncompressed WIFs
     # are 32 bytes. Only compressed is supported.
     if len(body) != 33 or body[-1] != SUFFIX_PRIVKEY_COMPRESSED:
-        raise Exception('uncompressed wif not supported')
+        raise ValueError('uncompressed wif not supported')
     return PrivateKey(body[:-1])
 
 
@@ -132,7 +132,7 @@ def make_lock_script(address: TAddress) -> 'CScript':
     elif prefix == PREFIX_P2SH:
         return CScript([OP_HASH160, dsthash, OP_EQUAL])
     else:
-        raise Exception('address not supported')
+        raise ValueError('address not supported')
 
 
 class VoutResult(NamedTuple):
@@ -157,11 +157,11 @@ def make_vout(src: TAddress = NotNone, dst: TAddress = NotNone,
         # Drain (`amount is None`) lands in the branch below and would
         # compute `amount = in_amount - fee < 0`. Bail out with a message
         # that names both numbers so the operator can see the gap.
-        raise Exception('input does not cover fee')
+        raise ValueError('input does not cover fee')
     if amount is not None and amount + fee > in_amount:
         # Non-drain branch: this is the check that keeps cashback from
         # going negative. The drain branch is gated by the check above.
-        raise Exception('amount + fee exceeds input')
+        raise ValueError('amount + fee exceeds input')
     vout_script = make_lock_script(dst)
     if amount is None or (amount + fee == in_amount):
         amount = in_amount - fee

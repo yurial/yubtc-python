@@ -132,7 +132,7 @@ def test_decode_rejects_tampered_checksum():
     # Flip the last char to a different valid base58 character.
     tampered = encoded[:-1] + (b'L' if encoded[-1:] != b'L' else b'K')
     assert tampered != encoded
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='invalid checksum'):
         base58CheckDecode(tampered)
 
 

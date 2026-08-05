@@ -170,7 +170,7 @@ class CScript(bytes):
     """
     def __new__(cls, value: object = None) -> 'CScript':
         if value is None:
-            raise Exception('value not set')
+            raise TypeError('value not set')
         if isinstance(value, (bytes, bytearray)):
             return super().__new__(cls, bytes(value))
         parts = []

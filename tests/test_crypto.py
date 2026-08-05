@@ -56,14 +56,14 @@ def test_seed2bin_nonce_changes_output():
 def test_seed2bin_raises_when_nonce_missing():
     """nonce is required -- callers must pass it explicitly."""
     from yubtc.crypto import seed2bin
-    with pytest.raises(Exception, match='nonce not set'):
+    with pytest.raises(TypeError, match='nonce not set'):
         seed2bin(seed='qwe')
 
 
 def test_seed2privkey_raises_when_nonce_missing():
     """seed2privkey's nonce is also required."""
     from yubtc.crypto import seed2privkey
-    with pytest.raises(Exception, match='nonce not set'):
+    with pytest.raises(TypeError, match='nonce not set'):
         seed2privkey(seed='qwe')
 
 
@@ -152,7 +152,7 @@ def test_privwif2privkey_rejects_uncompressed_wif():
     uncompressed_wif = base58CheckEncode(
         bytes([PREFIX_PRIVKEY]) + b'\x11' * 32,
     )
-    with pytest.raises(Exception, match='uncompressed wif not supported'):
+    with pytest.raises(ValueError, match='uncompressed wif not supported'):
         privwif2privkey(uncompressed_wif)
 
 
@@ -160,7 +160,7 @@ def test_privwif2privkey_rejects_bad_prefix():
     from yubtc.crypto import privwif2privkey, PREFIX_P2PKH
     from yubtc.base58check import base58CheckEncode
     not_a_privkey = base58CheckEncode(bytes([PREFIX_P2PKH]) + b'\x00' * 20)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='prefix mismatch'):
         privwif2privkey(not_a_privkey)
 
 
@@ -267,7 +267,7 @@ def test_make_lock_script_unknown_prefix_raises():
     from yubtc.base58check import base58CheckEncode
     from yubtc.crypto import PREFIX_TESTNET_P2PKH
     unknown = base58CheckEncode(bytes([PREFIX_TESTNET_P2PKH]) + b'\x00' * 20)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='address not supported'):
         make_lock_script(unknown)
 
 
@@ -326,7 +326,7 @@ def test_make_vout_drain_raises_when_input_does_not_cover_fee():
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
-    with pytest.raises(Exception, match='input does not cover fee'):
+    with pytest.raises(ValueError, match='input does not cover fee'):
         make_vout(src=src, dst=dst, in_amount=500, amount=None, fee=1_000)
 
 
@@ -346,7 +346,7 @@ def test_make_vout_raises_when_amount_plus_fee_exceeds_input():
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
-    with pytest.raises(Exception, match=r'amount \+ fee exceeds input'):
+    with pytest.raises(ValueError, match=r'amount \+ fee exceeds input'):
         make_vout(src=src, dst=dst, in_amount=10_000, amount=50_000, fee=1_000)
 
 
@@ -363,61 +363,61 @@ def test_make_vout_exact_no_change_does_not_trip_drain_check():
 def test_seed2bin_raises_when_seed_missing():
     """seed is required -- callers must pass it explicitly."""
     from yubtc.crypto import seed2bin
-    with pytest.raises(Exception, match='seed not set'):
+    with pytest.raises(TypeError, match='seed not set'):
         seed2bin(nonce=0)
 
 
 def test_seed2privkey_raises_when_seed_missing():
     """seed2privkey's seed is also required."""
     from yubtc.crypto import seed2privkey
-    with pytest.raises(Exception, match='seed not set'):
+    with pytest.raises(TypeError, match='seed not set'):
         seed2privkey(nonce=0)
 
 
 def test_privwif_raises_when_privkey_missing():
     """privkey2privwif's `privkey` is required -- callers must pass it."""
     from yubtc.crypto import privkey2privwif
-    with pytest.raises(Exception, match='privkey not set'):
+    with pytest.raises(TypeError, match='privkey not set'):
         privkey2privwif()
 
 
 def test_privkey2addr_raises_when_privkey_missing():
     """privkey2addr's `privkey` is required -- callers must pass it."""
     from yubtc.crypto import privkey2addr
-    with pytest.raises(Exception, match='privkey not set'):
+    with pytest.raises(TypeError, match='privkey not set'):
         privkey2addr()
 
 
 def test_pubkey2addr_raises_when_pubkey_missing():
     """pubkey2addr's `pubkey` is required -- callers must pass it."""
     from yubtc.crypto import pubkey2addr
-    with pytest.raises(Exception, match='pubkey not set'):
+    with pytest.raises(TypeError, match='pubkey not set'):
         pubkey2addr()
 
 
 def test_sign_hash_raises_when_privkey_missing():
     from yubtc.crypto import sign_hash
-    with pytest.raises(Exception, match='privkey not set'):
+    with pytest.raises(TypeError, match='privkey not set'):
         sign_hash(datahash=b'\x42' * 32)
 
 
 def test_sign_hash_raises_when_datahash_missing():
     from yubtc.crypto import seed2privkey, sign_hash
     privkey = seed2privkey(seed='qwe', nonce=0)
-    with pytest.raises(Exception, match='datahash not set'):
+    with pytest.raises(TypeError, match='datahash not set'):
         sign_hash(privkey=privkey)
 
 
 def test_sign_data_raises_when_privkey_missing():
     from yubtc.crypto import sign_data
-    with pytest.raises(Exception, match='privkey not set'):
+    with pytest.raises(TypeError, match='privkey not set'):
         sign_data(data=b'abc')
 
 
 def test_sign_data_raises_when_data_missing():
     from yubtc.crypto import seed2privkey, sign_data
     privkey = seed2privkey(seed='qwe', nonce=0)
-    with pytest.raises(Exception, match='data not set'):
+    with pytest.raises(TypeError, match='data not set'):
         sign_data(privkey=privkey)
 
 
@@ -426,13 +426,13 @@ def test_make_vout_raises_when_required_kwarg_missing():
     # Each required kwarg is omitted in turn; an explicit `None` is a
     # valid value (drain sentinel) and must NOT trigger this guard.
     base = dict(src=b'\x00' * 20, dst=b'\x00' * 20, in_amount=100_000, fee=1_000)
-    with pytest.raises(Exception, match='src not set'):
+    with pytest.raises(TypeError, match='src not set'):
         make_vout(**{k: v for k, v in base.items() if k != 'src'})
-    with pytest.raises(Exception, match='dst not set'):
+    with pytest.raises(TypeError, match='dst not set'):
         make_vout(**{k: v for k, v in base.items() if k != 'dst'})
-    with pytest.raises(Exception, match='in_amount not set'):
+    with pytest.raises(TypeError, match='in_amount not set'):
         make_vout(**{k: v for k, v in base.items() if k != 'in_amount'})
-    with pytest.raises(Exception, match='fee not set'):
+    with pytest.raises(TypeError, match='fee not set'):
         make_vout(**{k: v for k, v in base.items() if k != 'fee'})
 
 
@@ -456,28 +456,28 @@ def test_multi_arg_functions_reject_positional_args():
     from yubtc.crypto import seed2privkey as sk
     seed2privkey(seed='qwe', nonce=0)  # sanity: kwargs path still works
     # seed2bin
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         seed2bin('qwe', 0)
     # seed2privkey
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         sk('qwe', 0)
     # privkey2privwif
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         privkey2privwif(b'\x11' * 32, True)
     # sign_hash
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         sign_hash(b'\x11' * 32, b'\x00' * 32)
     # sign_data
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         sign_data(b'\x11' * 32, b'data')
     # pubkey2addr
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         pubkey2addr(b'\x00' * 64, True)
     # privkey2addr
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         privkey2addr(b'\x11' * 32, True)
     # make_vout
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         make_vout(b'\x00' * 20, b'\x00' * 20, 100_000, 50_000, 1_000)
 
 

@@ -8,7 +8,7 @@ def test_require_kwargs_only_rejects_positional_args():
     def f(foo=NotNone):
         return foo
 
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         f('positional')
 
 
@@ -17,9 +17,9 @@ def test_require_kwargs_only_rejects_missing_required_kwarg():
     def f(foo=NotNone, bar=NotNone):
         return (foo, bar)
 
-    with pytest.raises(Exception, match='foo not set'):
+    with pytest.raises(TypeError, match='foo not set'):
         f(bar=1)
-    with pytest.raises(Exception, match='bar not set'):
+    with pytest.raises(TypeError, match='bar not set'):
         f(foo=1)
 
 
@@ -35,7 +35,7 @@ def test_require_kwargs_only_rejects_explicit_none_for_required_kwarg():
     def f(foo=NotNone):
         return foo
 
-    with pytest.raises(Exception, match='foo is None'):
+    with pytest.raises(ValueError, match='foo is None'):
         f(foo=None)
 
 
@@ -92,7 +92,7 @@ def test_require_kwargs_only_only_checks_notnone_default_params():
     assert f(foo=1) == (1, None, 'default')
     assert f(foo=1, none_opt=0, opt='x') == (1, 0, 'x')
     assert f(foo=1, none_opt=None) == (1, None, 'default')
-    with pytest.raises(Exception, match='foo not set'):
+    with pytest.raises(TypeError, match='foo not set'):
         f()
 
 
@@ -117,7 +117,7 @@ def test_require_kwargs_only_method_rejects_extra_positional():
             return foo
 
     t = Thing()
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         t.m(1)
 
 
@@ -134,9 +134,9 @@ def test_require_kwargs_only_method_required_kwargs_checked():
 
     t = Thing(foo=1)
     assert t.run(x=2) == 2
-    with pytest.raises(Exception, match='x not set'):
+    with pytest.raises(TypeError, match='x not set'):
         t.run()
-    with pytest.raises(Exception, match='x is None'):
+    with pytest.raises(ValueError, match='x is None'):
         t.run(x=None)
 
 

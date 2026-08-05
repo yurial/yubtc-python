@@ -23,7 +23,7 @@ from yubtc.wallet import TxResult
 def test_TPrivKey_rejects_positional_args():
     """`TPrivKey(arg)` is invalid -- only kwargs are accepted."""
     from yubtc.wallet import TPrivKey
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         TPrivKey('positional')
 
 
@@ -39,21 +39,21 @@ def test_TPrivKey_derives_privkey_from_seed_and_nonce():
 def test_TPrivKey_requires_seed():
     """No privkey and no seed -> exception."""
     from yubtc.wallet import TPrivKey
-    with pytest.raises(Exception, match='seed not set'):
+    with pytest.raises(TypeError, match='seed not set'):
         TPrivKey(nonce=0)
 
 
 def test_TPrivKey_rejects_empty_seed():
     """An empty seed string is rejected -- it's distinct from "not set"."""
     from yubtc.wallet import TPrivKey
-    with pytest.raises(Exception, match='seed cannot be empty'):
+    with pytest.raises(ValueError, match='seed cannot be empty'):
         TPrivKey(seed='', nonce=0)
 
 
 def test_TPrivKey_requires_nonce():
     """seed but no nonce -> exception."""
     from yubtc.wallet import TPrivKey
-    with pytest.raises(Exception, match='nonce not set'):
+    with pytest.raises(TypeError, match='nonce not set'):
         TPrivKey(seed='qwe')
 
 
@@ -188,7 +188,7 @@ def test_TPrivKey_get_unspent_raises_when_confirmations_missing():
     """get_unspent's `confirmations` is required -- callers must pass it."""
     import yubtc.wallet
     p = yubtc.wallet.TPrivKey(seed='qwe', nonce=0)
-    with pytest.raises(Exception, match='confirmations not set'):
+    with pytest.raises(TypeError, match='confirmations not set'):
         p.get_unspent()
 
 
@@ -198,7 +198,7 @@ def test_TPrivKey_get_unspent_raises_when_confirmations_missing():
 
 def test_Wallet_rejects_positional_args():
     from yubtc.wallet import Wallet
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         Wallet('positional')
 
 
@@ -209,7 +209,7 @@ def test_Wallet_send_rejects_positional_args(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         w.send('positional')
 
 
@@ -386,24 +386,24 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
                 amount=None, fee=Decimal('0.00001'), feekb=2_000,
                 confirmations=0, broadcast=False, scan=False)
-    with pytest.raises(Exception, match='dst not set'):
+    with pytest.raises(TypeError, match='dst not set'):
         w.send(**{k: v for k, v in base.items() if k != 'dst'})
-    with pytest.raises(Exception, match='fee not set'):
+    with pytest.raises(TypeError, match='fee not set'):
         w.send(**{k: v for k, v in base.items() if k != 'fee'})
-    with pytest.raises(Exception, match='feekb not set'):
+    with pytest.raises(TypeError, match='feekb not set'):
         w.send(**{k: v for k, v in base.items() if k != 'feekb'})
-    with pytest.raises(Exception, match='confirmations not set'):
+    with pytest.raises(TypeError, match='confirmations not set'):
         w.send(**{k: v for k, v in base.items() if k != 'confirmations'})
-    with pytest.raises(Exception, match='broadcast not set'):
+    with pytest.raises(TypeError, match='broadcast not set'):
         w.send(**{k: v for k, v in base.items() if k != 'broadcast'})
-    with pytest.raises(Exception, match='scan not set'):
+    with pytest.raises(TypeError, match='scan not set'):
         w.send(**{k: v for k, v in base.items() if k != 'scan'})
 
 
 def test_Wallet_init_raises_when_seed_missing(monkeypatch):
     """Wallet.__init__ requires `seed`; None raises."""
     from yubtc.wallet import Wallet
-    with pytest.raises(Exception, match='seed not set'):
+    with pytest.raises(TypeError, match='seed not set'):
         Wallet(new_addresses=1)
 
 
@@ -413,7 +413,7 @@ def test_Wallet_init_raises_when_new_addresses_missing(monkeypatch):
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
-    with pytest.raises(Exception, match='new_addresses not set'):
+    with pytest.raises(TypeError, match='new_addresses not set'):
         Wallet(seed='qwe', nonce=0)
 
 
@@ -423,7 +423,7 @@ def test_Wallet_rejects_empty_seed(monkeypatch):
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
-    with pytest.raises(Exception, match='seed cannot be empty'):
+    with pytest.raises(ValueError, match='seed cannot be empty'):
         Wallet(seed='', nonce=0, new_addresses=1)
 
 
@@ -462,7 +462,7 @@ def test_Wallet_make_vin_rejects_utxo_with_mismatched_pubkey(monkeypatch):
     bad_script = '76a914' + '11' * 20 + '88ac'
     bad_utxo = [{'tx': 'a' * 64, 'out_n': 0, 'amount': 1_000, 'script': bad_script}]
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='unknown pubkey required'):
+    with pytest.raises(ValueError, match='unknown pubkey required'):
         w._make_vin(sources=[(tp, bad_utxo)])
 
 
@@ -576,9 +576,9 @@ def test_Wallet_make_transaction_raises_when_confirmations_or_feekb_missing(monk
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
                 fee=1_000, feekb=2_000, confirmations=0, scan=False)
-    with pytest.raises(Exception, match='confirmations not set'):
+    with pytest.raises(TypeError, match='confirmations not set'):
         w.make_transaction(**{k: v for k, v in base.items() if k != 'confirmations'})
-    with pytest.raises(Exception, match='feekb not set'):
+    with pytest.raises(TypeError, match='feekb not set'):
         w.make_transaction(**{k: v for k, v in base.items() if k != 'feekb'})
 
 
@@ -590,7 +590,7 @@ def test_Wallet_make_transaction_raises_when_dst_missing(monkeypatch):
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
                 fee=1_000, feekb=2_000, confirmations=0, scan=False)
-    with pytest.raises(Exception, match='dst not set'):
+    with pytest.raises(TypeError, match='dst not set'):
         w.make_transaction(**{k: v for k, v in base.items() if k != 'dst'})
 
 
@@ -600,7 +600,7 @@ def test_Wallet_make_vin_raises_when_sources_missing(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='sources not set'):
+    with pytest.raises(TypeError, match='sources not set'):
         w._make_vin()
 
 
@@ -612,13 +612,13 @@ def test_Wallet_methods_reject_positional_args(monkeypatch):
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     # send: positional dst is no longer allowed -- 'only kwargs allowed'.
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         w.send('1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
     # make_transaction: same.
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         w.make_transaction('1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 50_000)
     # _make_vin: same.
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         w._make_vin([])
 
 
@@ -664,7 +664,7 @@ def test_Wallet_make_transaction_with_sources_requires_cashback_addr(monkeypatch
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='cashback_addr not set'):
+    with pytest.raises(TypeError, match='cashback_addr not set'):
         w.make_transaction(
             dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000,
             fee=1_000, feekb=2_000, confirmations=0, scan=False,
@@ -1022,7 +1022,7 @@ def test_Wallet_make_transaction_raises_when_scan_missing(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='scan not set'):
+    with pytest.raises(TypeError, match='scan not set'):
         w.make_transaction(
             dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
             feekb=2_000, confirmations=0,
@@ -1074,7 +1074,7 @@ def test_Wallet_scan_inputs_raises_when_confirmations_missing(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='confirmations not set'):
+    with pytest.raises(TypeError, match='confirmations not set'):
         w._scan_inputs()
 
 
@@ -1084,5 +1084,5 @@ def test_Wallet_scan_inputs_rejects_positional_args(monkeypatch):
                         lambda address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent', lambda address, **kwargs: [])
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         w._scan_inputs(0)

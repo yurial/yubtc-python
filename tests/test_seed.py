@@ -119,24 +119,24 @@ def test_generate_seed_produces_a_usable_seed():
 def test_generate_seed_raises_when_count_missing():
     """generate_seed's count and allow_dups are required -- no silent defaults."""
     from yubtc.seed import generate_seed
-    with pytest.raises(Exception, match='count not set'):
+    with pytest.raises(TypeError, match='count not set'):
         generate_seed()
-    with pytest.raises(Exception, match='count is None'):
+    with pytest.raises(ValueError, match='count is None'):
         generate_seed(count=None, allow_dups=True)
-    with pytest.raises(Exception, match='allow_dups not set'):
+    with pytest.raises(TypeError, match='allow_dups not set'):
         generate_seed(count=12)
 
 
 def test__generate_seed_raises_when_count_or_allow_dups_missing():
     """The internal _generate_seed also enforces its required args."""
     from yubtc.seed import _generate_seed
-    with pytest.raises(Exception, match='count not set'):
+    with pytest.raises(TypeError, match='count not set'):
         _generate_seed()
-    with pytest.raises(Exception, match='count is None'):
+    with pytest.raises(ValueError, match='count is None'):
         _generate_seed(count=None, allow_dups=True)
-    with pytest.raises(Exception, match='allow_dups not set'):
+    with pytest.raises(TypeError, match='allow_dups not set'):
         _generate_seed(count=5)
-    with pytest.raises(Exception, match='allow_dups is None'):
+    with pytest.raises(ValueError, match='allow_dups is None'):
         _generate_seed(count=5, allow_dups=None)
 
 
@@ -144,10 +144,10 @@ def test_seed_functions_reject_positional_args():
     """Both _generate_seed and generate_seed require kwargs-only call style."""
     from yubtc.seed import _generate_seed, generate_seed
     # _generate_seed: count + allow_dups both positional -> blocked.
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         _generate_seed(5, True)
     # generate_seed: same.
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         generate_seed(5, True)
 
 

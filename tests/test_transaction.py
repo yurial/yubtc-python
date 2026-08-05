@@ -31,7 +31,7 @@ def test_script2pkh_extracts_hash():
 def test_script2pkh_rejects_wrong_length():
     from yubtc.transaction import script2pkh
     # 24 bytes, not 25
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='invalid script'):
         script2pkh(b'\x00' * 24)
 
 
@@ -46,7 +46,7 @@ def test_script2pkh_rejects_wrong_opcodes():
         _p2pkh_script(hash20)[:-2] + bytes([0x00]) + _p2pkh_script(hash20)[-1:],  # OP_EQUALVERIFY -> 0x00
         _p2pkh_script(hash20)[:-1] + bytes([0x00]),                  # OP_CHECKSIG -> 0x00
     ):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match='invalid script'):
             script2pkh(bad)
 
 
@@ -83,9 +83,9 @@ def test_toVarInt_rejects_negative():
     top of `toVarInt` converts that into a clean error.
     """
     from yubtc.transaction import toVarInt
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         toVarInt(-1)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         toVarInt(-100)
 
 
@@ -107,9 +107,9 @@ def test_cin_valid_construction():
 
 def test_cin_txhash_must_be_32_bytes():
     from yubtc.transaction import CIn
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='txhash should be 32 bytes length'):
         CIn(txhash=b'\x00' * 31, n=0, script=b'', sequence=0xffffffff)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='txhash should be 32 bytes length'):
         CIn(txhash=b'\x00' * 33, n=0, script=b'', sequence=0xffffffff)
 
 
@@ -119,9 +119,9 @@ def test_cin_n_bounds():
     CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)
     # n at the upper bound
     CIn(txhash=TXHASH, n=0xffffffff, script=b'', sequence=0xffffffff)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='n should be non-negative'):
         CIn(txhash=TXHASH, n=-1, script=b'', sequence=0xffffffff)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='n should be less or equal than 0xffffffff'):
         CIn(txhash=TXHASH, n=0x100000000, script=b'', sequence=0xffffffff)
 
 
@@ -130,41 +130,41 @@ def test_cin_sequence_bounds():
     # sequence=0 is allowed (BIP-125 replaceable).
     CIn(txhash=TXHASH, n=0, script=b'', sequence=0)
     CIn(txhash=TXHASH, n=0, script=b'', sequence=0xffffffff)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='sequence should be non-negative'):
         CIn(txhash=TXHASH, n=0, script=b'', sequence=-1)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='sequence should be less or equal than 0xffffffff'):
         CIn(txhash=TXHASH, n=0, script=b'', sequence=0x100000000)
 
 
 def test_cin_raises_when_sequence_missing():
     """CIn's `sequence` is required -- callers must pass it explicitly."""
     from yubtc.transaction import CIn
-    with pytest.raises(Exception, match='sequence not set'):
+    with pytest.raises(TypeError, match='sequence not set'):
         CIn(txhash=TXHASH, n=0, script=b'')
 
 
 def test_cin_raises_when_txhash_or_n_missing():
     """txhash and n are also required -- callers must pass them explicitly."""
     from yubtc.transaction import CIn
-    with pytest.raises(Exception, match='txhash not set'):
+    with pytest.raises(TypeError, match='txhash not set'):
         CIn(n=0, script=b'', sequence=0xffffffff)
-    with pytest.raises(Exception, match='n not set'):
+    with pytest.raises(TypeError, match='n not set'):
         CIn(txhash=TXHASH, script=b'', sequence=0xffffffff)
 
 
 def test_cout_raises_when_amount_missing():
     """COut's `amount` is required -- callers must pass it explicitly."""
     from yubtc.transaction import COut
-    with pytest.raises(Exception, match='amount not set'):
+    with pytest.raises(TypeError, match='amount not set'):
         COut(script=b'')
 
 
 def test_ctransaction_raises_when_vin_or_vout_missing():
     """CTransaction requires both `vin` and `vout`."""
     from yubtc.transaction import COut, CTransaction
-    with pytest.raises(Exception, match='vin not set'):
+    with pytest.raises(TypeError, match='vin not set'):
         CTransaction(vout=[COut(amount=0, script=b'')], locktime=0)
-    with pytest.raises(Exception, match='vout not set'):
+    with pytest.raises(TypeError, match='vout not set'):
         CTransaction(vin=[], locktime=0)
 
 
@@ -172,7 +172,7 @@ def test_sign_raises_when_signers_missing():
     """sign requires `signers`."""
     from yubtc.transaction import CTransaction, COut
     tx = CTransaction(vin=[], vout=[COut(amount=0, script=b'\xac')], locktime=0)
-    with pytest.raises(Exception, match='signers not set'):
+    with pytest.raises(TypeError, match='signers not set'):
         tx.sign()
 
 
@@ -180,17 +180,17 @@ def test_multi_arg_transaction_methods_reject_positional_args():
     """CIn / COut / CTransaction / sign all require kwargs-only calls."""
     from yubtc.transaction import CIn, COut, CTransaction
     # CIn
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         CIn(TXHASH, 0, b'', sequence=0xffffffff)
     # COut
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         COut(1000, b'\xac')
     # CTransaction
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         CTransaction([], [], locktime=0)
     # sign: build a tx first, then attempt positional sign.
     tx = CTransaction(vin=[], vout=[COut(amount=0, script=b'\xac')], locktime=0)
-    with pytest.raises(Exception, match='only kwargs allowed'):
+    with pytest.raises(TypeError, match='only kwargs allowed'):
         tx.sign([(None, None)])
 
 
@@ -236,9 +236,9 @@ def test_cout_valid_construction():
 def test_cout_amount_bounds():
     from yubtc.transaction import COut
     COut(amount=0xffffffffffffffff, script=b'')
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='amount should be non-negative'):
         COut(amount=-1, script=b'')
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='amount should be less or equal than 0xffffffffffffffff'):
         COut(amount=0x10000000000000000, script=b'')
 
 
@@ -283,7 +283,7 @@ def test_ctransaction_default_locktime_is_0():
 def test_ctransaction_raises_when_locktime_missing():
     """CTransaction's `locktime` is required -- callers must pass it explicitly."""
     from yubtc.transaction import CTransaction
-    with pytest.raises(Exception, match='locktime not set'):
+    with pytest.raises(TypeError, match='locktime not set'):
         CTransaction(vin=[], vout=[])
 
 
@@ -421,5 +421,5 @@ def test_CTransaction_sign_signers_must_match_vin_length():
             CIn(txhash=TXHASH, n=1, script=b'', sequence=0xffffffff),
         ],
         vout=[COut(amount=1000, script=b'\x76\xa9')], locktime=0)
-    with pytest.raises(Exception, match='signers length must match vin length'):
+    with pytest.raises(ValueError, match='signers length must match vin length'):
         tx.sign(signers=[(privkey, pubwif)])
