@@ -92,7 +92,8 @@ def privwif2privkey(privwif: str) -> tuple:
     else:
         privkey = privkey[1:]
     if len(privkey) == 33 and privkey[-1] == SUFFIX_PRIVKEY_COMPRESSED:
-        return (PrivateKey(privkey[:-1]), True)  # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
+        # https://github.com/bitcoinbook/bitcoinbook/blob/develop/ch04.asciidoc#comp_priv
+        return (PrivateKey(privkey[:-1]), True)
     return (PrivateKey(privkey), False)
 
 

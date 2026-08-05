@@ -35,7 +35,6 @@ def test_TPrivKey_passes_through_known_privkey():
 
 def test_TPrivKey_derives_privkey_from_seed_and_nonce():
     """`seed=...` + `nonce=...` -> privkey via seed2privkey."""
-    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
@@ -85,7 +84,6 @@ def test_TPrivKey_raises_when_compressed_missing():
 
 def test_TPrivKey_get_privwif_returns_compressed_wif_by_default():
     """Default is compressed (Bitcoin convention)."""
-    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2privwif
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
@@ -96,7 +94,6 @@ def test_TPrivKey_get_privwif_returns_compressed_wif_by_default():
 
 def test_TPrivKey_get_privwif_uncompressed():
     """compressed=False expands to the uncompressed WIF."""
-    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2privwif
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
@@ -107,7 +104,6 @@ def test_TPrivKey_get_privwif_uncompressed():
 
 def test_TPrivKey_get_p2pkh_address():
     """Address derivation reuses privkey2addr."""
-    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2addr
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
@@ -118,7 +114,6 @@ def test_TPrivKey_get_p2pkh_address():
 
 def test_TPrivKey_get_p2pkh_address_with_explicit_compressed(monkeypatch):
     """Explicit `compressed=False` flows through without hitting the default."""
-    from coincurve import PrivateKey
     from yubtc.wallet import TPrivKey
     from yubtc.crypto import seed2privkey, privkey2addr
     p = TPrivKey(seed='qwe', nonce=0, compressed=True)
@@ -266,7 +261,6 @@ def test_Wallet_rejects_positional_args():
 def test_Wallet_from_privkey_creates_single_privkey(monkeypatch):
     """privkey=... -> a Wallet with one TPrivKey (no seed-scan)."""
     from yubtc.wallet import Wallet
-    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey
     monkeypatch.setattr('yubtc.misc.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -525,9 +519,7 @@ def test_Wallet_rejects_empty_seed(monkeypatch):
 
 def test_Wallet_make_vin_builds_cin_for_each_utxo(monkeypatch):
     """Each unspent UTXO becomes a CIn with the right txhash, n, and script."""
-    from coincurve import PrivateKey
     from yubtc.wallet import Wallet
-    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
     from yubtc.hash import hash160
     monkeypatch.setattr('yubtc.misc.get_address_info',
@@ -621,7 +613,6 @@ def test_Wallet_make_transaction_adds_change_output(monkeypatch):
 def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
     """The signed tx's input scripts use the wallet's owner privkey."""
     from yubtc.wallet import Wallet
-    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, pubkey2pubwif, privkey2pubkey
     monkeypatch.setattr('yubtc.misc.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -751,7 +742,6 @@ def dry_run_send(w, input_fixture, dst, amount, send=False):
 
 def fake_unspent_with_one_utxo(amount=100_000):
     """A one-UTXO unspent list whose lock script matches the qwe seed."""
-    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     from yubtc.hash import hash160
     pubwif = pubkey2pubwif(
@@ -769,7 +759,6 @@ def fake_unspent_with_one_utxo(amount=100_000):
 
 def fake_unspent_with_two_utxos():
     """Two UTXOs for the same address."""
-    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     from yubtc.hash import hash160
     pubwif = pubkey2pubwif(

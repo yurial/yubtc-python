@@ -89,7 +89,6 @@ def test_newseed_unique_flag(offline):
 
 def test_newseed_address_matches_seed(offline):
     """newseed must print the address that its own seed derives to at nonce 0."""
-    from coincurve import PrivateKey
     from yubtc.crypto import seed2privkey, privkey2addr
     output = run(['newseed', '-n', '5'])
     seed, shown = output.strip().split('\n')
@@ -204,7 +203,6 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
     sent = MagicMock()
     monkeypatch.setattr(net, 'sendTx', sent)
     # Replace make_transaction with a stub that returns a known tx.
-    from coincurve import PrivateKey
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey(seed='qwe', nonce=0)
@@ -233,7 +231,6 @@ def test_send_amount_all_means_none(monkeypatch):
 
     def fake_make_transaction(self, **kwargs):
         captured['amount'] = kwargs['amount']
-        from coincurve import PrivateKey
         from yubtc.transaction import CIn, COut, CTransaction
         from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
         privkey = seed2privkey(seed='qwe', nonce=0)
@@ -252,7 +249,6 @@ def test_send_amount_all_means_none(monkeypatch):
 def test_send_declined_by_user_prints_nothing(monkeypatch):
     """If the user answers 'n' to the confirmation prompt, no tx is printed."""
     import yubtc.wallet as wallet_mod
-    from coincurve import PrivateKey
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey(seed='qwe', nonce=0)
@@ -277,7 +273,6 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
     """--send routes the tx through net.sendTx (the stub)."""
     import yubtc.net as net
     import yubtc.wallet as wallet_mod
-    from coincurve import PrivateKey
     from yubtc.transaction import CIn, COut, CTransaction
     from yubtc.crypto import seed2privkey, privkey2pubkey, pubkey2pubwif
     privkey = seed2privkey(seed='qwe', nonce=0)
