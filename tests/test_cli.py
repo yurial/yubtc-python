@@ -930,6 +930,108 @@ def test_send_invalid_amount_shows_friendly_error():
     assert result.exit_code != 0
     # Click wraps the ValueError raised by TBTC() in BadParameter.
     assert 'not a valid BTC amount' in result.output or 'Invalid value' in result.output
+
+
+# ---------------------------------------------------------------------------
+# --provider: every network-using command accepts a registered provider
+# name. Click's `type=click.Choice` rejects unknown names with a
+# BadParameter before the body runs.
+# ---------------------------------------------------------------------------
+
+
+def test_address_accepts_each_provider(offline, monkeypatch):
+    """`address --provider NAME` switches the backend before any network call."""
+    import yubtc.cli as cli_mod
+    from yubtc.net import (
+        BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend,
+    )
+    seen = {}
+
+    def fake_set_current(backend):
+        seen['type'] = type(backend).__name__
+
+    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    for name, expected in (
+        ('blockchain.info', BlockchainInfoBackend),
+        ('blockstream', BlockstreamBackend),
+        ('mempool.space', MempoolSpaceBackend),
+    ):
+        seen.clear()
+        result = _invoke(['address', '--provider', name],
+                         stdin='\n' + SEED + '\n\n' + '')
+        assert result.exit_code == 0, result.output
+        assert seen['type'] == expected.__name__
+
+
+def test_address_default_provider_is_blockchain_info(offline, monkeypatch):
+    """Without --provider, the default is `blockchain.info`."""
+    import yubtc.cli as cli_mod
+    from yubtc.net import BlockchainInfoBackend
+    seen = {}
+
+    def fake_set_current(backend):
+        seen['type'] = type(backend).__name__
+
+    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    _invoke(['address'], stdin='\n' + SEED + '\n\n' + '')
+    assert seen['type'] == BlockchainInfoBackend.__name__
+
+
+def test_address_unknown_provider_rejected_by_click(offline):
+    """An unknown --provider name fails the click Choice validation."""
+    result = _invoke(['address', '--provider', 'not-a-real-provider'],
+                     stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code != 0
+    assert 'not-a-real-provider' in result.output
+
+
+def test_balance_accepts_provider(offline, monkeypatch):
+    """`balance --provider blockstream` switches the backend."""
+    import yubtc.cli as cli_mod
+    from yubtc.net import BlockstreamBackend
+    seen = {}
+
+    def fake_set_current(backend):
+        seen['type'] = type(backend).__name__
+
+    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    _invoke(['balance', '--provider', 'blockstream'],
+            stdin='\n' + SEED + '\n\n' + '')
+    assert seen['type'] == BlockstreamBackend.__name__
+
+
+def test_pushtx_accepts_provider(offline, monkeypatch):
+    """`pushtx --provider mempool.space` switches the backend before broadcast."""
+    import yubtc.cli as cli_mod
+    from yubtc.net import MempoolSpaceBackend
+    seen = {}
+
+    def fake_set_current(backend):
+        seen['type'] = type(backend).__name__
+
+    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    _invoke(['pushtx', '--provider', 'mempool.space', '--yes'], stdin='aabb')
+    assert seen['type'] == MempoolSpaceBackend.__name__
+
+
+def test_send_accepts_provider(offline, monkeypatch):
+    """`send --provider blockstream` switches the backend before any scan."""
+    import yubtc.cli as cli_mod
+    from yubtc.net import BlockstreamBackend
+    seen = {}
+
+    def fake_set_current(backend):
+        seen['type'] = type(backend).__name__
+
+    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    # The make_transaction stub avoids needing real UTXOs.
+    _stub_make_transaction(monkeypatch, amount=50_000)
+    _invoke(
+        ['send', '--provider', 'blockstream',
+         '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+        stdin='\n' + SEED + '\n\n' + '',
+    )
+    assert seen['type'] == BlockstreamBackend.__name__
 # This block was removed from cli.py -- yubtc/__main__.py already invokes
 # `cli`, so the guard was redundant. See test_main.py for the real entry-point
 # test.

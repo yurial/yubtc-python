@@ -15,9 +15,35 @@ from yubtc.fwd import (
     TSatoshi,
     TBTC,
 )
+from yubtc.net import BACKENDS, get_backend, set_current_backend
 from yubtc.wallet import Wallet
 from yubtc.seed import generate_seed, get_seed_and_passphrase
 from yubtc.util import NotNone, require_kwargs_only
+
+
+def _provider_names() -> str:
+    """Return the comma-separated list of registered provider names."""
+    return ', '.join(sorted(BACKENDS))
+
+
+def _switch_to_provider(name: str) -> None:
+    """Resolve `name` to a backend and set it as the current one.
+
+    Catches `ValueError` from `get_backend` (unknown name) and
+    re-raises with the click-friendly message pre-formatted. The CLI
+    flag's `type=click.Choice` does its own validation against the
+    sorted list, so in practice this only fires when the wallet is
+    driven programmatically.
+    """
+    set_current_backend(get_backend(name=name))
+
+
+_PROVIDER_OPTION = click.option(
+    '--provider',
+    help='Network provider (default: blockchain.info). Known: ' + _provider_names() + '.',
+    default='blockchain.info', required=False, nargs=1,
+    type=click.Choice(sorted(BACKENDS), case_sensitive=False),
+)
 
 
 @click.group()
@@ -48,7 +74,9 @@ def newseed(n: int, unique: bool) -> None:
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('--new', help='Count of new unused addresses',
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
-def address(nonce: TNonce, new: int) -> None:
+@_PROVIDER_OPTION
+def address(nonce: TNonce, new: int, provider: str) -> None:
+    _switch_to_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
                     passphrase=passphrase)
@@ -58,7 +86,9 @@ def address(nonce: TNonce, new: int) -> None:
 @cli.command('dumpprivkey', help='Show private key in WIF format and exit.')
 @click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
-def dumpprivkey(nonce: TNonce) -> None:
+@_PROVIDER_OPTION
+def dumpprivkey(nonce: TNonce, provider: str) -> None:
+    _switch_to_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
                     passphrase=passphrase)
@@ -77,7 +107,10 @@ def dumpprivkey(nonce: TNonce) -> None:
               default=False, required=False, is_flag=True)
 @click.option('-v', '--verbose', help='Print verbosity',
               default=False, required=False, is_flag=True)
-def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: bool) -> None:
+@_PROVIDER_OPTION
+def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
+            verbose: bool, provider: str) -> None:
+    _switch_to_provider(name=provider)
     from yubtc.misc import satoshi2btc
     total = TBTC(0)
     seed, passphrase = get_seed_and_passphrase()
@@ -132,6 +165,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
 @click.option('-y', '--yes', help='Skip the broadcast confirmation prompt. Implies --broadcast when '
               'used in non-interactive mode; safe to combine with --broadcast explicitly.',
               default=False, is_flag=True)
+@_PROVIDER_OPTION
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
 def send(
@@ -144,7 +178,9 @@ def send(
         broadcast: bool,
         scan: bool,
         interactive: bool,
-        yes: bool) -> None:
+        yes: bool,
+        provider: str) -> None:
+    _switch_to_provider(name=provider)
     amount = None if amount == 'ALL' else TBTC(amount)
     seed, passphrase = get_seed_and_passphrase()
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
@@ -240,7 +276,9 @@ def _send_interactive(
              'reversed) and printed before the broadcast prompt.')
 @click.option('-y', '--yes', help='Skip the broadcast confirmation prompt.',
               default=False, is_flag=True)
-def pushtx(yes: bool) -> None:
+@_PROVIDER_OPTION
+def pushtx(yes: bool, provider: str) -> None:
+    _switch_to_provider(name=provider)
     import sys
     from yubtc.hash import sha256
     from yubtc.misc import yesno
