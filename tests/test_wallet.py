@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import yubtc
 import yubtc.net
+from yubtc.wallet import TxResult
 
 
 # ---------------------------------------------------------------------------
@@ -476,15 +477,15 @@ def test_Wallet_make_transaction_drains_input_when_amount_is_none(monkeypatch):
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
         sources=None, cashback_addr=None, on_address=None,
     )
-    assert cashback == 0
-    assert amount == 99_000
-    assert len(stx.vout) == 1
-    assert stx.vout[0].amount == 99_000
+    assert result.cashback == 0
+    assert result.amount == 99_000
+    assert len(result.tx.vout) == 1
+    assert result.tx.vout[0].amount == 99_000
 
 
 def test_Wallet_make_transaction_drains_when_amount_plus_fee_equals_input(monkeypatch):
@@ -495,13 +496,13 @@ def test_Wallet_make_transaction_drains_when_amount_plus_fee_equals_input(monkey
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=99_000, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
         sources=None, cashback_addr=None, on_address=None,
     )
-    assert cashback == 0
-    assert len(stx.vout) == 1
+    assert result.cashback == 0
+    assert len(result.tx.vout) == 1
 
 
 def test_Wallet_make_transaction_adds_change_output(monkeypatch):
@@ -512,17 +513,17 @@ def test_Wallet_make_transaction_adds_change_output(monkeypatch):
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
         sources=None, cashback_addr=None, on_address=None,
     )
-    assert cashback == 49_000
-    assert amount == 50_000
-    assert len(stx.vout) == 2
+    assert result.cashback == 49_000
+    assert result.amount == 50_000
+    assert len(result.tx.vout) == 2
     # Output order: change first, then payment.
-    assert stx.vout[0].amount == 49_000
-    assert stx.vout[1].amount == 50_000
+    assert result.tx.vout[0].amount == 49_000
+    assert result.tx.vout[1].amount == 50_000
 
 
 def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
@@ -534,14 +535,14 @@ def test_Wallet_make_transaction_signs_with_owners_privkey(monkeypatch):
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo(amount=100_000))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, _, _, _ = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2000, confirmations=0, scan=False,
         sources=None, cashback_addr=None, on_address=None,
     )
     pubwif = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
     # The signed signature script ends with the pubwif.
-    assert stx.vin[0].script.endswith(pubwif)
+    assert result.tx.vin[0].script.endswith(pubwif)
 
 
 def test_Wallet_make_transaction_recurses_until_fee_is_stable(monkeypatch):
@@ -553,15 +554,15 @@ def test_Wallet_make_transaction_recurses_until_fee_is_stable(monkeypatch):
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
     # Use feekb so the fee is set iteratively; no fixed fee.
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=0, feekb=2000,
         confirmations=0, scan=False,
         sources=None, cashback_addr=None, on_address=None,
     )
     # txsize is small enough that the second iteration converges.
-    assert fee > 0
+    assert result.fee > 0
     # The cashback + amount + fee equals the in_amount.
-    assert cashback + amount + fee == 200_000
+    assert result.cashback + result.amount + result.fee == 200_000
 
 
 def test_Wallet_make_transaction_raises_when_confirmations_or_feekb_missing(monkeypatch):
@@ -646,15 +647,15 @@ def test_Wallet_make_transaction_uses_caller_sources_and_cashback_addr(monkeypat
                       'confirmations': 10, 'script': script}])]
     # Use the gap-limit address as the cashback destination.
     cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=2))
-    stx, cashback_sat, sent_sat, fee_sat = w.make_transaction(
+    stx_result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=99_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=False,
         sources=sources, cashback_addr=cashback, on_address=None,
     )
     # Exact spend: no cashback, single output.
-    assert cashback_sat == 0
-    assert sent_sat == 99_000
-    assert len(stx.vout) == 1
+    assert stx_result.cashback == 0
+    assert stx_result.amount == 99_000
+    assert len(stx_result.tx.vout) == 1
 
 
 def test_Wallet_make_transaction_with_sources_requires_cashback_addr(monkeypatch):
@@ -782,16 +783,16 @@ def test_Wallet_make_transaction_scan_stops_at_unused_address(monkeypatch):
                         fake_unspent_per_nonce({0: [60_000], 1: [60_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=80_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
         sources=None, cashback_addr=None, on_address=None,
     )
     # Two addresses scanned, both contributed one input.
-    assert len(stx.vin) == 2
+    assert len(result.tx.vin) == 2
     # Total in = 120_000, amount + fee = 81_000, cashback = 39_000.
-    assert cashback + amount + fee == 120_000
-    assert amount == 80_000
+    assert result.cashback + result.amount + result.fee == 120_000
+    assert result.amount == 80_000
 
 
 def test_Wallet_make_transaction_scan_stops_at_target(monkeypatch):
@@ -805,13 +806,13 @@ def test_Wallet_make_transaction_scan_stops_at_target(monkeypatch):
                         fake_unspent_per_nonce({0: [30_000], 1: [30_000], 2: [30_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
         sources=None, cashback_addr=None, on_address=None,
     )
-    assert len(stx.vin) == 2
-    assert cashback + amount + fee == 60_000
+    assert len(result.tx.vin) == 2
+    assert result.cashback + result.amount + result.fee == 60_000
 
 
 def test_Wallet_make_transaction_scan_with_all_drains(monkeypatch):
@@ -823,16 +824,16 @@ def test_Wallet_make_transaction_scan_with_all_drains(monkeypatch):
                         fake_unspent_per_nonce({0: [40_000], 1: [40_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
         sources=None, cashback_addr=None, on_address=None,
     )
     # amount=None + scan drains what's collected; cashback=0.
-    assert cashback == 0
-    assert amount == 80_000 - fee
-    assert len(stx.vout) == 1
-    assert stx.vout[0].amount == 80_000 - fee
+    assert result.cashback == 0
+    assert result.amount == 80_000 - result.fee
+    assert len(result.tx.vout) == 1
+    assert result.tx.vout[0].amount == 80_000 - result.fee
 
 
 def test_Wallet_scan_change_goes_to_unused_address_at_gap(monkeypatch):
@@ -915,16 +916,16 @@ def test_Wallet_make_transaction_scan_drains_past_drained_address(monkeypatch):
                         fake_unspent_per_nonce({1: [40_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, amount, fee = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=None, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
         sources=None, cashback_addr=None, on_address=None,
     )
     # One input from nonce 1; drained nonce 0 contributes nothing.
-    assert len(stx.vin) == 1
+    assert len(result.tx.vin) == 1
     # amount=None drains everything collected.
-    assert cashback == 0
-    assert amount == 40_000 - fee
+    assert result.cashback == 0
+    assert result.amount == 40_000 - result.fee
 
 
 def test_Wallet_scan_inputs_invokes_on_address_for_each_source(monkeypatch):
@@ -977,14 +978,14 @@ def test_Wallet_make_transaction_scan_change_goes_to_last_input(monkeypatch):
                         fake_unspent_per_nonce({0: [30_000], 1: [30_000], 2: [30_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, cashback, _, _ = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
         sources=None, cashback_addr=None, on_address=None,
     )
     # Cashback > 0 -> first vout is the change output.
-    assert cashback > 0
-    change_addr = base58CheckEncode(b'\x00' + script2pkh(bytes(stx.vout[0].script))).decode('ascii')
+    assert result.cashback > 0
+    change_addr = base58CheckEncode(b'\x00' + script2pkh(bytes(result.tx.vout[0].script))).decode('ascii')
     # The last input is at nonce 1 (the scan stopped at total >= 50_000).
     from yubtc.crypto import seed2privkey, privkey2addr
     last_input_addr = privkey2addr(
@@ -1002,14 +1003,14 @@ def test_Wallet_make_transaction_scan_signs_with_privkey_per_input(monkeypatch):
                         fake_unspent_per_nonce({0: [40_000], 1: [40_000]}))
 
     w = Wallet(seed='qwe', nonce=0, new_addresses=1)
-    stx, _, _, _ = w.make_transaction(
+    result = w.make_transaction(
         dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=50_000, fee=1_000,
         feekb=2_000, confirmations=0, scan=True,
         sources=None, cashback_addr=None, on_address=None,
     )
     pubwif_0 = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=0))
     pubwif_1 = privkey2pubkey(privkey=seed2privkey(seed='qwe', nonce=1))
-    scripts = [vin.script for vin in stx.vin]
+    scripts = [vin.script for vin in result.tx.vin]
     # The two input scripts end with distinct pubwifs.
     assert any(s.endswith(pubwif_0) for s in scripts)
     assert any(s.endswith(pubwif_1) for s in scripts)
@@ -1056,7 +1057,7 @@ def test_Wallet_send_scan_passes_scan_to_make_transaction(monkeypatch, monkeypat
             vout=[COut(amount=10_000, script=b'\xac')],
             locktime=0,
         ).sign(signers=[(privkey, pubwif)])
-        return tx, 0, 10_000, 1_000
+        return TxResult(tx=tx, cashback=0, amount=10_000, fee=1_000)
 
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', wrapper)
 

@@ -1,5 +1,22 @@
+from typing import NamedTuple
+
 from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress
+from yubtc.transaction import CTransaction
 from yubtc.util import NotNone, require_kwargs_only
+
+
+class TxResult(NamedTuple):
+    """Output of `make_transaction`: the signed tx plus the satoshi amounts.
+
+    `cashback` is 0 when there's no change output (drain). `fee` is the
+    actual satoshi amount used for the fee -- in the feekb-driven branch
+    it may differ from the caller's input `fee` because the loop
+    recomputes until the fee matches the tx size.
+    """
+    tx: CTransaction
+    cashback: TSatoshi
+    amount: TSatoshi
+    fee: TSatoshi
 
 
 class TPrivKey(object):
@@ -87,15 +104,15 @@ class Wallet(object):
         else:
             converted_amount = btc2satoshi(amount)
         satoshi_fee = btc2satoshi(fee)
-        tx, satoshi_cashback, satoshi_amount, satoshi_fee_used = self.make_transaction(
+        result = self.make_transaction(
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
             confirmations=confirmations, scan=scan,
             sources=None, cashback_addr=None, on_address=on_address)
-        cashback_btc = satoshi2btc(satoshi_cashback)
-        amount_btc = satoshi2btc(satoshi_amount)
-        fee_btc = satoshi2btc(satoshi_fee_used)
-        rawtx = tx.serialize()
-        print('id: {id}'.format(id=tx.id().hex()))
+        cashback_btc = satoshi2btc(result.cashback)
+        amount_btc = satoshi2btc(result.amount)
+        fee_btc = satoshi2btc(result.fee)
+        rawtx = result.tx.serialize()
+        print('id: {id}'.format(id=result.tx.id().hex()))
         print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
             amount=amount_btc,
             dst=dst,
@@ -228,7 +245,7 @@ class Wallet(object):
             scan: bool = NotNone,
             sources: list = None,
             cashback_addr: TAddress = None,
-            on_address: object = None) -> tuple:
+            on_address: object = None) -> TxResult:
         """Build and sign a transaction.
 
         Three input modes:
@@ -241,7 +258,6 @@ class Wallet(object):
         - otherwise: use the wallet's primary address's UTXOs only.
         """
         from yubtc.crypto import privkey2pubkey, pubkey2addr, make_vout
-        from yubtc.transaction import CTransaction
         pubkey = privkey2pubkey(self.privkeys[0].privkey)
         if sources is not None:
             # Caller pre-selected (e.g. the interactive UI). The cashback
@@ -269,8 +285,9 @@ class Wallet(object):
             signers = [(self.privkeys[0].privkey, pubkey)]
         _fee = fee
         while True:
-            vout, _cashback, _amount = make_vout(src=src, dst=dst, in_amount=in_amount, amount=amount, fee=_fee)
-            tx = CTransaction(vin=vin, vout=vout, locktime=0)
+            vout_result = make_vout(src=src, dst=dst, in_amount=in_amount,
+                                    amount=amount, fee=_fee)
+            tx = CTransaction(vin=vin, vout=vout_result.vout, locktime=0)
             stx = tx.sign(signers=signers)
             if fee:
                 break
@@ -280,4 +297,5 @@ class Wallet(object):
                 break
             _fee = newfee
 
-        return stx, _cashback, _amount, _fee
+        return TxResult(tx=stx, cashback=vout_result.cashback,
+                        amount=vout_result.amount, fee=_fee)

@@ -5,6 +5,7 @@ from click.testing import CliRunner
 import yubtc
 import yubtc.net
 from yubtc.fwd import TBTC
+from yubtc.wallet import TxResult
 
 # Vectors below are the same ones asserted in test_crypto.py, reached through
 # the CLI instead of the crypto helpers.
@@ -235,7 +236,7 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
     ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
-        return fake_tx, 0, 50_000, 1_000
+        return TxResult(tx=fake_tx, cashback=0, amount=50_000, fee=1_000)
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
 
     output = run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'], stdin=SEED + '\ny\n')
@@ -261,7 +262,7 @@ def test_send_amount_all_means_none(monkeypatch):
             vout=[COut(amount=0, script=b'\xac')],
             locktime=0,
         ).sign(signers=[(privkey, pubwif)])
-        return tx, 0, 0, 1_000
+        return TxResult(tx=tx, cashback=0, amount=0, fee=1_000)
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
     run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'], stdin=SEED + '\ny\n')
     assert captured['amount'] is None
@@ -281,7 +282,7 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
     ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
-        return fake_tx, 0, 50_000, 1_000
+        return TxResult(tx=fake_tx, cashback=0, amount=50_000, fee=1_000)
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
 
     sent = MagicMock()
@@ -310,7 +311,7 @@ def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
     ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
-        return fake_tx, 0, 50_000, 1_000
+        return TxResult(tx=fake_tx, cashback=0, amount=50_000, fee=1_000)
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
 
     sent = MagicMock()
@@ -343,7 +344,7 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
     ).sign(signers=[(privkey, pubwif)])
 
     def fake_make_transaction(self, **kwargs):
-        return fake_tx, 0, 50_000, 1_000
+        return TxResult(tx=fake_tx, cashback=0, amount=50_000, fee=1_000)
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
 
     # Mock sendTx to record the call.
@@ -374,7 +375,7 @@ def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
 
     def fake_make_transaction(self, **kwargs):
         captured['scan'] = kwargs.get('scan')
-        return fake_tx, 0, 50_000, 1_000
+        return TxResult(tx=fake_tx, cashback=0, amount=50_000, fee=1_000)
 
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
     sent = MagicMock()
@@ -405,7 +406,7 @@ def test_send_with_scan_and_all_drains(monkeypatch):
     def fake_make_transaction(self, **kwargs):
         captured['amount'] = kwargs.get('amount')
         captured['scan'] = kwargs.get('scan')
-        return fake_tx, 0, 80_000, 1_000
+        return TxResult(tx=fake_tx, cashback=0, amount=80_000, fee=1_000)
 
     monkeypatch.setattr(wallet_mod.Wallet, 'make_transaction', fake_make_transaction)
     monkeypatch.setattr(net, 'sendTx', MagicMock())
@@ -460,7 +461,7 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
             vout=[COut(amount=80_000, script=vout_script)],
             locktime=0,
         ).sign(signers=[(privkey, pubkey)])
-        return tx, 39_000, 80_000, 1_000
+        return TxResult(tx=tx, cashback=39_000, amount=80_000, fee=1_000)
 
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -494,7 +495,7 @@ def test_send_without_scan_does_not_emit_per_address_lines(monkeypatch):
     ).sign(signers=[(privkey, pubkey)])
 
     def fake_make_transaction(self, **kwargs):
-        return fake_tx, 0, 50_000, 1_000
+        return TxResult(tx=fake_tx, cashback=0, amount=50_000, fee=1_000)
 
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -609,7 +610,7 @@ def test_send_interactive_builds_tx_with_caller_selection(monkeypatch):
             vout=[COut(amount=99_000, script=b'\xac')],
             locktime=0,
         ).sign(signers=[(privkey, pubkey)])
-        return stx, 0, 99_000, 1_000
+        return TxResult(tx=stx, cashback=0, amount=99_000, fee=1_000)
 
     captured_make = {}
     monkeypatch.setattr('yubtc.net.get_address_info',
@@ -768,7 +769,7 @@ def test_send_interactive_broadcast_prompts_and_calls_sendtx(monkeypatch):
             vout=[COut(amount=99_000, script=b'\xac')],
             locktime=0,
         ).sign(signers=[(privkey, pubkey)])
-        return stx, 0, 99_000, 1_000
+        return TxResult(tx=stx, cashback=0, amount=99_000, fee=1_000)
 
     prompts = []
 
@@ -823,7 +824,7 @@ def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
             vout=[COut(amount=99_000, script=b'\xac')],
             locktime=0,
         ).sign(signers=[(privkey, pubkey)])
-        return stx, 0, 99_000, 1_000
+        return TxResult(tx=stx, cashback=0, amount=99_000, fee=1_000)
 
     prompts = []
 

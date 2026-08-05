@@ -209,16 +209,16 @@ def _send_interactive(
 
     grouped = selection_to_sources(selected_flat)
     converted_amount = None if amount is None else btc2satoshi(amount)
-    stx, cashback, sent, fee_used = wallet.make_transaction(
+    result = wallet.make_transaction(
         dst=address, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
         confirmations=confirmations, scan=False,
         sources=grouped, cashback_addr=cashback_addr, on_address=None,
     )
-    cashback_btc = satoshi2btc(cashback)
-    sent_btc = satoshi2btc(sent)
-    fee_btc = satoshi2btc(fee_used)
-    rawtx = stx.serialize()
-    print('id: {id}'.format(id=stx.id().hex()))
+    cashback_btc = satoshi2btc(result.cashback)
+    sent_btc = satoshi2btc(result.amount)
+    fee_btc = satoshi2btc(result.fee)
+    rawtx = result.tx.serialize()
+    print('id: {id}'.format(id=result.tx.id().hex()))
     print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
         amount=sent_btc, dst=address, cashback=cashback_btc, fee=fee_btc,
         txsize=len(rawtx)))

@@ -285,13 +285,13 @@ def test_make_vout_drains_when_amount_is_none():
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
-    vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=100_000, amount=None, fee=1_000)
-    assert cashback == 0
-    assert amount == 99_000
-    assert len(vouts) == 1
-    assert vouts[0].amount == 99_000
+    result = make_vout(src=src, dst=dst, in_amount=100_000, amount=None, fee=1_000)
+    assert result.cashback == 0
+    assert result.amount == 99_000
+    assert len(result.vout) == 1
+    assert result.vout[0].amount == 99_000
     # The single output locks the destination, not the source.
-    assert vouts[0].script.hex() == '76a914d9d50a8ac051c555bf9a514aee0e4835efb3273888ac'
+    assert result.vout[0].script.hex() == '76a914d9d50a8ac051c555bf9a514aee0e4835efb3273888ac'
 
 
 def test_make_vout_drains_when_amount_plus_fee_equals_input():
@@ -299,10 +299,10 @@ def test_make_vout_drains_when_amount_plus_fee_equals_input():
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
-    vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=100_000, amount=99_000, fee=1_000)
-    assert cashback == 0
-    assert amount == 99_000
-    assert len(vouts) == 1 and vouts[0].amount == 99_000
+    result = make_vout(src=src, dst=dst, in_amount=100_000, amount=99_000, fee=1_000)
+    assert result.cashback == 0
+    assert result.amount == 99_000
+    assert len(result.vout) == 1 and result.vout[0].amount == 99_000
 
 
 def test_make_vout_sends_change_back_to_src():
@@ -310,15 +310,15 @@ def test_make_vout_sends_change_back_to_src():
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
-    vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=100_000, amount=40_000, fee=1_000)
-    assert cashback == 59_000
-    assert amount == 40_000
-    assert len(vouts) == 2
+    result = make_vout(src=src, dst=dst, in_amount=100_000, amount=40_000, fee=1_000)
+    assert result.cashback == 59_000
+    assert result.amount == 40_000
+    assert len(result.vout) == 2
     # Output order: [change (back to src), payment (to dst)].
-    assert vouts[0].amount == 59_000
-    assert vouts[0].script.hex() == '76a914e96b5b4561e70170c16f51ca30a9429e3bede97788ac'
-    assert vouts[1].amount == 40_000
-    assert vouts[1].script.hex() == '76a914d9d50a8ac051c555bf9a514aee0e4835efb3273888ac'
+    assert result.vout[0].amount == 59_000
+    assert result.vout[0].script.hex() == '76a914e96b5b4561e70170c16f51ca30a9429e3bede97788ac'
+    assert result.vout[1].amount == 40_000
+    assert result.vout[1].script.hex() == '76a914d9d50a8ac051c555bf9a514aee0e4835efb3273888ac'
 
 
 def test_make_vout_drain_raises_when_input_does_not_cover_fee():
@@ -335,10 +335,10 @@ def test_make_vout_drain_raises_when_input_equals_fee():
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
-    vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=1_000, amount=None, fee=1_000)
-    assert amount == 0
-    assert cashback == 0
-    assert vouts[0].amount == 0
+    result = make_vout(src=src, dst=dst, in_amount=1_000, amount=None, fee=1_000)
+    assert result.amount == 0
+    assert result.cashback == 0
+    assert result.vout[0].amount == 0
 
 
 def test_make_vout_raises_when_amount_plus_fee_exceeds_input():
@@ -355,9 +355,9 @@ def test_make_vout_exact_no_change_does_not_trip_drain_check():
     from yubtc.crypto import make_vout, seed2privkey, privkey2addr
     src = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=0))
     dst = privkey2addr(privkey=seed2privkey(seed='asdf', nonce=0))
-    vouts, cashback, amount = make_vout(src=src, dst=dst, in_amount=11_000, amount=10_000, fee=1_000)
-    assert cashback == 0
-    assert amount == 10_000
+    result = make_vout(src=src, dst=dst, in_amount=11_000, amount=10_000, fee=1_000)
+    assert result.cashback == 0
+    assert result.amount == 10_000
 
 
 def test_seed2bin_raises_when_seed_missing():

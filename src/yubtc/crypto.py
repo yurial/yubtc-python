@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import NamedTuple, TYPE_CHECKING
 
 from coincurve import PrivateKey
 
@@ -135,10 +135,23 @@ def make_lock_script(address: TAddress) -> 'CScript':
         raise Exception('address not supported')
 
 
+class VoutResult(NamedTuple):
+    """Output of `make_vout`: the vout list plus the satoshi amounts.
+
+    `cashback` is 0 in the drain branch (no change output) and the
+    genuine cashback value otherwise. `amount` is what leaves the wallet
+    for `dst` (the requested amount, or the drained input minus fee in
+    drain mode).
+    """
+    vout: list
+    cashback: TSatoshi
+    amount: TSatoshi
+
+
 @require_kwargs_only
 def make_vout(src: TAddress = NotNone, dst: TAddress = NotNone,
               in_amount: TSatoshi = NotNone, amount: TSatoshi = None,
-              fee: TSatoshi = NotNone) -> tuple:
+              fee: TSatoshi = NotNone) -> VoutResult:
     from yubtc.transaction import COut
     if in_amount < fee:
         # Drain (`amount is None`) lands in the branch below and would
@@ -152,9 +165,12 @@ def make_vout(src: TAddress = NotNone, dst: TAddress = NotNone,
     vout_script = make_lock_script(dst)
     if amount is None or (amount + fee == in_amount):
         amount = in_amount - fee
-        return [COut(amount=amount, script=vout_script)], 0, amount
+        return VoutResult(vout=[COut(amount=amount, script=vout_script)],
+                          cashback=0, amount=amount)
     else:
         cashback = in_amount - amount - fee
         cashback_lock_script = make_lock_script(src)
-        return [COut(amount=cashback, script=cashback_lock_script), COut(
-            amount=amount, script=vout_script)], cashback, amount
+        return VoutResult(
+            vout=[COut(amount=cashback, script=cashback_lock_script),
+                  COut(amount=amount, script=vout_script)],
+            cashback=cashback, amount=amount)
