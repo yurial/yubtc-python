@@ -106,7 +106,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool, verbose: b
               default=DEFAULT_FEE, required=False, nargs=1, type=TBTC)
 @click.option('-k', '--feekb', help='Set fee per kilobyte (1000 bytes). Value in satoshi.',
               default=MINIMAL_FEE, required=False, nargs=1, type=int)
-@click.option('--send', help='Broadcast the transaction; otherwise print the raw tx to console.',
+@click.option('--broadcast', help='Broadcast the transaction; otherwise print the raw tx to console.',
               default=False, is_flag=True)
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
@@ -117,9 +117,9 @@ def send(
         feekb: TSatoshi,
         address: TAddress,
         amount: TAmount,
-        send: bool) -> None:
+        broadcast: bool) -> None:
     amount = None if amount == 'ALL' else TBTC(amount)
     wallet = Wallet(seed=get_seed(), nonce=nonce,
                     compressed=DEFAULT_COMPRESSED, new_addresses=DEFAULT_NEW_ADDRESSES)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
-    wallet.send(dst=address, amount=amount, fee=fee, feekb=feekb, confirmations=confirmations, send=send)
+    wallet.send(dst=address, amount=amount, fee=fee, feekb=feekb, confirmations=confirmations, broadcast=broadcast)

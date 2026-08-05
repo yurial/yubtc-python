@@ -196,7 +196,7 @@ def test_balance_filters_low_confirmation_utxos(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_send_dry_run_prints_raw_tx(monkeypatch):
-    """Default (no --send) prints the raw tx hex; the network stub is not called."""
+    """Default (no --broadcast) prints the raw tx hex; the network stub is not called."""
     import yubtc.net as net
     import yubtc.wallet as wallet_mod
     sent = MagicMock()
@@ -269,7 +269,7 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
 
 
 def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
-    """--send routes the tx through net.sendTx (the stub)."""
+    """--broadcast routes the tx through net.sendTx (the stub)."""
     import yubtc.net as net
     import yubtc.wallet as wallet_mod
     from yubtc.transaction import CIn, COut, CTransaction
@@ -290,8 +290,8 @@ def test_send_with_broadcast_flag_calls_sendTx(monkeypatch):
     sent = MagicMock()
     monkeypatch.setattr(net, 'sendTx', sent)
 
-    # --send combined with 'y' confirmation -> sendTx is called.
-    run(['send', '--send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
+    # --broadcast combined with 'y' confirmation -> sendTx is called.
+    run(['send', '--broadcast', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
         stdin=SEED + '\ny\n')
     sent.assert_called_once()
 

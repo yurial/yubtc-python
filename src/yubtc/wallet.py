@@ -120,7 +120,7 @@ class Wallet(object):
             feekb: Optional[TSatoshi] = None,
             fee: Optional[TBTC] = None,
             confirmations: Optional[int] = None,
-            send: Optional[bool] = None) -> None:
+            broadcast: Optional[bool] = None) -> None:
         from yubtc.misc import yesno, satoshi2btc, btc2satoshi
         from yubtc.net import sendTx
         if args:
@@ -139,8 +139,8 @@ class Wallet(object):
             raise Exception('feekb not set')
         if confirmations is None:
             raise Exception('confirmations not set')
-        if send is None:
-            raise Exception('send not set')
+        if broadcast is None:
+            raise Exception('broadcast not set')
         tx, satoshi_cashback, satoshi_amount, satoshi_fee_used = self.make_transaction(
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee, confirmations=confirmations)
         cashback_btc = satoshi2btc(satoshi_cashback)
@@ -155,7 +155,7 @@ class Wallet(object):
                 fee_btc,
                 len(rawtx))):
             print('id: {}'.format(tx.id().hex()))
-            if send:
+            if broadcast:
                 sendTx(rawtx)
             else:
                 print(rawtx.hex())

@@ -374,7 +374,7 @@ def test_Wallet_from_seed_scan_then_appends(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_Wallet_send_dry_run_prints_raw_tx(monkeypatch, monkeypatch_input):
-    """With send=False the raw tx hex is printed; sendTx is not called."""
+    """With broadcast=False the raw tx hex is printed; sendTx is not called."""
     from yubtc.wallet import Wallet
     monkeypatch.setattr('yubtc.net.get_address_info',
                         lambda address: {'total_received': 0, 'n_tx': 0})
@@ -410,7 +410,7 @@ def test_Wallet_send_with_amount_none_skips_btc2satoshi(monkeypatch, monkeypatch
 
 
 def test_Wallet_send_with_broadcast_calls_sendTx(monkeypatch, monkeypatch_input):
-    """With send=True, the tx is passed to net.sendTx."""
+    """With broadcast=True, the tx is passed to net.sendTx."""
     from yubtc.wallet import Wallet
     import yubtc.net
     sent = MagicMock()
@@ -420,12 +420,12 @@ def test_Wallet_send_with_broadcast_calls_sendTx(monkeypatch, monkeypatch_input)
     monkeypatch.setattr('yubtc.net.get_address_unspent', fake_unspent_with_one_utxo())
 
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
-    dry_run_send(w, monkeypatch_input, dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount='0.0005', send=True)
+    dry_run_send(w, monkeypatch_input, dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount='0.0005', broadcast=True)
     sent.assert_called_once()
 
 
 def test_Wallet_send_declined_prints_nothing(monkeypatch):
-    """User answering 'n' to the confirmation prompt -> no tx, no send."""
+    """User answering 'n' to the confirmation prompt -> no tx, no broadcast."""
     from yubtc.wallet import Wallet
     import yubtc.net
 
@@ -441,7 +441,7 @@ def test_Wallet_send_declined_prints_nothing(monkeypatch):
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     from decimal import Decimal
     w.send(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', amount=Decimal('0.0005'),
-           fee=Decimal('0.00001'), feekb=2_000, confirmations=0, send=False)
+           fee=Decimal('0.00001'), feekb=2_000, confirmations=0, broadcast=False)
     sent.assert_not_called()
 
 
@@ -461,7 +461,7 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
     w = Wallet(seed='qwe', nonce=0, compressed=True, new_addresses=1)
     base = dict(dst='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
                 amount=None, fee=Decimal('0.00001'), feekb=2_000,
-                confirmations=0, send=False)
+                confirmations=0, broadcast=False)
     with pytest.raises(Exception, match='dst not set'):
         w.send(**{**base, 'dst': None})
     with pytest.raises(Exception, match='fee not set'):
@@ -470,8 +470,8 @@ def test_Wallet_send_raises_when_required_arg_missing(monkeypatch, monkeypatch_i
         w.send(**{**base, 'feekb': None})
     with pytest.raises(Exception, match='confirmations not set'):
         w.send(**{**base, 'confirmations': None})
-    with pytest.raises(Exception, match='send not set'):
-        w.send(**{**base, 'send': None})
+    with pytest.raises(Exception, match='broadcast not set'):
+        w.send(**{**base, 'broadcast': None})
 
 
 def test_Wallet_init_raises_when_compressed_or_new_addresses_missing(monkeypatch):
@@ -709,7 +709,7 @@ def monkeypatch_input(monkeypatch):
     monkeypatch.setattr(yubtc.misc, 'yesno', lambda q: True)
 
 
-def dry_run_send(w, input_fixture, dst, amount, send=False):
+def dry_run_send(w, input_fixture, dst, amount, broadcast=False):
     """Run wallet.send with the local yes/no fixture and capture stdout.
 
     `amount` is in BTC (the wallet's TBTC units). It is converted to a Decimal
@@ -722,10 +722,10 @@ def dry_run_send(w, input_fixture, dst, amount, send=False):
     btc_amount = Decimal(amount) if amount is not None else None
     with redirect_stdout(buf):
         w.send(dst=dst, amount=btc_amount, fee=Decimal('0.00001'), feekb=2_000,
-               confirmations=0, send=send)
+               confirmations=0, broadcast=broadcast)
     out = buf.getvalue()
     # The hex is the second line after `id: <txid>`.
-    if send:
+    if broadcast:
         return None  # broadcast path doesn't print the hex
     return out
 
