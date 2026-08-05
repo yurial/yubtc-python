@@ -244,6 +244,8 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
     assert fake_tx.serialize().hex() in output
     # The broadcast stub was never invoked.
     sent.assert_not_called()
+    # A dry-run notice is printed so the user sees the tx didn't go to the network.
+    assert 'Not broadcast' in output
 
 
 def test_send_amount_all_means_none(monkeypatch):
@@ -295,6 +297,8 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
     sent.assert_not_called()
     # The dump (id + rawtx) is still printed.
     assert fake_tx.serialize().hex() in output
+    # Since --broadcast was given, the dry-run notice is NOT printed.
+    assert 'Not broadcast' not in output
 
 
 def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
@@ -637,6 +641,8 @@ def test_send_interactive_builds_tx_with_caller_selection(monkeypatch):
     # A successful tx prints the id and the raw hex.
     assert 'id:' in output
     assert 'rawtx:' in output
+    # Without --broadcast, a dry-run notice is printed.
+    assert 'Not broadcast' in output
 
 
 def test_send_interactive_prints_no_funds_when_scan_empty(monkeypatch):

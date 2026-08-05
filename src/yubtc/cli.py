@@ -226,3 +226,9 @@ def _send_interactive(
     if broadcast:
         if yesno('broadcast? '):
             sendTx(rawtx)
+    else:
+        # No --broadcast: the tx is fully signed and shown above, but
+        # never reaches the network. Print a clear note so the
+        # operator doesn't mistake the raw tx for a sent one.
+        print('Not broadcast: pass --broadcast (or run sendTx manually) '
+              'to push this transaction to the network.')
