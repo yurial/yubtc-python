@@ -1,6 +1,7 @@
 from typing import NamedTuple
 
-from yubtc.fwd import TNonce, TSatoshi, TBTC, TSeed, TAddress, TPassphrase
+from yubtc.fwd import (TNonce, TSatoshi, TBTC, TSeed, TAddress, TPassphrase,
+                       MIN_RELAY_TX_FEE)
 from yubtc.transaction import CTransaction
 from yubtc.util import NotNone, require_kwargs_only
 
@@ -52,6 +53,38 @@ def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool, yes: bool = N
         # operator doesn't mistake the raw tx for a sent one.
         print('Not broadcast: pass --broadcast (or run broadcastTx manually) '
               'to push this transaction to the network.')
+
+
+def _pick_best_fee_loop_candidate(by_size, feekb, min_relay_per_kb=MIN_RELAY_TX_FEE):
+    """Pick the best fee-loop candidate (mirrors the Rust port).
+
+    `by_size` maps tx size -> list of `(fee, vout_result, stx)`
+    candidates accumulated by the loop in `Wallet.make_transaction`.
+
+    Rule 1 (validity): fee >= size * feekb / 1000 AND
+    fee >= size * min_relay_per_kb / 1000 -- the relay floor from
+    Bitcoin Core's DEFAULT_MIN_RELAY_TX_FEE. A sub-floor candidate is
+    dropped even when its size is the smallest: no mempool would
+    relay such a tx.
+    Rule 2 (preference): smallest size; tie-break -- smallest fee for
+    the same size.
+    Fallback: when nothing satisfies rule 1 (pathological feekb), the
+    smallest size ever produced wins -- "pays some fee" still beats
+    "relay rejected", and the tx stays structurally valid.
+    """
+    best = None
+    for size in sorted(by_size):
+        needed = size * feekb // 1000
+        relay_floor = size * min_relay_per_kb // 1000
+        for fee, vout_result, stx in by_size[size]:
+            if fee < needed or fee < relay_floor:
+                continue
+            if best is None or size < best[0] or (size == best[0] and fee < best[1]):
+                best = (size, fee, vout_result, stx)
+    if best is not None:
+        return best[0], (best[1], best[2], best[3])
+    smallest = min(by_size)
+    return smallest, by_size[smallest][0]
 
 
 class TPrivKey(object):
@@ -318,19 +351,38 @@ class Wallet(object):
             confirmations=confirmations, cashback_addr=cashback_addr,
             on_address=on_address)
         vin, in_amount, signers = self._make_vin(sources=vin_sources)
-        _fee = fee
-        while True:
+        if fee:
             vout_result = make_vout(src=src, dst=dst, in_amount=in_amount,
-                                    amount=amount, fee=_fee)
+                                    amount=amount, fee=fee)
             tx = CTransaction(vin=vin, vout=vout_result.vout, locktime=0)
             stx = tx.sign(signers=signers)
-            if fee:
-                break
+            return TxResult(tx=stx, cashback=vout_result.cashback,
+                            amount=vout_result.amount, fee=fee)
+
+        # Fee loop, mirroring the Rust port: accumulate per-size
+        # candidates and terminate by cycle detection on the tx size.
+        # The size is a pure function of (inputs, fee), so a repeated
+        # size means the iteration entered a cycle and no new candidate
+        # can appear. (The old `_fee == newfee` fixed-point break could
+        # oscillate forever between two values on digit-boundary sizes;
+        # there is deliberately no iteration cap -- decision C3.)
+        by_size = {}
+        seen_sizes = set()
+        current_fee = 0
+        while True:
+            vout_result = make_vout(src=src, dst=dst, in_amount=in_amount,
+                                    amount=amount, fee=current_fee)
+            tx = CTransaction(vin=vin, vout=vout_result.vout, locktime=0)
+            stx = tx.sign(signers=signers)
             txsize = len(stx.serialize())
             newfee = int(txsize * feekb / 1000)
-            if _fee == newfee:
+            by_size.setdefault(txsize, []).append((current_fee, vout_result, stx))
+            if txsize in seen_sizes:
                 break
-            _fee = newfee
+            seen_sizes.add(txsize)
+            current_fee = newfee
 
-        return TxResult(tx=stx, cashback=vout_result.cashback,
-                        amount=vout_result.amount, fee=_fee)
+        _, (best_fee, best_vout, best_stx) = _pick_best_fee_loop_candidate(
+            by_size=by_size, feekb=feekb)
+        return TxResult(tx=best_stx, cashback=best_vout.cashback,
+                        amount=best_vout.amount, fee=best_fee)

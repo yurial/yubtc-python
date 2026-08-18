@@ -57,6 +57,12 @@ SEQUENCE_FINAL: int = 0xffffffff
 EMPTY_SCRIPT: bytes = b''
 
 MINIMAL_FEE: TSatoshi = 2000
+# Minimum relay feerate (sat/kvB) enforced by the fee loop: a candidate
+# whose fee is below size * MIN_RELAY_TX_FEE / 1000 would be rejected by
+# every mempool. Source: Bitcoin Core policy.h DEFAULT_MIN_RELAY_TX_FEE;
+# the Rust port reads the same number from
+# bitcoin::policy::DEFAULT_MIN_RELAY_TX_FEE (decision C2).
+MIN_RELAY_TX_FEE: int = 1000
 # Confirmation count the CLI requires before considering a UTXO spendable.
 DEFAULT_CONFIRMATIONS: int = 6
 # HTTP request timeout for blockchain.info calls (seconds). Deliberately
