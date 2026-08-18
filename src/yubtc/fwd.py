@@ -59,7 +59,8 @@ EMPTY_SCRIPT: bytes = b''
 MINIMAL_FEE: TSatoshi = 2000
 # Confirmation count the CLI requires before considering a UTXO spendable.
 DEFAULT_CONFIRMATIONS: int = 6
-# HTTP request timeout for blockchain.info calls (seconds). Long enough to
-# ride out a slow block-explorer; short enough that a hung server doesn't
-# freeze the wallet indefinitely.
-DEFAULT_TIMEOUT_HTTP: int = 180
+# HTTP request timeout for blockchain.info calls (seconds). Deliberately
+# short (decision C4): backends must answer fast, and a long timeout masks
+# a hung backend as a "slow wallet" instead of surfacing the network
+# error to the user.
+DEFAULT_TIMEOUT_HTTP: int = 5
