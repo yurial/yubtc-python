@@ -128,6 +128,27 @@ def test_seed2privkey_passphrase_changes_privkey():
     assert a != b
 
 
+def test_seed2privkey_empty_passphrase_keeps_clamp():
+    """Decision C1: the legacy cascade branch (empty passphrase) still
+    clamps, bit-for-bit with pre-passphrase yubtc wallets."""
+    from yubtc.crypto import bin2privkey, seed2bin, seed2privkey
+    raw = seed2bin(seed='qwe', nonce=0, passphrase='')
+    key = seed2privkey(seed='qwe', nonce=0, passphrase='')
+    assert key.secret == bin2privkey(raw)
+
+
+def test_seed2privkey_passphrase_skips_clamp():
+    """Decision C1: the BIP-39 branch (non-empty passphrase) feeds the
+    raw 32-byte BIP-44 leaf to secp256k1 verbatim — no clamp — so
+    addresses match Trezor/Ledger/Electrum for the same
+    (mnemonic, passphrase). Mirrors the Rust port."""
+    from yubtc.crypto import bin2privkey, seed2bin, seed2privkey
+    raw = seed2bin(seed='qwe', nonce=0, passphrase='hunter2')
+    key = seed2privkey(seed='qwe', nonce=0, passphrase='hunter2')
+    assert key.secret == raw
+    assert key.secret != bin2privkey(raw)
+
+
 # ---------------------------------------------------------------------------
 # bin2privkey: clamps a 32-byte seed into a valid secp256k1 scalar.
 #

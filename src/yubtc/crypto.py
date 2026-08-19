@@ -113,7 +113,21 @@ def bin2privkey(data: bytes) -> bytes:
 def seed2privkey(seed: TSeed = NotNone,
                  nonce: TNonce = NotNone,
                  passphrase: TPassphrase = '') -> PrivateKey:
-    return PrivateKey(bin2privkey(seed2bin(seed=seed, nonce=nonce, passphrase=passphrase)))
+    """Derive the signing key from (seed, nonce, passphrase).
+
+    Clamp policy (decision C1): the X25519-style clamp applies ONLY
+    to the legacy yubtc cascade branch (empty passphrase), keeping
+    bit-for-bit parity with pre-passphrase yubtc wallets. The
+    BIP-39-compatible branch (non-empty passphrase) feeds the raw
+    32-byte BIP-44 leaf to secp256k1 verbatim, so addresses match
+    what Trezor/Ledger/Electrum derive for the same
+    (mnemonic, passphrase). Mirrors the Rust port's
+    `seed2privkey_with_kdf`.
+    """
+    raw = seed2bin(seed=seed, nonce=nonce, passphrase=passphrase)
+    if passphrase:
+        return PrivateKey(raw)
+    return PrivateKey(bin2privkey(raw))
 
 
 @require_kwargs_only
