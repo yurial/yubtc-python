@@ -1050,3 +1050,168 @@ def test_send_accepts_provider(offline, monkeypatch):
 # This block was removed from cli.py -- yubtc/__main__.py already invokes
 # `cli`, so the guard was redundant. See test_main.py for the real entry-point
 # test.
+
+
+# ---------------------------------------------------------------------------
+# D-001 seed policy: reception-time validation + --strict-bip39 wiring.
+#
+# These tests are crypto-free on purpose: `yubtc.cli.Wallet` is replaced
+# with a fake, so the seed-reception policy (permissive accept, strict
+# refusal, R-6 warning routing) is exercised without deriving a single
+# key. The reception checks must run BEFORE the wallet is ever
+# constructed -- a strict refusal means _FakeWallet is never
+# instantiated.
+# ---------------------------------------------------------------------------
+
+BIP39_SEED = ('legal winner thank year wave sausage worth useful '
+              'legal winner thank yellow')
+
+
+class _FakePrivKey:
+    """Duck-typed privkey stub: enough surface for the four seed commands."""
+
+    nonce = 0
+
+    def get_p2pkh_address(self):
+        return b'1FakeAddressNotReal0000000000'
+
+    def get_privwif(self):
+        return b'L1FakeWifNotReal'
+
+    def get_unspent(self, confirmations):
+        return []
+
+    def is_unused(self):
+        return False
+
+
+class _FakeWallet:
+    """Wallet stand-in: records its kwargs, exposes one fake privkey."""
+
+    init_kwargs = None
+
+    def __init__(self, **kwargs):
+        _FakeWallet.init_kwargs = kwargs
+        self.privkeys = [_FakePrivKey()]
+
+    def send(self, **kwargs):
+        pass
+
+
+def test_seed_permissive_default_accepts_arbitrary_phrase(monkeypatch):
+    """R-1 via CLI: without --strict-bip39 the arbitrary phrase 'qwe'
+    is accepted, and the R-6 low-entropy warning is printed while the
+    command continues to its normal output."""
+    import yubtc.cli as cli_mod
+    monkeypatch.setattr(cli_mod, 'Wallet', _FakeWallet)
+    result = _invoke(['address'], stdin='\n' + SEED + '\n')
+    assert result.exit_code == 0, result.output
+    assert '1FakeAddressNotReal' in result.output
+    assert 'warning:' in result.output
+    assert 'low seed entropy' in result.output
+
+
+def test_seed_strict_flag_rejects_non_bip39_phrase(monkeypatch):
+    """--strict-bip39 makes a non-BIP-39 phrase a blocking refusal:
+    non-zero exit, parse error in the exception, and the wallet is
+    never constructed."""
+    import yubtc.cli as cli_mod
+    monkeypatch.setattr(cli_mod, 'Wallet', _FakeWallet)
+    _FakeWallet.init_kwargs = None
+    result = _invoke(['address', '--strict-bip39'], stdin='\n' + SEED + '\n')
+    assert result.exit_code != 0
+    assert 'BIP-39 mnemonic parse error' in str(result.exception)
+    assert _FakeWallet.init_kwargs is None, 'wallet must not open on strict refusal'
+
+
+def test_seed_empty_rejected_in_both_modes(monkeypatch):
+    """R-2 via CLI: an empty seed aborts with and without
+    --strict-bip39, before the wallet is constructed."""
+    import yubtc.cli as cli_mod
+    monkeypatch.setattr(cli_mod, 'Wallet', _FakeWallet)
+    for args in (['address'], ['address', '--strict-bip39']):
+        _FakeWallet.init_kwargs = None
+        result = _invoke(args, stdin='\n\n')
+        assert result.exit_code != 0, args
+        assert 'seed must not be empty' in str(result.exception)
+        assert _FakeWallet.init_kwargs is None, args
+
+
+def test_seed_strict_flag_accepts_valid_bip39_phrase(monkeypatch):
+    """--strict-bip39 accepts a checksum-valid 12-word BIP-39 vector;
+    the phrase is above 128 bits, so no warning is printed."""
+    import yubtc.cli as cli_mod
+    monkeypatch.setattr(cli_mod, 'Wallet', _FakeWallet)
+    result = _invoke(['address', '--strict-bip39'],
+                     stdin='\n' + BIP39_SEED + '\n')
+    assert result.exit_code == 0, result.output
+    assert '1FakeAddressNotReal' in result.output
+    assert 'warning:' not in result.output
+
+
+def test_seed_warning_goes_to_stderr_stdout_stays_clean(monkeypatch):
+    """The R-6 warning is routed to stderr; stdout carries only the
+    command result (addresses/balances stay machine-readable)."""
+    from click.testing import CliRunner
+    from yubtc.cli import cli
+    import yubtc.cli as cli_mod
+    monkeypatch.setattr(cli_mod, 'Wallet', _FakeWallet)
+    result = CliRunner(mix_stderr=False).invoke(cli, ['address'],
+                                                input='\n' + SEED + '\n')
+    assert result.exit_code == 0, result.output
+    assert '1FakeAddressNotReal' in result.stdout
+    assert 'warning:' in result.stderr
+    assert 'low seed entropy' in result.stderr
+    assert 'warning:' not in result.stdout
+
+
+def test_seed_strict_flag_wired_into_all_seed_commands(monkeypatch):
+    """Every command that accepts a seed passes the --strict-bip39 flag
+    value into the reception check; commands without the flag pass
+    False (permissive default)."""
+    import yubtc.cli as cli_mod
+    seen = []
+
+    def fake_validate(seed, strict):
+        seen.append(strict)
+
+    monkeypatch.setattr(cli_mod, '_validate_entered_seed', fake_validate)
+    monkeypatch.setattr(cli_mod, 'get_seed_and_passphrase',
+                        lambda: (BIP39_SEED, ''))
+    monkeypatch.setattr(cli_mod, 'Wallet', _FakeWallet)
+    dst = '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'
+    cases = [
+        (['address'], False),
+        (['address', '--strict-bip39'], True),
+        (['dumpprivkey'], False),
+        (['dumpprivkey', '--strict-bip39'], True),
+        (['balance'], False),
+        (['balance', '--strict-bip39'], True),
+        (['send', dst, '0.0005'], False),
+        (['send', '--strict-bip39', dst, '0.0005'], True),
+    ]
+    for args, expected in cases:
+        seen.clear()
+        result = _invoke(args, stdin='\n' + BIP39_SEED + '\n')
+        assert result.exit_code == 0, f'{args}: {result.output}'
+        assert seen == [expected], args
+
+
+def test_newseed_has_no_strict_bip39_flag():
+    """`newseed` generates a seed and never reads one, so it must not
+    accept --strict-bip39 (click rejects the unknown option before the
+    command body runs)."""
+    result = _invoke(['newseed', '--strict-bip39'])
+    assert result.exit_code != 0
+    assert 'No such option' in result.output
+
+
+def test_validate_entered_seed_rejects_positional_and_missing_args():
+    """The reception helper is kwargs-only with both kwargs required."""
+    from yubtc.cli import _validate_entered_seed
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        _validate_entered_seed('qwe', False)
+    with pytest.raises(TypeError, match='seed not set'):
+        _validate_entered_seed(strict=False)
+    with pytest.raises(TypeError, match='strict not set'):
+        _validate_entered_seed(seed='qwe')

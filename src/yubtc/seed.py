@@ -222,6 +222,12 @@ MAX_WORD_REPEATS = 2
 # `_parse_mnemonic` gates those before the floor is ever consulted.
 _MIN_UNIQUE_WORDS = {12: 4, 15: 5, 18: 6, 21: 7, 24: 8}
 
+# Low-entropy warning threshold for the seed-reception policy (D-001,
+# spec «Seed policy» R-6): when the `estimate_entropy` value of a phrase
+# falls BELOW this many bits, reception prints a NON-blocking warning
+# and continues in both modes (permissive and strict).
+MIN_ENTROPY_WARNING_BITS = 128
+
 
 class InsufficientEntropy(ValueError):
     """A checksum-valid mnemonic violates the C6 entropy floor.
@@ -306,7 +312,8 @@ def _parse_mnemonic(seed: str = NotNone) -> list:
     'BIP-39 mnemonic parse error: ...' message when any check fails;
     the common prefix groups every parse-stage failure the way the Rust
     port's `SeedError::Parse` does. Internal helper -- the public entry
-    point is `validate_seed`, which layers the C6 entropy floor on top.
+    point is `validate_seed(strict=True)`, which layers the C6 entropy
+    floor on top; the permissive mode never parses.
     """
     from unicodedata import normalize
     from hashlib import sha256
@@ -331,23 +338,128 @@ def _parse_mnemonic(seed: str = NotNone) -> list:
     return words
 
 
+# Per-class charset sizes for the R-6 entropy estimate (spec «Seed
+# policy» R-6): lowercase 26, uppercase 26, digits 10, space 1, other
+# printable characters 33. Keys are the class names `estimate_entropy`
+# classifies characters into; lowercase and uppercase are DISTINCT
+# classes even though both weigh 26.
+_ENTROPY_CLASS_WEIGHTS = {'lower': 26, 'upper': 26, 'digits': 10, 'space': 1, 'other': 33}
+
+
 @require_kwargs_only
-def validate_seed(seed: str = NotNone) -> None:
-    """Validate a seed phrase: BIP-39 parse, then the C6 entropy floor.
+def estimate_entropy(phrase: str = NotNone) -> float:
+    """Estimate the entropy of a user phrase in bits (D-001, spec R-6).
 
-    Contract: `seed` is the phrase string as typed. Returns `None` when
-    the phrase is a checksum-valid BIP-39 mnemonic that also passes
-    `validate_entropy`. Raises `ValueError` ('BIP-39 mnemonic parse
-    error: ...') when the phrase is not a valid BIP-39 mnemonic, and
-    `InsufficientEntropy` when it parses but violates the entropy
-    floor. The entropy check runs after the parse and before any KDF
-    work (decision C6) -- a checksum-valid but low-entropy phrase is
-    rejected before any bytes are ever derived from it.
+    The estimate is deliberately crude and character-class based:
+    `bits = len(phrase) * log2(|charset|)`, where `|charset|` is the
+    sum of `_ENTROPY_CLASS_WEIGHTS` over every character class PRESENT
+    in the phrase -- lowercase 26, uppercase 26, digits 10, space 1,
+    other printable characters 33 (the spec's catch-all row). This is
+    NOT a security claim about the phrase's true entropy (a
+    natural-language passphrase has far less); it only feeds the
+    non-blocking R-6 warning at reception.
 
-    Mirrors the Rust port's `validate_seed`.
+    Contract: `phrase` is any string. Returns the estimate in bits as
+    a float; `0.0` for an empty phrase (no characters -> no entropy;
+    reception rejects empty phrases before the estimate is consulted).
+    Every character outside the four named classes -- including
+    non-ASCII letters and control characters -- counts toward the
+    "other" class, so the estimate stays defined for any input and no
+    character is silently ignored.
+
+    Single shared formula for every surface (CLI, TUI): callers must
+    not re-implement the arithmetic locally.
+
+    Mirrors the Rust port's `estimate_entropy`.
     """
-    words = _parse_mnemonic(seed=seed)
-    validate_entropy(words=words)
+    from math import log2
+    present = set()
+    for ch in phrase:
+        if 'a' <= ch <= 'z':
+            present.add('lower')
+        elif 'A' <= ch <= 'Z':
+            present.add('upper')
+        elif '0' <= ch <= '9':
+            present.add('digits')
+        elif ch == ' ':
+            present.add('space')
+        else:
+            present.add('other')
+    charset = sum(_ENTROPY_CLASS_WEIGHTS[name] for name in present)
+    if charset == 0:
+        return 0.0
+    return len(phrase) * log2(charset)
+
+
+@require_kwargs_only
+def entropy_warning(phrase: str = NotNone) -> 'str | None':
+    """Non-blocking low-entropy warning for a user phrase (spec R-6).
+
+    Computes `estimate_entropy` and compares against
+    `MIN_ENTROPY_WARNING_BITS`. The comparison is strict: the warning
+    fires only BELOW the threshold -- an estimate of exactly
+    `MIN_ENTROPY_WARNING_BITS` bits is silent. The rule applies in
+    BOTH reception modes (permissive and strict) and never blocks use;
+    rejection is exclusively `validate_seed`'s job.
+
+    Contract: `phrase` is any string. Returns the warning text -- one
+    line with stable wording (pinned by tests) -- or `None` when the
+    estimate is at or above the threshold. The text never contains any
+    fragment of the phrase itself: seeds must not be echoed into
+    warnings or logs. Callers print it prefixed (the CLI uses
+    `warning: `) on stderr, keeping stdout machine-readable.
+
+    Mirrors the Rust port's `entropy_warning`.
+    """
+    bits = estimate_entropy(phrase=phrase)
+    if bits >= MIN_ENTROPY_WARNING_BITS:
+        return None
+    return (f'low seed entropy: estimated {bits:.1f} bits < '
+            f'{MIN_ENTROPY_WARNING_BITS} bits; '
+            f'consider a longer or more varied seed')
+
+
+@require_kwargs_only
+def validate_seed(seed: str = NotNone, strict: bool = False) -> None:
+    """Validate a user-entered seed under the reception policy (D-001,
+    spec «Seed policy» R-1…R-7).
+
+    Two modes:
+    - permissive (`strict=False`, the system default): accepts ANY
+      non-empty phrase -- not only BIP-39 mnemonics. The BIP-39 parse
+      and the C6 entropy floor are NOT applied (R-1).
+    - strict (`strict=True`, CLI `--strict-bip39`): full BIP-39 parse
+      (supported word count, wordlist membership, checksum) followed
+      by the C6 entropy floor (`validate_entropy`). Any failure is a
+      blocking refusal -- the wallet is not opened from such a phrase
+      (R-4); a word count outside 12/15/18/21/24 is the same strict
+      parse error, not a separate kind of refusal (R-5).
+
+    In both modes an empty (after trim) phrase is an error (R-2); the
+    check runs before the mode branch, so the error is identical in
+    both.
+
+    Contract: `seed` is the phrase as typed; `strict` selects the
+    mode. Per the repo's kwargs-only convention the argument is passed
+    explicitly at every call site -- the declared `False` documents
+    the policy default (permissive), it is not a silently-fillable
+    slot. Returns `None` when the phrase is accepted. Raises
+    `ValueError` ('seed must not be empty') for an empty phrase in
+    either mode; in strict mode additionally `ValueError`
+    ('BIP-39 mnemonic parse error: ...') for a phrase that is not a
+    valid BIP-39 mnemonic and `InsufficientEntropy` for one that
+    parses but violates the entropy floor. Strict checks run before
+    any KDF work. The R-6 low-entropy WARNING is never raised here --
+    it is non-blocking; see `entropy_warning` and the CLI reception
+    wiring.
+
+    Mirrors the Rust port's `validate_seed` (post-D-001 split).
+    """
+    if not seed.strip():
+        raise ValueError('seed must not be empty')
+    if strict:
+        words = _parse_mnemonic(seed=seed)
+        validate_entropy(words=words)
 
 
 # No require_kwargs_only on purpose: this is a callback-style predicate,

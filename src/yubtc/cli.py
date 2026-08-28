@@ -17,13 +17,48 @@ from yubtc.fwd import (
 )
 from yubtc.net import BACKENDS, get_backend
 from yubtc.wallet import Wallet
-from yubtc.seed import generate_seed, get_seed_and_passphrase
+from yubtc.seed import entropy_warning, generate_seed, get_seed_and_passphrase, validate_seed
 from yubtc.util import NotNone, require_kwargs_only
 
 
 def _provider_names() -> str:
     """Return the comma-separated list of registered provider names."""
     return ', '.join(sorted(BACKENDS))
+
+
+_STRICT_BIP39_OPTION = click.option(
+    '--strict-bip39',
+    help='Enforce strict BIP-39 seed validation (wordlist, checksum and entropy floor). '
+         'Default: permissive -- any non-empty seed is accepted (low-entropy seeds warn).',
+    default=False, required=False, is_flag=True,
+)
+
+
+@require_kwargs_only
+def _validate_entered_seed(seed: str = NotNone, strict: bool = NotNone) -> None:
+    """Reception-time seed validation for every command that accepts a
+    seed (D-001 seed policy; mirrors the Rust CLI's
+    prompt.rs::validate_entered_seed).
+
+    Runs right after the seed is read and before the wallet is opened:
+    `validate_seed` enforces the mode policy -- permissive (default)
+    accepts any non-empty phrase, strict (CLI `--strict-bip39`) adds
+    the full BIP-39 parse + C6 entropy floor as a blocking refusal --
+    and the R-6 entropy-estimate warning is printed to stderr WITHOUT
+    blocking when the estimate falls below `MIN_ENTROPY_WARNING_BITS`.
+
+    Contract: `seed` is the phrase as read from the user; `strict` is
+    the `--strict-bip39` flag value. Returns `None`. Raises
+    `ValueError` (empty seed in either mode, or a strict-mode
+    parse/entropy failure) -- the command aborts before any KDF work.
+    Prints the warning to stderr when applicable; stdout stays
+    machine-readable (addresses, balances). Uses `click.echo(err=True)`
+    so the write is flushed before any output capture reads it back.
+    """
+    validate_seed(seed=seed, strict=strict)
+    warning = entropy_warning(phrase=seed)
+    if warning is not None:
+        click.echo('warning: ' + warning, err=True)
 
 
 def _resolve_provider(name: str):
@@ -76,10 +111,12 @@ def newseed(n: int, unique: bool) -> None:
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('--new', help='Count of new unused addresses',
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
+@_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
-def address(nonce: TNonce, new: int, provider: str) -> None:
+def address(nonce: TNonce, new: int, strict_bip39: bool, provider: str) -> None:
     backend = _resolve_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
+    _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
                     passphrase=passphrase, backend=backend)
     print(wallet.privkeys[0].get_p2pkh_address().decode('ascii'))
@@ -88,10 +125,12 @@ def address(nonce: TNonce, new: int, provider: str) -> None:
 @cli.command('dumpprivkey', help='Show private key in WIF format and exit.')
 @click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
+@_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
-def dumpprivkey(nonce: TNonce, provider: str) -> None:
+def dumpprivkey(nonce: TNonce, strict_bip39: bool, provider: str) -> None:
     backend = _resolve_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
+    _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
                     passphrase=passphrase, backend=backend)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
@@ -109,13 +148,15 @@ def dumpprivkey(nonce: TNonce, provider: str) -> None:
               default=False, required=False, is_flag=True)
 @click.option('-v', '--verbose', help='Print verbosity',
               default=False, required=False, is_flag=True)
+@_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
 def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
-            verbose: bool, provider: str) -> None:
+            verbose: bool, strict_bip39: bool, provider: str) -> None:
     from yubtc.misc import satoshi2btc
     backend = _resolve_provider(name=provider)
     total = TBTC(0)
     seed, passphrase = get_seed_and_passphrase()
+    _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
                     passphrase=passphrase, backend=backend)
     for privkey in wallet.privkeys:
@@ -167,6 +208,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
 @click.option('-y', '--yes', help='Skip the broadcast confirmation prompt. Implies --broadcast when '
               'used in non-interactive mode; safe to combine with --broadcast explicitly.',
               default=False, is_flag=True)
+@_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
@@ -181,10 +223,12 @@ def send(
         scan: bool,
         interactive: bool,
         yes: bool,
+        strict_bip39: bool,
         provider: str) -> None:
     backend = _resolve_provider(name=provider)
     amount = None if amount == 'ALL' else TBTC(amount)
     seed, passphrase = get_seed_and_passphrase()
+    _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
                     passphrase=passphrase, backend=backend)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
