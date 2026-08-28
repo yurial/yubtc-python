@@ -15,7 +15,7 @@ from yubtc.fwd import (
     TSatoshi,
     TBTC,
 )
-from yubtc.net import BACKENDS, get_backend, set_current_backend
+from yubtc.net import BACKENDS, get_backend
 from yubtc.wallet import Wallet
 from yubtc.seed import generate_seed, get_seed_and_passphrase
 from yubtc.util import NotNone, require_kwargs_only
@@ -26,8 +26,10 @@ def _provider_names() -> str:
     return ', '.join(sorted(BACKENDS))
 
 
-def _switch_to_provider(name: str) -> None:
-    """Resolve `name` to a backend and set it as the current one.
+def _resolve_provider(name: str):
+    """Resolve `name` to a backend instance (backend injection: the
+    result is passed explicitly into Wallet/broadcastTx; there is no
+    module-global current backend).
 
     Catches `ValueError` from `get_backend` (unknown name) and
     re-raises with the click-friendly message pre-formatted. The CLI
@@ -35,7 +37,7 @@ def _switch_to_provider(name: str) -> None:
     sorted list, so in practice this only fires when the wallet is
     driven programmatically.
     """
-    set_current_backend(get_backend(name=name))
+    return get_backend(name=name)
 
 
 _PROVIDER_OPTION = click.option(
@@ -76,10 +78,10 @@ def newseed(n: int, unique: bool) -> None:
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
 @_PROVIDER_OPTION
 def address(nonce: TNonce, new: int, provider: str) -> None:
-    _switch_to_provider(name=provider)
+    backend = _resolve_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
-                    passphrase=passphrase)
+                    passphrase=passphrase, backend=backend)
     print(wallet.privkeys[0].get_p2pkh_address().decode('ascii'))
 
 
@@ -88,10 +90,10 @@ def address(nonce: TNonce, new: int, provider: str) -> None:
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @_PROVIDER_OPTION
 def dumpprivkey(nonce: TNonce, provider: str) -> None:
-    _switch_to_provider(name=provider)
+    backend = _resolve_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
-                    passphrase=passphrase)
+                    passphrase=passphrase, backend=backend)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
     print(wallet.privkeys[0].get_privwif().decode('ascii'))
 
@@ -110,12 +112,12 @@ def dumpprivkey(nonce: TNonce, provider: str) -> None:
 @_PROVIDER_OPTION
 def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
             verbose: bool, provider: str) -> None:
-    _switch_to_provider(name=provider)
     from yubtc.misc import satoshi2btc
+    backend = _resolve_provider(name=provider)
     total = TBTC(0)
     seed, passphrase = get_seed_and_passphrase()
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
-                    passphrase=passphrase)
+                    passphrase=passphrase, backend=backend)
     for privkey in wallet.privkeys:
         txs = privkey.get_unspent(confirmations=confirmations)
         in_amount = 0
@@ -180,11 +182,11 @@ def send(
         interactive: bool,
         yes: bool,
         provider: str) -> None:
-    _switch_to_provider(name=provider)
+    backend = _resolve_provider(name=provider)
     amount = None if amount == 'ALL' else TBTC(amount)
     seed, passphrase = get_seed_and_passphrase()
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
-                    passphrase=passphrase)
+                    passphrase=passphrase, backend=backend)
     print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
     def on_address(tp, unspent):
@@ -268,7 +270,8 @@ def _send_interactive(
         confirmations=confirmations, scan=False,
         sources=grouped, cashback_addr=cashback_addr, on_address=None,
     )
-    _announce_tx(result=result, dst=address, broadcast=broadcast, yes=yes)
+    _announce_tx(backend=wallet._backend, result=result, dst=address,
+                 broadcast=broadcast, yes=yes)
 
 
 @cli.command('pushtx', help='Push a signed raw transaction to the network. The transaction is '
@@ -278,7 +281,7 @@ def _send_interactive(
               default=False, is_flag=True)
 @_PROVIDER_OPTION
 def pushtx(yes: bool, provider: str) -> None:
-    _switch_to_provider(name=provider)
+    backend = _resolve_provider(name=provider)
     import sys
     from yubtc.hash import sha256
     from yubtc.misc import yesno
@@ -311,4 +314,4 @@ def pushtx(yes: bool, provider: str) -> None:
     if not yes and not yesno('broadcast? '):
         print('Cancelled')
         return
-    broadcastTx(rawtx)
+    broadcastTx(backend, rawtx)

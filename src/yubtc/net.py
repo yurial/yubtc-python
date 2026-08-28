@@ -14,16 +14,12 @@ wired up at runtime.
 
 The module-level free functions `get_address_info`,
 `get_address_unspent`, `broadcastTx` are the public entry point: each
-one resolves the current backend via `get_current_backend()` and calls
-its method. They exist so callers (and tests) have a single, stable
-function name to call or patch.
-
-Swap the current backend with `set_current_backend(backend)` -- e.g.
-a custom subclass for alternative API providers, or a no-op test
-backend defined in the test suite. `reset_backend()` restores the
-default. Resolve a registered provider by name with
-`get_backend(name=...)`; the registry is what powers the `--provider`
-CLI flag.
+one takes the backend EXPLICITLY as its first argument and calls its
+method (backend injection; there is no module-global current backend,
+mirroring the Rust port's `net::get_address_info(backend, ...)`).
+Callers resolve the backend once with `get_backend(name=...)` and
+thread it through -- the registry is what powers the `--provider` CLI
+flag.
 """
 from yubtc.fwd import TAddress, DEFAULT_TIMEOUT_HTTP
 
@@ -270,53 +266,25 @@ def get_backend(name: str = 'blockchain.info') -> NetworkBackend:
     return BACKENDS[name]()
 
 
-_current_backend = get_backend()
-
-
-def get_current_backend() -> NetworkBackend:
-    """Return the backend used by wallet/TPrivKey network calls.
-
-    `set_current_backend(backend)` swaps this; `reset_backend()`
-    restores the default `BlockchainInfoBackend`.
-    """
-    return _current_backend
-
-
-def set_current_backend(backend: NetworkBackend) -> None:
-    """Replace the backend used by subsequent wallet network calls.
-
-    `get_current_backend()` returns the new backend from the next
-    lookup. Pair with `reset_backend()` to undo the change.
-    """
-    global _current_backend
-    _current_backend = backend
-
-
-def reset_backend() -> None:
-    """Restore the default `BlockchainInfoBackend`."""
-    global _current_backend
-    _current_backend = get_backend()
-
 
 # ---------------------------------------------------------------------------
 # Module-level free functions: the public entry point.
 #
-# Each function resolves the current backend and calls its method. The
-# test suite can intercept at either layer: by monkeypatching the
-# free function itself, or by swapping the backend via
-# `set_current_backend`.
+# Backend injection: each function takes the backend as its first
+# argument. The test suite can intercept by passing a stub backend
+# (or monkeypatching the free function itself).
 # ---------------------------------------------------------------------------
 
-def get_address_unspent(address: TAddress) -> list:
-    """Return the UTXOs for `address` via the current backend."""
-    return get_current_backend().get_unspent(address)
+def get_address_unspent(backend: NetworkBackend, address: TAddress) -> list:
+    """Return the UTXOs for `address` via `backend`."""
+    return backend.get_unspent(address)
 
 
-def get_address_info(address: TAddress) -> dict:
-    """Return the address's balance info via the current backend."""
-    return get_current_backend().get_info(address)
+def get_address_info(backend: NetworkBackend, address: TAddress) -> dict:
+    """Return the address's balance info via `backend`."""
+    return backend.get_info(address)
 
 
-def broadcastTx(rawtx: bytes) -> None:
-    """Broadcast a signed raw transaction via the current backend."""
-    get_current_backend().send_tx(rawtx)
+def broadcastTx(backend: NetworkBackend, rawtx: bytes) -> None:
+    """Broadcast a signed raw transaction via `backend`."""
+    backend.send_tx(rawtx)

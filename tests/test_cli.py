@@ -940,17 +940,21 @@ def test_send_invalid_amount_shows_friendly_error():
 
 
 def test_address_accepts_each_provider(offline, monkeypatch):
-    """`address --provider NAME` switches the backend before any network call."""
+    """`address --provider NAME` resolves the named backend and hands it
+    to the Wallet (backend injection; no process-global backend)."""
     import yubtc.cli as cli_mod
     from yubtc.net import (
         BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend,
     )
     seen = {}
+    real_init = cli_mod.Wallet.__init__
 
-    def fake_set_current(backend):
-        seen['type'] = type(backend).__name__
+    def spy_init(self, *args, **kwargs):
+        seen['type'] = type(kwargs.get('backend')).__name__
+        return real_init(self, *args, **kwargs)
 
-    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
     for name, expected in (
         ('blockchain.info', BlockchainInfoBackend),
         ('blockstream', BlockstreamBackend),
@@ -968,11 +972,14 @@ def test_address_default_provider_is_blockchain_info(offline, monkeypatch):
     import yubtc.cli as cli_mod
     from yubtc.net import BlockchainInfoBackend
     seen = {}
+    real_init = cli_mod.Wallet.__init__
 
-    def fake_set_current(backend):
-        seen['type'] = type(backend).__name__
+    def spy_init(self, *args, **kwargs):
+        seen['type'] = type(kwargs.get('backend')).__name__
+        return real_init(self, *args, **kwargs)
 
-    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
     _invoke(['address'], stdin='\n' + SEED + '\n\n' + '')
     assert seen['type'] == BlockchainInfoBackend.__name__
 
@@ -986,44 +993,52 @@ def test_address_unknown_provider_rejected_by_click(offline):
 
 
 def test_balance_accepts_provider(offline, monkeypatch):
-    """`balance --provider blockstream` switches the backend."""
+    """`balance --provider blockstream` resolves the named backend."""
     import yubtc.cli as cli_mod
     from yubtc.net import BlockstreamBackend
     seen = {}
+    real_init = cli_mod.Wallet.__init__
 
-    def fake_set_current(backend):
-        seen['type'] = type(backend).__name__
+    def spy_init(self, *args, **kwargs):
+        seen['type'] = type(kwargs.get('backend')).__name__
+        return real_init(self, *args, **kwargs)
 
-    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
     _invoke(['balance', '--provider', 'blockstream'],
             stdin='\n' + SEED + '\n\n' + '')
     assert seen['type'] == BlockstreamBackend.__name__
 
 
 def test_pushtx_accepts_provider(offline, monkeypatch):
-    """`pushtx --provider mempool.space` switches the backend before broadcast."""
+    """`pushtx --provider mempool.space` resolves the named backend and
+    hands it to broadcastTx (spy via the module function)."""
     import yubtc.cli as cli_mod
     from yubtc.net import MempoolSpaceBackend
     seen = {}
+    real_fn = cli_mod.broadcastTx
 
-    def fake_set_current(backend):
+    def spy_broadcast(backend, rawtx):
         seen['type'] = type(backend).__name__
 
-    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    monkeypatch.setattr(cli_mod, 'broadcastTx', spy_broadcast)
     _invoke(['pushtx', '--provider', 'mempool.space', '--yes'], stdin='aabb')
     assert seen['type'] == MempoolSpaceBackend.__name__
 
 
 def test_send_accepts_provider(offline, monkeypatch):
-    """`send --provider blockstream` switches the backend before any scan."""
+    """`send --provider blockstream` resolves the named backend."""
     import yubtc.cli as cli_mod
     from yubtc.net import BlockstreamBackend
     seen = {}
+    real_init = cli_mod.Wallet.__init__
 
-    def fake_set_current(backend):
-        seen['type'] = type(backend).__name__
+    def spy_init(self, *args, **kwargs):
+        seen['type'] = type(kwargs.get('backend')).__name__
+        return real_init(self, *args, **kwargs)
 
-    monkeypatch.setattr(cli_mod, 'set_current_backend', fake_set_current)
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
     # The make_transaction stub avoids needing real UTXOs.
     _stub_make_transaction(monkeypatch, amount=50_000)
     _invoke(

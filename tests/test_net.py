@@ -45,8 +45,8 @@ def test_broadcastTx_posts_raw_tx_as_form_field(monkeypatch):
     captured = []
     monkeypatch.setattr(requests, 'post',
                         lambda url, **kwargs: (captured.append((url, kwargs)), fake)[1])
-    from yubtc.net import broadcastTx
-    broadcastTx(b'\x00\x01\x02\xff')
+    from yubtc.net import broadcastTx, get_backend
+    broadcastTx(get_backend(), b'\x00\x01\x02\xff')
     assert captured[0][0] == 'https://blockchain.info/pushtx'
     assert captured[0][1]['data'] == {'tx': '000102ff'}
 
@@ -61,8 +61,8 @@ def test_broadcastTx_passes_timeout(monkeypatch):
     captured = []
     monkeypatch.setattr(requests, 'post',
                         lambda url, **kwargs: (captured.append(kwargs), fake)[1])
-    from yubtc.net import broadcastTx
-    broadcastTx(b'\x00')
+    from yubtc.net import broadcastTx, get_backend
+    broadcastTx(get_backend(), b'\x00')
     assert 'timeout' in captured[0]
     assert captured[0]['timeout'] > 0
 
@@ -99,7 +99,7 @@ def test_get_address_unspent_returns_unspent_outputs(monkeypatch):
     }
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_unspent
-    out = get_address_unspent(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
+    out = get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
     assert out == [
         {'tx': 'aaa', 'out_n': 0, 'amount': 1000},
         {'tx': 'bbb', 'out_n': 1, 'amount': 2000},
@@ -114,7 +114,7 @@ def test_get_address_unspent_uses_unspent_endpoint(monkeypatch):
     captured = []
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: (captured.append(url), fake)[1])
     from yubtc.net import get_address_unspent
-    get_address_unspent(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
+    get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
     assert captured == ['https://blockchain.info/unspent?active=1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k']
 
 
@@ -124,7 +124,7 @@ def test_get_address_unspent_returns_empty_on_json_decode_error(monkeypatch):
     fake.json.side_effect = JSONDecodeError('msg', 'doc', 0)
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_unspent
-    assert get_address_unspent(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == []
+    assert get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == []
 
 
 def test_get_address_unspent_propagates_non_json_errors(monkeypatch):
@@ -135,7 +135,7 @@ def test_get_address_unspent_propagates_non_json_errors(monkeypatch):
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_unspent
     with pytest.raises(KeyError):
-        get_address_unspent(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
+        get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
 
 
 def test_get_address_unspent_passes_timeout(monkeypatch):
@@ -148,7 +148,7 @@ def test_get_address_unspent_passes_timeout(monkeypatch):
     monkeypatch.setattr(requests, 'get',
                         lambda url, **kwargs: (captured.append(kwargs), fake)[1])
     from yubtc.net import get_address_unspent
-    get_address_unspent(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
+    get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
     assert 'timeout' in captured[0]
     assert captured[0]['timeout'] > 0
 
@@ -160,7 +160,7 @@ def test_get_address_info_returns_address_subdict(monkeypatch):
     fake.json.return_value = {'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k': info}
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_info
-    assert get_address_info(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == info
+    assert get_address_info(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == info
 
 
 def test_get_address_info_uses_balance_endpoint(monkeypatch):
@@ -170,7 +170,7 @@ def test_get_address_info_uses_balance_endpoint(monkeypatch):
     captured = []
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: (captured.append(url), fake)[1])
     from yubtc.net import get_address_info
-    get_address_info(b'1addr')
+    get_address_info(get_backend(), b'1addr')
     assert captured == ['https://blockchain.info/balance?active=1addr']
 
 
@@ -180,7 +180,7 @@ def test_get_address_info_returns_zero_received_on_json_decode_error(monkeypatch
     fake.json.side_effect = JSONDecodeError('msg', 'doc', 0)
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_info
-    assert get_address_info(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == {'total_received': 0}
+    assert get_address_info(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == {'total_received': 0}
 
 
 def test_get_address_info_propagates_non_json_errors(monkeypatch):
@@ -191,7 +191,7 @@ def test_get_address_info_propagates_non_json_errors(monkeypatch):
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_info
     with pytest.raises(KeyError):
-        get_address_info(b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
+        get_address_info(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
 
 
 def test_get_address_info_passes_timeout(monkeypatch):
@@ -203,7 +203,7 @@ def test_get_address_info_passes_timeout(monkeypatch):
     monkeypatch.setattr(requests, 'get',
                         lambda url, **kwargs: (captured.append(kwargs), fake)[1])
     from yubtc.net import get_address_info
-    get_address_info(b'1addr')
+    get_address_info(get_backend(), b'1addr')
     assert 'timeout' in captured[0]
     assert captured[0]['timeout'] > 0
 
@@ -212,8 +212,6 @@ def test_get_address_info_passes_timeout(monkeypatch):
 # NetworkBackend abstraction.
 #
 # The wallet doesn't import blockchain.info directly; it talks to a
-# `NetworkBackend` resolved at call time via `get_current_backend()`.
-# `use_backend()` swaps the default for the process; `reset_backend()`
 # restores the `BlockchainInfoBackend`.
 # ---------------------------------------------------------------------------
 
@@ -238,16 +236,11 @@ def test_OfflineBackend_returns_empty_data_and_is_silent_broadcast():
     b.send_tx(b'\x00')
 
 
-def test_free_functions_delegate_to_current_backend():
-    """Each free function resolves the current backend and calls its method.
-
-    Swapping the backend via `set_current_backend` changes what the
-    free functions return/raise, even though the functions themselves
-    never reference blockchain.info.
-    """
+def test_free_functions_delegate_to_explicit_backend():
+    """Each free function calls the passed backend's method (backend
+    injection: no module-global current backend exists)."""
     from yubtc.net import (
         get_address_info, get_address_unspent, broadcastTx,
-        set_current_backend, reset_backend,
     )
 
     class FakeBackend(NetworkBackend):
@@ -266,59 +259,39 @@ def test_free_functions_delegate_to_current_backend():
             self.calls.append(('send', rawtx))
 
     fake = FakeBackend()
-    set_current_backend(fake)
-    try:
-        assert get_address_unspent(b'1addr') == [{'marker': 'unspent'}]
-        assert get_address_info(b'1addr') == {'marker': 'info'}
-        broadcastTx(b'\x01\x02')
-        assert fake.calls == [
-            ('unspent', b'1addr'),
-            ('info', b'1addr'),
-            ('send', b'\x01\x02'),
-        ]
-    finally:
-        reset_backend()
+    assert get_address_unspent(fake, b'1addr') == [{'marker': 'unspent'}]
+    assert get_address_info(fake, b'1addr') == {'marker': 'info'}
+    broadcastTx(fake, b'\x01\x02')
+    assert fake.calls == [
+        ('unspent', b'1addr'),
+        ('info', b'1addr'),
+        ('send', b'\x01\x02'),
+    ]
 
 
-def test_get_current_backend_default_is_blockchain_info_backend():
-    """`get_current_backend()` returns a `BlockchainInfoBackend` by default."""
-    from yubtc.net import BlockchainInfoBackend, get_current_backend
-    assert isinstance(get_current_backend(), BlockchainInfoBackend)
 
 
-def test_set_current_backend_swaps_current_backend():
-    """`set_current_backend` swaps; `reset_backend` restores."""
-    from yubtc.net import get_current_backend, reset_backend, set_current_backend
-    fake = OfflineBackend()
-    set_current_backend(fake)
-    assert get_current_backend() is fake
-    reset_backend()
-    assert get_current_backend() is not fake
-
-
-def test_set_current_backend_takes_effect_for_wallet_calls():
-    """End-to-end: after `set_current_backend(OfflineBackend())`, wallet
-    network calls go through the new backend (no exceptions, no real
-    HTTP)."""
-    from yubtc.net import reset_backend, set_current_backend
+def test_tprivkey_uses_injected_backend():
+    """Backend injection: `TPrivKey` stores the backend it was given
+    and routes `get_unspent`/`is_unused`/`get_info` through it."""
     from yubtc.wallet import TPrivKey
-    set_current_backend(OfflineBackend())
-    try:
-        p = TPrivKey(seed='qwe', nonce=0, passphrase='')
-        # OfflineBackend returns no UTXOs and a fresh address.
-        assert p.get_unspent(confirmations=0) == []
-        assert p.is_unused() is True
-        assert p.get_info() == {'total_received': 0}
-    finally:
-        reset_backend()
+    fake = OfflineBackend()
+    p = TPrivKey(seed='qwe', nonce=0, passphrase='', backend=fake)
+    assert p.get_unspent(confirmations=0) == []
+    assert p.is_unused() is True
+    assert p.get_info() == {'total_received': 0}
 
 
-# ---------------------------------------------------------------------------
-# BlockchainInfoBackend with a custom base URL.
-#
-# The base URL is the only constructor knob; it lets a corporate
-# firewall's mirror serve the same endpoints without code changes.
-# ---------------------------------------------------------------------------
+def test_wallet_uses_injected_backend():
+    """End-to-end: `Wallet(backend=OfflineBackend())` derives and scans
+    offline (fresh address → unused → gap stop at nonce 0)."""
+    from yubtc.wallet import Wallet
+    w = Wallet(seed='qwe', nonce=0, new_addresses=1, passphrase='',
+               backend=OfflineBackend())
+    assert len(w.privkeys) == 1
+
+
+
 
 def test_blockchain_info_backend_with_custom_base_url(monkeypatch):
     """`BlockchainInfoBackend(base_url=...)` retargets every endpoint."""
@@ -666,7 +639,8 @@ def test_mempool_space_backend_send_tx_posts_to_mempool(monkeypatch):
 def test_BACKENDS_lists_all_three_providers():
     """The registry exposes the three providers the wallet supports."""
     from yubtc.net import (
-        BACKENDS, BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend,
+        get_backend, BACKENDS, BlockchainInfoBackend,
+        BlockstreamBackend, MempoolSpaceBackend,
     )
     assert set(BACKENDS) == {'blockchain.info', 'blockstream', 'mempool.space'}
     assert BACKENDS['blockchain.info'] is BlockchainInfoBackend
@@ -683,7 +657,7 @@ def test_get_backend_default_is_blockchain_info():
 def test_get_backend_by_name_returns_correct_class():
     """Each registered name resolves to its corresponding backend class."""
     from yubtc.net import (
-        BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend, get_backend,
+            BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend, get_backend,
     )
     assert isinstance(get_backend(name='blockchain.info'), BlockchainInfoBackend)
     assert isinstance(get_backend(name='blockstream'), BlockstreamBackend)

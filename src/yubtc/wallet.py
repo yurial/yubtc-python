@@ -20,15 +20,16 @@ class TxResult(NamedTuple):
     fee: TSatoshi
 
 
-def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool, yes: bool = NotNone) -> None:
+def _announce_tx(backend: 'NetworkBackend', result: TxResult, dst: TAddress,
+                 broadcast: bool, yes: bool = NotNone) -> None:
     """Print the signed tx dump and (optionally) push it to the network.
 
     Used by both `Wallet.send` and the interactive CLI path so they
     surface the same id + amount summary + rawtx and prompt identically
-    before broadcasting. The broadcast uses the current backend
-    indirectly via the `broadcastTx` free function -- tests that want to
-    intercept the call can either swap the backend with
-    `yubtc.net.set_current_backend(...)` or monkeypatch `broadcastTx`.
+    before broadcasting. The broadcast goes through `backend`
+    explicitly (backend injection: no module global) -- tests that
+    want to intercept the call can pass a stub backend or monkeypatch
+    `broadcastTx`.
 
     `yes=True` skips the broadcast confirmation prompt and broadcasts
     immediately; useful for scripts and CI where the prompt is unwanted.
@@ -46,7 +47,7 @@ def _announce_tx(result: TxResult, dst: TAddress, broadcast: bool, yes: bool = N
     print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
     if broadcast:
         if yes or yesno('broadcast? '):
-            broadcastTx(rawtx)
+            broadcastTx(backend, rawtx)
     else:
         # No --broadcast: the tx is fully signed and shown above, but
         # never reaches the network. Print a clear note so the
@@ -93,12 +94,20 @@ class TPrivKey(object):
             self,
             seed: TSeed = NotNone,
             nonce: TNonce = NotNone,
-            passphrase: TPassphrase = ''):
+            passphrase: TPassphrase = '',
+            backend: 'NetworkBackend' = None):
+        """Derive a single key. `backend` is the network backend this
+        key's `get_info`/`get_unspent` calls go through (backend
+        injection: no module-global backend exists; mirrors the Rust
+        port). `None` resolves the default `blockchain.info` via
+        `get_backend()` so ad-hoc call sites stay terse."""
         from yubtc.crypto import seed2privkey
+        from yubtc.net import get_backend
         if not seed:
             raise ValueError('seed cannot be empty')
         self.privkey = seed2privkey(seed=seed, nonce=nonce, passphrase=passphrase)
         self.nonce = nonce
+        self._backend = backend if backend is not None else get_backend()
         self._info = None
 
     def get_privwif(self) -> str:
@@ -112,7 +121,7 @@ class TPrivKey(object):
     def get_info(self) -> dict:
         from yubtc.net import get_address_info
         if not self._info:
-            self._info = get_address_info(self.get_p2pkh_address())
+            self._info = get_address_info(self._backend, self.get_p2pkh_address())
         return self._info
 
     def is_unused(self) -> bool:
@@ -123,7 +132,7 @@ class TPrivKey(object):
     def get_unspent(self, confirmations: int = NotNone) -> list:
         from yubtc.net import get_address_unspent
         result = list()
-        for x in get_address_unspent(self.get_p2pkh_address()):
+        for x in get_address_unspent(self._backend, self.get_p2pkh_address()):
             if x['confirmations'] >= confirmations:
                 result.append({
                     'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
@@ -140,10 +149,17 @@ class Wallet(object):
             seed: TSeed = NotNone,
             nonce: TNonce = NotNone,
             new_addresses: int = NotNone,
-            passphrase: TPassphrase = ''):
+            passphrase: TPassphrase = '',
+            backend: 'NetworkBackend' = None):
+        """Open a wallet. `backend` is the network backend every scan
+        and broadcast goes through (backend injection: no module
+        global; mirrors the Rust port). `None` resolves the default
+        `blockchain.info`."""
+        from yubtc.net import get_backend
         if not seed:
             raise ValueError('seed cannot be empty')
         self._seed = seed
+        self._backend = backend if backend is not None else get_backend()
         # Stash the passphrase so the gap scan below derives each
         # subsequent nonce with the same secret. Without this, every
         # new TPrivKey would default to an empty passphrase and the
@@ -151,13 +167,15 @@ class Wallet(object):
         self._passphrase = passphrase
         self.privkeys = []
         while True:
-            privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase)
+            privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase,
+                               backend=self._backend)
             if privkey.is_unused():
                 break
             self.privkeys.append(privkey)
             nonce = nonce + 1
         for i in range(new_addresses):
-            privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase)
+            privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase,
+                               backend=self._backend)
             self.privkeys.append(privkey)
             nonce = nonce + 1
 
@@ -181,7 +199,8 @@ class Wallet(object):
             dst=dst, amount=converted_amount, feekb=feekb, fee=satoshi_fee,
             confirmations=confirmations, scan=scan,
             sources=None, cashback_addr=None, on_address=on_address)
-        _announce_tx(result=result, dst=dst, broadcast=broadcast, yes=yes)
+        _announce_tx(backend=self._backend, result=result, dst=dst,
+                     broadcast=broadcast, yes=yes)
 
     @require_kwargs_only
     def _make_vin(self, sources: list = NotNone) -> tuple:
@@ -259,7 +278,8 @@ class Wallet(object):
         nonce = 0
         cashback_addr = None
         while True:
-            pk = TPrivKey(seed=self._seed, nonce=nonce, passphrase=self._passphrase)
+            pk = TPrivKey(seed=self._seed, nonce=nonce, passphrase=self._passphrase,
+                          backend=self._backend)
             unspent = pk.get_unspent(confirmations=confirmations)
             if pk.is_unused() and not unspent:
                 # True gap: this address has never received anything and
