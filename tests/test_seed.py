@@ -87,17 +87,31 @@ def test_allow_dups_false_count_exceeds_wordlist_raises():
 # ---------------------------------------------------------------------------
 
 def test_generate_seed_returns_single_space_joined_string(monkeypatch):
-    """The output is a single string, with words separated by single spaces."""
+    """The output is a single string, with words separated by single spaces.
+
+    The injected draw is duplicate-light on purpose: since C6 the
+    default (allow_dups=True) draw is redrawn until the entropy floor
+    passes, so a constant all-same-word draw would never terminate.
+    """
     from random import SystemRandom
-    monkeypatch.setattr(SystemRandom, 'choices', lambda self, pop, k: ['abandon'] * k)
+    monkeypatch.setattr(SystemRandom, 'choices',
+                        lambda self, pop, k: ['abandon', 'ability', 'able', 'about'][:k])
     from yubtc.seed import generate_seed
-    assert generate_seed(count=4, allow_dups=True) == 'abandon abandon abandon abandon'
+    assert generate_seed(count=4, allow_dups=True) == 'abandon ability able about'
 
 
 def test_generate_seed_word_count_matches_param(monkeypatch):
+    """The generated phrase has exactly `count` words.
+
+    The injected draw cycles a 32-word distinct prefix of the wordlist
+    so every word repeats at most twice -- a constant draw would spin
+    the C6 redraw loop forever (see the validate_entropy tests).
+    """
     from random import SystemRandom
-    monkeypatch.setattr(SystemRandom, 'choices', lambda self, pop, k: ['abandon'] * k)
-    from yubtc.seed import generate_seed
+    from yubtc.seed import BIP39_WORDLIST, generate_seed
+    pop = BIP39_WORDLIST[:32]
+    monkeypatch.setattr(SystemRandom, 'choices',
+                        lambda self, population, k: [pop[i % len(pop)] for i in range(k)])
     for n in (1, 12, 15, 24, 50):
         assert len(generate_seed(count=n, allow_dups=True).split()) == n
 
@@ -398,3 +412,194 @@ def test_get_seed_and_passphrase_returns_pair(monkeypatch):
     seed, passphrase = get_seed_and_passphrase()
     assert seed == 'ss'
     assert passphrase == 'pp'
+
+
+# ---------------------------------------------------------------------------
+# C6 entropy floor: min_unique_words / MAX_WORD_REPEATS / validate_entropy /
+# validate_seed / generate_seed redraw. Mirrors the Rust port's
+# core/src/seed.rs C6 block (issue-seed-entropy, commit e89dde0).
+# ---------------------------------------------------------------------------
+
+# BIP-39 official test vector #2 (TREZOR): checksum-valid, 8 distinct
+# words of 12 -- accepted by both the parse and the entropy floor.
+LEGAL_WINNER = 'legal winner thank year wave sausage worth useful legal winner thank yellow'
+
+
+def test_max_word_repeats_is_two():
+    """The repeats cap is a named constant: 2 repeats per single word."""
+    from yubtc.seed import MAX_WORD_REPEATS
+    assert MAX_WORD_REPEATS == 2
+
+
+def test_min_unique_words_table():
+    """`min_unique_words` floor for every supported length plus the
+    unsupported pass-through (0 -> the word-count check gates those)."""
+    from yubtc.seed import min_unique_words
+    assert min_unique_words(words=12) == 4
+    assert min_unique_words(words=15) == 5
+    assert min_unique_words(words=18) == 6
+    assert min_unique_words(words=21) == 7
+    assert min_unique_words(words=24) == 8
+    # Unsupported lengths: 0 (the word-count check rejects them before
+    # the entropy floor is consulted).
+    assert min_unique_words(words=0) == 0
+    assert min_unique_words(words=11) == 0
+    assert min_unique_words(words=13) == 0
+    assert min_unique_words(words=25) == 0
+
+
+def test_min_unique_words_rejects_positional_and_missing_args():
+    """min_unique_words requires kwargs-only call style, no silent defaults."""
+    from yubtc.seed import min_unique_words
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        min_unique_words(12)
+    with pytest.raises(TypeError, match='words not set'):
+        min_unique_words()
+    with pytest.raises(ValueError, match='words is None'):
+        min_unique_words(words=None)
+
+
+def test_validate_entropy_accepts_empty_word_list():
+    """Empty word list: no counts, no maximum -> vacuously accepted
+    (the floor only ever sees non-empty word lists from validate_seed,
+    but the contract must not depend on that)."""
+    from yubtc.seed import validate_entropy
+    assert validate_entropy(words=[]) is None
+
+
+def test_validate_entropy_accepts_valid_bip39_12_words():
+    """Standard BIP-39 vector, 8 distinct words of 12 -- accepted by
+    validate_entropy and by the full validate_seed."""
+    from yubtc.seed import validate_entropy, validate_seed
+    words = LEGAL_WINNER.split()
+    assert validate_entropy(words=words) is None
+    assert validate_seed(seed=LEGAL_WINNER) is None
+
+
+def test_validate_seed_rejects_all_duplicates():
+    """The classic all-'abandon' BIP-39 vector (official vector #1) is
+    checksum-valid but has 2 distinct words of 12 -- rejected by the
+    entropy floor, BY CONSTRUCTION."""
+    from yubtc.seed import InsufficientEntropy, _parse_mnemonic, validate_seed
+    phrase = ' '.join(['abandon'] * 11 + ['about'])
+    # Sanity: the phrase IS valid BIP-39 (count, wordlist and checksum pass).
+    assert _parse_mnemonic(seed=phrase) == phrase.split()
+    with pytest.raises(InsufficientEntropy, match='distinct words'):
+        validate_seed(seed=phrase)
+
+
+def test_validate_entropy_rejects_mostly_duplicates():
+    """10 x abandon + zebra + zoo = 3 distinct of 12 < 4."""
+    from yubtc.seed import InsufficientEntropy, validate_entropy
+    words = ['abandon'] * 10 + ['zebra', 'zoo']
+    with pytest.raises(InsufficientEntropy, match='distinct words'):
+        validate_entropy(words=words)
+
+
+def test_validate_entropy_rejects_repeated_phrase():
+    """'legal winner' x6: 2 distinct words of 12 < 4 -- the
+    distinct-word rule fires first (the repeats rule would too)."""
+    from yubtc.seed import InsufficientEntropy, validate_entropy
+    words = ['legal', 'winner'] * 6
+    with pytest.raises(InsufficientEntropy, match='distinct words'):
+        validate_entropy(words=words)
+
+
+def test_validate_entropy_rejects_excessive_single_word_repeats():
+    """The repeats cap: 12 words, 4 distinct (>= the floor of 4), but
+    one word present 9 times (> MAX_WORD_REPEATS) -- the repeats rule
+    fires with its own message."""
+    from yubtc.seed import InsufficientEntropy, validate_entropy
+    words = ['abandon', 'zebra', 'zoo', 'legal'] + ['abandon'] * 8
+    with pytest.raises(InsufficientEntropy, match='repeats'):
+        validate_entropy(words=words)
+
+
+def test_validate_entropy_rejects_positional_and_missing_args():
+    """validate_entropy requires kwargs-only call style, no silent defaults."""
+    from yubtc.seed import validate_entropy
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        validate_entropy(['abandon'] * 12)
+    with pytest.raises(TypeError, match='words not set'):
+        validate_entropy()
+    with pytest.raises(ValueError, match='words is None'):
+        validate_entropy(words=None)
+
+
+def test_validate_seed_rejects_unknown_word():
+    """A word outside the BIP-39 wordlist fails the parse stage."""
+    from yubtc.seed import validate_seed
+    phrase = ' '.join(['abandon'] * 11 + ['notaword'])
+    with pytest.raises(ValueError, match='BIP-39 mnemonic parse error'):
+        validate_seed(seed=phrase)
+
+
+def test_validate_seed_rejects_bad_checksum():
+    """12 x abandon: supported count and known words, but the trailing
+    checksum bits do not match sha256(entropy) -- parse error."""
+    from yubtc.seed import validate_seed
+    with pytest.raises(ValueError, match='BIP-39 mnemonic parse error'):
+        validate_seed(seed=' '.join(['abandon'] * 12))
+
+
+def test_validate_seed_rejects_wrong_word_count():
+    """11 words -- the word-count gate fires before wordlist/checksum."""
+    from yubtc.seed import validate_seed
+    with pytest.raises(ValueError, match='invalid word count'):
+        validate_seed(seed=' '.join(['abandon'] * 11))
+
+
+def test_validate_seed_rejects_positional_and_missing_args():
+    """validate_seed requires kwargs-only call style, no silent defaults."""
+    from yubtc.seed import validate_seed
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        validate_seed(LEGAL_WINNER)
+    with pytest.raises(TypeError, match='seed not set'):
+        validate_seed()
+    with pytest.raises(ValueError, match='seed is None'):
+        validate_seed(seed=None)
+
+
+def test_generate_seed_retries_on_entropy_floor_violation(monkeypatch):
+    """The default (allow_dups=True) draw redraws until the C6 floor
+    passes: the injected draws give the checksum-valid but low-entropy
+    all-abandon phrase first (rejected) and a clean one second -- the
+    SECOND draw must be returned with exactly one retry. A real-entropy
+    test cannot force a failing first draw (~1e-13), hence the injected
+    draw. Mirrors the Rust port's
+    default_draw_retries_on_entropy_floor_violation."""
+    import yubtc.seed as seed_mod
+    low = ' '.join(['abandon'] * 11 + ['about'])
+    clean = 'legal winner thank year wave sausage worth useful rain clock chunk labor'
+    draws = iter([low.split(), clean.split()])
+    calls = []
+
+    def fake_draw(count, allow_dups):
+        calls.append((count, allow_dups))
+        return next(draws)
+    monkeypatch.setattr(seed_mod, '_generate_seed', fake_draw)
+    out = seed_mod.generate_seed(count=12, allow_dups=True)
+    assert calls == [(12, True), (12, True)], 'exactly one entropy redraw'
+    assert out == clean
+
+
+def test_generate_seed_without_dups_passes_entropy():
+    """allow_dups=False samples without replacement: distinct words ==
+    count, so the C6 floor is met by construction and validate_entropy
+    accepts (no redraw can occur on this branch)."""
+    from yubtc.seed import generate_seed, validate_entropy
+    seed = generate_seed(count=15, allow_dups=False)
+    assert len(set(seed.split())) == 15
+    assert validate_entropy(words=seed.split()) is None
+
+
+def test_generated_seeds_pass_entropy_validation():
+    """generate_seed applies the same floor: every default draw must
+    pass validate_entropy end-to-end. 200 samples -- the per-draw
+    failure probability is ~1e-13, so a regression would flip this
+    long before the sample budget runs out."""
+    from yubtc.seed import generate_seed, validate_entropy
+    for _ in range(200):
+        s = generate_seed(count=15, allow_dups=True)
+        assert len(s.split()) == 15
+        assert validate_entropy(words=s.split()) is None
