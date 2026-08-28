@@ -469,23 +469,25 @@ def test_validate_entropy_accepts_empty_word_list():
 
 def test_validate_entropy_accepts_valid_bip39_12_words():
     """Standard BIP-39 vector, 8 distinct words of 12 -- accepted by
-    validate_entropy and by the full validate_seed."""
+    validate_entropy and by the full validate_seed in strict mode (the
+    permissive mode accepts it too, but exercises none of these checks)."""
     from yubtc.seed import validate_entropy, validate_seed
     words = LEGAL_WINNER.split()
     assert validate_entropy(words=words) is None
-    assert validate_seed(seed=LEGAL_WINNER) is None
+    assert validate_seed(seed=LEGAL_WINNER, strict=True) is None
 
 
 def test_validate_seed_rejects_all_duplicates():
     """The classic all-'abandon' BIP-39 vector (official vector #1) is
     checksum-valid but has 2 distinct words of 12 -- rejected by the
-    entropy floor, BY CONSTRUCTION."""
+    strict-mode entropy floor, BY CONSTRUCTION. Permissive mode accepts
+    the same phrase (R-1); see test_seed_permissive_accepts_arbitrary_phrase."""
     from yubtc.seed import InsufficientEntropy, _parse_mnemonic, validate_seed
     phrase = ' '.join(['abandon'] * 11 + ['about'])
     # Sanity: the phrase IS valid BIP-39 (count, wordlist and checksum pass).
     assert _parse_mnemonic(seed=phrase) == phrase.split()
     with pytest.raises(InsufficientEntropy, match='distinct words'):
-        validate_seed(seed=phrase)
+        validate_seed(seed=phrase, strict=True)
 
 
 def test_validate_entropy_rejects_mostly_duplicates():
@@ -527,37 +529,45 @@ def test_validate_entropy_rejects_positional_and_missing_args():
 
 
 def test_validate_seed_rejects_unknown_word():
-    """A word outside the BIP-39 wordlist fails the parse stage."""
+    """A word outside the BIP-39 wordlist fails the strict-mode parse stage."""
     from yubtc.seed import validate_seed
     phrase = ' '.join(['abandon'] * 11 + ['notaword'])
     with pytest.raises(ValueError, match='BIP-39 mnemonic parse error'):
-        validate_seed(seed=phrase)
+        validate_seed(seed=phrase, strict=True)
 
 
 def test_validate_seed_rejects_bad_checksum():
     """12 x abandon: supported count and known words, but the trailing
-    checksum bits do not match sha256(entropy) -- parse error."""
+    checksum bits do not match sha256(entropy) -- strict parse error."""
     from yubtc.seed import validate_seed
     with pytest.raises(ValueError, match='BIP-39 mnemonic parse error'):
-        validate_seed(seed=' '.join(['abandon'] * 12))
+        validate_seed(seed=' '.join(['abandon'] * 12), strict=True)
 
 
 def test_validate_seed_rejects_wrong_word_count():
-    """11 words -- the word-count gate fires before wordlist/checksum."""
+    """11 words -- the strict-mode word-count gate fires before
+    wordlist/checksum (R-5: unsupported counts are an ordinary strict
+    parse error, not a separate refusal kind)."""
     from yubtc.seed import validate_seed
     with pytest.raises(ValueError, match='invalid word count'):
-        validate_seed(seed=' '.join(['abandon'] * 11))
+        validate_seed(seed=' '.join(['abandon'] * 11), strict=True)
 
 
 def test_validate_seed_rejects_positional_and_missing_args():
     """validate_seed requires kwargs-only call style, no silent defaults."""
     from yubtc.seed import validate_seed
     with pytest.raises(TypeError, match='only kwargs allowed'):
-        validate_seed(LEGAL_WINNER)
+        validate_seed(LEGAL_WINNER, strict=False)
     with pytest.raises(TypeError, match='seed not set'):
-        validate_seed()
+        validate_seed(strict=False)
     with pytest.raises(ValueError, match='seed is None'):
-        validate_seed(seed=None)
+        validate_seed(seed=None, strict=False)
+    # strict selects the mode: declared default False is the policy
+    # default, but the repo convention passes every parameter by name.
+    with pytest.raises(TypeError, match='strict not set'):
+        validate_seed(seed=LEGAL_WINNER)
+    with pytest.raises(ValueError, match='strict is None'):
+        validate_seed(seed=LEGAL_WINNER, strict=None)
 
 
 def test_generate_seed_retries_on_entropy_floor_violation(monkeypatch):
@@ -603,3 +613,180 @@ def test_generated_seeds_pass_entropy_validation():
         s = generate_seed(count=15, allow_dups=True)
         assert len(s.split()) == 15
         assert validate_entropy(words=s.split()) is None
+
+
+# ---------------------------------------------------------------------------
+# D-001 seed policy: permissive/strict reception and the R-6 entropy
+# warning. Mirrors the Rust port's post-D-001 seed.rs surface and the
+# spec's testable rules R-1/R-2/R-5/R-6.
+# ---------------------------------------------------------------------------
+
+def test_min_entropy_warning_bits_is_128():
+    """The warning threshold is a named constant: 128 bits (spec R-6)."""
+    from yubtc.seed import MIN_ENTROPY_WARNING_BITS
+    assert MIN_ENTROPY_WARNING_BITS == 128
+
+
+def test_estimate_entropy_empty_phrase_is_zero_bits():
+    """No characters -> no entropy. Reception rejects empty phrases
+    before the estimate is consulted (R-2), but the estimate itself
+    must stay defined for any input."""
+    from yubtc.seed import estimate_entropy
+    assert estimate_entropy(phrase='') == 0.0
+
+
+def test_estimate_entropy_lowercase_only():
+    """A phrase of only lowercase letters uses the 26-letter class."""
+    from math import log2
+    from yubtc.seed import estimate_entropy
+    assert estimate_entropy(phrase='qwe') == 3 * log2(26)
+
+
+def test_estimate_entropy_uppercase_and_digits_classes():
+    """Uppercase letters (26) and digits (10) are their own classes;
+    lowercase and uppercase are DISTINCT classes, so 'aA1' sums
+    26 + 26 + 10 = 62."""
+    from math import log2
+    from yubtc.seed import estimate_entropy
+    assert estimate_entropy(phrase='ABC') == 3 * log2(26)
+    assert estimate_entropy(phrase='123') == 3 * log2(10)
+    assert estimate_entropy(phrase='aA1') == 3 * log2(62)
+
+
+def test_estimate_entropy_space_class_worth_one():
+    """The space class adds exactly 1 to |charset|: a lowercase+space
+    phrase has charset 27. Spaces alone give log2(1) == 0 bits per
+    character -- the estimate is 0.0, and reception (not the estimate)
+    is what keeps an all-space phrase out (R-2)."""
+    from math import log2
+    from yubtc.seed import estimate_entropy
+    assert estimate_entropy(phrase='a b c') == 5 * log2(27)
+    assert estimate_entropy(phrase='   ') == 0.0
+
+
+def test_estimate_entropy_other_printable_class():
+    """Every character outside the four named classes -- punctuation
+    here, but also non-ASCII letters and control characters -- falls
+    into the 33-size 'other printable' class."""
+    from math import log2
+    from yubtc.seed import estimate_entropy
+    assert estimate_entropy(phrase='!@#') == 3 * log2(33)
+    assert estimate_entropy(phrase='a!') == 2 * log2(26 + 33)
+
+
+def test_estimate_entropy_all_classes_sum():
+    """A phrase containing all five classes uses their sum:
+    26 + 26 + 10 + 1 + 33 = 96."""
+    from math import log2
+    from yubtc.seed import estimate_entropy
+    phrase = 'aA1 !'
+    assert len(phrase) == 5
+    assert estimate_entropy(phrase=phrase) == 5 * log2(96)
+
+
+def test_estimate_entropy_rejects_positional_and_missing_args():
+    """estimate_entropy requires kwargs-only call style, no silent defaults."""
+    from yubtc.seed import estimate_entropy
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        estimate_entropy('qwe')
+    with pytest.raises(TypeError, match='phrase not set'):
+        estimate_entropy()
+    with pytest.raises(ValueError, match='phrase is None'):
+        estimate_entropy(phrase=None)
+
+
+def test_entropy_warning_silent_at_exactly_128_bits(monkeypatch):
+    """The threshold comparison is strict (`<`): an estimate of exactly
+    MIN_ENTROPY_WARNING_BITS bits produces NO warning.
+
+    No real phrase hits exactly 128.0 (log2 of a non-power-of-two class
+    sum is irrational, so an integer length never lands on it), hence
+    the injected estimate -- this pins the boundary operator itself."""
+    from yubtc.seed import entropy_warning
+    monkeypatch.setattr('yubtc.seed.estimate_entropy', lambda phrase: 128.0)
+    assert entropy_warning(phrase='whatever') is None
+    monkeypatch.setattr('yubtc.seed.estimate_entropy', lambda phrase: 127.9999999)
+    assert entropy_warning(phrase='whatever') is not None
+
+
+def test_entropy_warning_silent_at_or_above_128_bits():
+    """Real phrases at/above the threshold: 28 lowercase chars give
+    ~131.6 bits -- no warning (R-6: at-or-above is silent)."""
+    from yubtc.seed import entropy_warning, estimate_entropy
+    phrase = 'a' * 28
+    assert estimate_entropy(phrase=phrase) > 128
+    assert entropy_warning(phrase=phrase) is None
+
+
+def test_entropy_warning_below_128_bits():
+    """Real phrases below the threshold: 27 lowercase chars give
+    ~126.9 bits, the 3-char 'qwe' ~14.1 bits -- both warn (R-6)."""
+    from yubtc.seed import entropy_warning, estimate_entropy
+    phrase = 'a' * 27
+    assert 120 < estimate_entropy(phrase=phrase) < 128
+    assert entropy_warning(phrase=phrase) is not None
+    warning = entropy_warning(phrase='qwe')
+    assert warning is not None
+    assert '14.1' in warning
+    assert '128' in warning
+
+
+def test_entropy_warning_text_does_not_echo_the_phrase():
+    """The warning must never contain any fragment of the seed itself."""
+    from yubtc.seed import entropy_warning
+    secret = 'top secret phrase material'
+    warning = entropy_warning(phrase=secret)
+    assert warning is not None
+    assert 'top' not in warning
+    assert 'secret' not in warning
+
+
+def test_entropy_warning_rejects_positional_and_missing_args():
+    """entropy_warning requires kwargs-only call style, no silent defaults."""
+    from yubtc.seed import entropy_warning
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        entropy_warning('qwe')
+    with pytest.raises(TypeError, match='phrase not set'):
+        entropy_warning()
+    with pytest.raises(ValueError, match='phrase is None'):
+        entropy_warning(phrase=None)
+
+
+def test_seed_permissive_accepts_arbitrary_phrase():
+    """R-1: permissive mode (strict=False) accepts ANY non-empty
+    phrase -- not only BIP-39 mnemonics; parse and entropy floor are
+    not applied. Includes the checksum-valid but entropy-floor-failing
+    all-abandon vector: strict rejects it, permissive accepts."""
+    from yubtc.seed import validate_seed
+    assert validate_seed(seed='not a real mnemonic at all', strict=False) is None
+    assert validate_seed(seed='qwe', strict=False) is None
+    assert validate_seed(seed=' '.join(['abandon'] * 12), strict=False) is None
+
+
+def test_seed_permissive_rejects_empty():
+    """R-2: an empty (after trim) phrase is an error in permissive mode."""
+    from yubtc.seed import validate_seed
+    with pytest.raises(ValueError, match='seed must not be empty'):
+        validate_seed(seed='', strict=False)
+    with pytest.raises(ValueError, match='seed must not be empty'):
+        validate_seed(seed='   ', strict=False)
+
+
+def test_seed_strict_rejects_empty():
+    """R-2: the same empty phrase is an error in strict mode, with the
+    identical message (the check runs before the mode branch)."""
+    from yubtc.seed import validate_seed
+    with pytest.raises(ValueError, match='seed must not be empty'):
+        validate_seed(seed='', strict=True)
+    with pytest.raises(ValueError, match='seed must not be empty'):
+        validate_seed(seed=' \t ', strict=True)
+
+
+def test_seed_strict_rejects_wrong_word_count_13():
+    """R-5: 13 wordlist words -- an unsupported count is an ordinary
+    strict-mode parse error (permissive accepts the same phrase)."""
+    from yubtc.seed import validate_seed
+    phrase = ' '.join(['abandon'] * 13)
+    with pytest.raises(ValueError, match='invalid word count'):
+        validate_seed(seed=phrase, strict=True)
+    assert validate_seed(seed=phrase, strict=False) is None
