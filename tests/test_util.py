@@ -1,6 +1,6 @@
 import pytest
 
-from yubtc.util import NotNone, require_kwargs_only
+from yubtc.util import NotNone, OPTIONAL, require_kwargs_only
 
 
 def test_require_kwargs_only_rejects_positional_args():
@@ -106,6 +106,56 @@ def test_require_kwargs_only_only_checks_notnone_default_params():
     # opt has a concrete default but is still required.
     with pytest.raises(TypeError, match='opt not set'):
         f(foo=1, none_opt=None)
+
+
+def test_require_kwargs_only_allows_omitted_optional_kwarg():
+    """A parameter declared `= OPTIONAL` may be omitted entirely: the
+    wrapper does not raise 'not set' and the function sees the sentinel,
+    which is its signal to resolve its own default behaviour. Passing a
+    real value works as usual."""
+    @require_kwargs_only
+    def f(foo=NotNone, bar=OPTIONAL):
+        return (foo, bar)
+
+    assert f(foo=1) == (1, OPTIONAL)
+    assert f(foo=1, bar=2) == (1, 2)
+
+
+def test_require_kwargs_only_optional_still_rejects_explicit_none():
+    """An explicit `None` is rejected even for an `= OPTIONAL` param:
+    "not chosen" (omit it) and "chose nothing" (`None`) stay distinct,
+    and `None` is not a legitimate choice here."""
+    @require_kwargs_only
+    def f(bar=OPTIONAL):
+        return bar
+
+    with pytest.raises(ValueError, match='bar is None'):
+        f(bar=None)
+
+
+def test_require_kwargs_only_missing_required_still_raises_next_to_optional():
+    """The OPTIONAL escape is per-parameter: other missing kwargs still
+    raise 'not set'."""
+    @require_kwargs_only
+    def f(foo=NotNone, bar=OPTIONAL):
+        return (foo, bar)
+
+    with pytest.raises(TypeError, match='foo not set'):
+        f()
+
+
+def test_OPTIONAL_is_singleton():
+    """`OPTIONAL` is a single shared instance; identity comparisons work."""
+    from yubtc.util import _OptionalType
+    again = _OptionalType()
+    assert again is OPTIONAL
+
+
+def test_OPTIONAL_repr_and_bool():
+    """`repr` prints the sentinel name; `bool` is True so defaulting
+    expressions (e.g. `foo or fallback`) don't misfire on the sentinel."""
+    assert repr(OPTIONAL) == 'OPTIONAL'
+    assert bool(OPTIONAL) is True
 
 
 def test_require_kwargs_only_skips_self_on_methods():

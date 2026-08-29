@@ -32,7 +32,41 @@ class _NotNoneType:
         return True
 
 
+class _OptionalType:
+    """Sentinel marking a parameter as genuinely optional: the caller
+    may omit it entirely, and the wrapped function applies its own
+    default behaviour.
+
+    A parameter declared as `foo: T = OPTIONAL` is the one exception to
+    the "every parameter is passed explicitly" rule: the wrapper does
+    not raise `'foo not set'` when it is missing -- the function simply
+    sees the sentinel and resolves the default itself. This exists for
+    parameters whose default is a *behaviour* ("pick the value from
+    another argument") rather than a constant, and is deliberately
+    obscure so it stays rare. An explicit `None` is still rejected
+    (`ValueError('foo is None')`), the same as for every other
+    parameter whose default is not `None`.
+    """
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return 'OPTIONAL'
+
+    def __bool__(self) -> bool:
+        # `if foo:` would treat the sentinel as falsy, but "not chosen"
+        # is not "empty": defaulting expressions (e.g. `foo or fallback`)
+        # must not misfire just because the sentinel landed there.
+        return True
+
+
 NotNone = _NotNoneType()
+OPTIONAL = _OptionalType()
 
 
 def require_kwargs_only(func):
@@ -58,12 +92,15 @@ def require_kwargs_only(func):
       positional argument beyond `self`/`cls`.
     - `TypeError('<name> not set')` for a parameter that wasn't passed
       by name (including parameters with a concrete default -- the
-      wrapper doesn't treat any default as "optional").
+      wrapper doesn't treat any default as "optional"). The single
+      exception is a parameter declared `= OPTIONAL` (see
+      `_OptionalType`): omitting it is allowed, and the function sees
+      the sentinel to resolve its own default behaviour.
     - `ValueError('<name> is None')` when a parameter whose default is
-      not `None` (i.e. `NotNone` or a concrete value) was passed
-      explicitly as `None`. The exception is the `NotNone` sentinel's
-      primary signal; concrete-default parameters rarely hit it in
-      practice.
+      not `None` (i.e. `NotNone`, `OPTIONAL`, or a concrete value) was
+      passed explicitly as `None`. The exception is the `NotNone`
+      sentinel's primary signal; concrete-default parameters rarely hit
+      it in practice.
     """
     sig = inspect.signature(func)
     params = list(sig.parameters.values())
@@ -78,6 +115,10 @@ def require_kwargs_only(func):
             raise TypeError('only kwargs allowed')
         for p in required:
             if p.name not in kwargs:
+                if p.default is OPTIONAL:
+                    # Genuinely optional: the sentinel reaches the
+                    # function, which resolves its own default behaviour.
+                    continue
                 raise TypeError(f'{p.name} not set')
             if p.default is not None and kwargs[p.name] is None:
                 raise ValueError(f'{p.name} is None')
