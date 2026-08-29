@@ -1,9 +1,9 @@
 from typing import NamedTuple
 
 from yubtc.fwd import (TNonce, TSatoshi, TBTC, TSeed, TAddress, TPassphrase,
-                       MIN_RELAY_TX_FEE)
-from yubtc.transaction import CTransaction
-from yubtc.util import NotNone, require_kwargs_only
+                       MIN_RELAY_TX_FEE, AddrType, ADDR_TYPES)
+from yubtc.transaction import CTransaction, SpendInput
+from yubtc.util import NotNone, OPTIONAL, require_kwargs_only
 
 
 class TxResult(NamedTuple):
@@ -18,6 +18,37 @@ class TxResult(NamedTuple):
     cashback: TSatoshi
     amount: TSatoshi
     fee: TSatoshi
+
+
+@require_kwargs_only
+def validate_utxo_script(script: bytes = NotNone) -> str:
+    """Classify a UTXO `scriptPubKey` by its canonical shape (mirrors
+    `wallet.rs::validate_utxo_script`, extended per the Phase 13 spec
+    with the witness forms).
+
+    Returns `'p2pkh'` (25 bytes), `'p2sh'` (23 bytes), `'p2wpkh'`
+    (22 bytes, `00 14 <20>`), or `'p2tr'` (34 bytes, `51 20 <32>`);
+    anything else raises `ValueError('unsupported utxo script')` --
+    a backend mismatch the wallet doesn't know how to spend."""
+    from yubtc.script import extract_p2tr_output_key, extract_p2wpkh_hash
+    script = bytes(script)
+    size = len(script)
+    if size == 25:
+        from yubtc.transaction import script2pkh
+        script2pkh(script)
+        return 'p2pkh'
+    if size == 23:
+        # P2SH: OP_HASH160 <20B> OP_EQUAL.
+        if script[0] != 0xa9 or script[1] != 0x14 or script[22] != 0x87:
+            raise ValueError('unsupported utxo script')
+        return 'p2sh'
+    if size == 22:
+        extract_p2wpkh_hash(script=script)
+        return 'p2wpkh'
+    if size == 34:
+        extract_p2tr_output_key(script=script)
+        return 'p2tr'
+    raise ValueError('unsupported utxo script')
 
 
 def _announce_tx(backend: 'NetworkBackend', result: TxResult, dst: TAddress,
@@ -39,11 +70,19 @@ def _announce_tx(backend: 'NetworkBackend', result: TxResult, dst: TAddress,
     cashback_btc = satoshi2btc(result.cashback)
     amount_btc = satoshi2btc(result.amount)
     fee_btc = satoshi2btc(result.fee)
-    rawtx = result.tx.serialize()
+    # The broadcast hex is the **wire** serialization: for witness
+    # transactions it carries the marker/flag and witness stacks
+    # (without them the inputs would be unspendable); for legacy
+    # transactions it is byte-identical to the v0.1 `serialize()`.
+    rawtx = result.tx.serialize_wire()
+    # Phase 13: both size units are reported -- the wire byte size and
+    # the vsize the fee loop actually bills (they coincide for
+    # legacy-only transactions).
     print('id: {id}'.format(id=result.tx.id().hex()))
-    print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, txsize={txsize})'.format(
-        amount=amount_btc, dst=dst, cashback=cashback_btc, fee=fee_btc,
-        txsize=len(rawtx)))
+    print('send {amount:0.08f} BTC to {dst} (cashback={cashback:0.08f}, fee={fee:0.08f}, '
+          'txsize={txsize}, vsize={vsize})'.format(
+              amount=amount_btc, dst=dst, cashback=cashback_btc, fee=fee_btc,
+              txsize=len(rawtx), vsize=result.tx.vsize()))
     print('rawtx: {rawtx}'.format(rawtx=rawtx.hex()))
     if broadcast:
         if yes or yesno('broadcast? '):
@@ -95,17 +134,34 @@ class TPrivKey(object):
             seed: TSeed = NotNone,
             nonce: TNonce = NotNone,
             passphrase: TPassphrase = '',
-            backend: 'NetworkBackend' = None):
+            backend: 'NetworkBackend' = None,
+            addr_type: str = OPTIONAL):
         """Derive a single key. `backend` is the network backend this
         key's `get_info`/`get_unspent` calls go through (backend
         injection: no module-global backend exists; mirrors the Rust
         port). `None` resolves the default `blockchain.info` via
-        `get_backend()` so ad-hoc call sites stay terse."""
+        `get_backend()` so ad-hoc call sites stay terse.
+
+        `addr_type` (Phase 13) selects the derivation per the spec's
+        nonce->path mapping: for the pbkdf2 KDF the BIP-32 purpose is
+        44 (legacy) / 84 (native, BIP-84) / 86 (taproot, BIP-86); for
+        the non-BIP-32 KDFs variant A applies -- the same key for
+        every type, only the address encoding differs. Omitted means
+        `legacy`, keeping every v0.1 derivation byte-for-byte (the
+        multi-form scan that would make `native` the safe default
+        lands with the wallet stage-2 integration, as on the Rust
+        side)."""
         from yubtc.crypto import seed2privkey
+        from yubtc.fwd import AddrType
         from yubtc.net import get_backend
         if not seed:
             raise ValueError('seed cannot be empty')
-        self.privkey = seed2privkey(seed=seed, nonce=nonce, passphrase=passphrase)
+        resolved_addr_type = AddrType.LEGACY if addr_type is OPTIONAL else addr_type
+        if resolved_addr_type not in ADDR_TYPES:
+            raise ValueError(f'unknown addr type: {resolved_addr_type!r}')
+        self._addr_type = resolved_addr_type
+        self.privkey = seed2privkey(seed=seed, nonce=nonce, passphrase=passphrase,
+                                    addr_type=resolved_addr_type)
         self.nonce = nonce
         self._backend = backend if backend is not None else get_backend()
         self._info = None
@@ -115,8 +171,35 @@ class TPrivKey(object):
         return privkey2privwif(privkey=self.privkey)
 
     def get_p2pkh_address(self) -> bytes:
+        """The legacy P2PKH address (bytes, v0.1 surface). Kept as the
+        legacy shortcut mirroring the Rust `p2pkh_address()`; the
+        type-aware entry point is `address_of`."""
         from yubtc.crypto import privkey2addr
         return privkey2addr(privkey=self.privkey)
+
+    @require_kwargs_only
+    def address_of(self, addr_type: str = OPTIONAL) -> str:
+        """Encode this key's address per `addr_type` (mirrors the
+        Phase 13 `TPrivKey::address_of`): `legacy` -> P2PKH
+        (`1...`), `native` -> P2WPKH (`bc1q...`), `taproot` -> P2TR
+        (`bc1p...`). Omitted resolves to the type this key was
+        derived for. The result is a `str` for every form.
+
+        Note (spec ОВ-2): for the non-BIP-32 KDFs all three forms
+        encode the same key; for pbkdf2 only the type this key was
+        derived with (m/44'/84'/86') matches external wallets at this
+        nonce."""
+        from yubtc.crypto import privkey2pubkey, pubkey2addr
+        from yubtc.crypto import pubkey2segwit_addr, pubkey2taproot_addr
+        resolved = self._addr_type if addr_type is OPTIONAL else addr_type
+        if resolved not in ADDR_TYPES:
+            raise ValueError(f'unknown addr type: {resolved!r}')
+        pubkey = privkey2pubkey(privkey=self.privkey)
+        if resolved == AddrType.NATIVE:
+            return pubkey2segwit_addr(pubkey=pubkey)
+        if resolved == AddrType.TAPROOT:
+            return pubkey2taproot_addr(pubkey=pubkey)
+        return pubkey2addr(pubkey=pubkey).decode('ascii')
 
     def get_info(self) -> dict:
         from yubtc.net import get_address_info
@@ -150,11 +233,20 @@ class Wallet(object):
             nonce: TNonce = NotNone,
             new_addresses: int = NotNone,
             passphrase: TPassphrase = '',
-            backend: 'NetworkBackend' = None):
+            backend: 'NetworkBackend' = None,
+            addr_type: str = OPTIONAL):
         """Open a wallet. `backend` is the network backend every scan
         and broadcast goes through (backend injection: no module
         global; mirrors the Rust port). `None` resolves the default
-        `blockchain.info`."""
+        `blockchain.info`.
+
+        `addr_type` threads the Phase 13 address-type selection into
+        every derived key (see `TPrivKey`): pbkdf2 walks the matching
+        BIP-32 purpose path, non-BIP-32 KDFs re-encode the same key.
+        Omitted means `legacy` -- the scan-compatible v0.1 behaviour
+        until the multi-form scan (spec ОВ-4) lands with the wallet
+        stage-2 integration."""
+        from yubtc.fwd import AddrType
         from yubtc.net import get_backend
         if not seed:
             raise ValueError('seed cannot be empty')
@@ -165,17 +257,21 @@ class Wallet(object):
         # new TPrivKey would default to an empty passphrase and the
         # scan would build an inconsistent wallet.
         self._passphrase = passphrase
+        resolved_addr_type = AddrType.LEGACY if addr_type is OPTIONAL else addr_type
+        if resolved_addr_type not in ADDR_TYPES:
+            raise ValueError(f'unknown addr type: {resolved_addr_type!r}')
+        self._addr_type = resolved_addr_type
         self.privkeys = []
         while True:
             privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase,
-                               backend=self._backend)
+                               backend=self._backend, addr_type=resolved_addr_type)
             if privkey.is_unused():
                 break
             self.privkeys.append(privkey)
             nonce = nonce + 1
         for i in range(new_addresses):
             privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase,
-                               backend=self._backend)
+                               backend=self._backend, addr_type=resolved_addr_type)
             self.privkeys.append(privkey)
             nonce = nonce + 1
 
@@ -207,38 +303,62 @@ class Wallet(object):
         """Build CIn entries from one or more addresses' UTXOs.
 
         `sources` is a list of `(TPrivKey, unspent_list)` tuples. Each
-        UTXO is validated against its privkey's pubhash and a
+        UTXO is validated against its privkey's pubkey per its script
+        form (`validate_utxo_script`: P2PKH/P2WPKH match the
+        hash160, P2TR matches the tweaked output key, P2SH is
+        receiver-only and never spent by this wallet) and a
         `(privkey, pubkey)` signer pair is appended for every input.
         Single-address callers pass a one-element list; multi-address
         callers (e.g. from `_scan_inputs`) pass one entry per address
         that contributed UTXOs.
 
-        Returns `(vin, in_amount, signers)` -- the same shape regardless
-        of how many addresses contribute, so the caller doesn't branch on
-        single vs. multi.
+        Returns `(vin, in_amount, signers, spend)` -- the same shape
+        regardless of how many addresses contribute, so the caller
+        doesn't branch on single vs. multi. `spend` is the
+        `SpendContext` (one `SpendInput` per input, parallel to `vin`)
+        that BIP-143/BIP-341 signing needs.
         """
-        from yubtc.crypto import privkey2pubkey
+        from yubtc.crypto import privkey2pubkey, taproot_output_key
         from yubtc.hash import hash160
+        from yubtc.script import extract_p2tr_output_key, extract_p2wpkh_hash
         from yubtc.transaction import script2pkh, CIn
         vin = list()
         in_amount = 0
         signers = list()
+        spend = list()
         for tp, unspent in sources:
             pubkey = privkey2pubkey(tp.privkey)
             pubhash = hash160(pubkey)
+            xonly = pubkey[1:33]
             for u in unspent:
                 in_amount += u['amount']
                 tx_lock_script = bytes.fromhex(u['script'])
-                required_hash = script2pkh(tx_lock_script)
-                if required_hash != pubhash:
-                    raise ValueError('unknown pubkey required')
+                form = validate_utxo_script(script=tx_lock_script)
+                if form == 'p2sh':
+                    # P2SH is a receiving-only form for this wallet: it
+                    # never creates P2SH outputs of its own, so it
+                    # cannot own the redeem script needed to spend one.
+                    raise ValueError('p2sh utxo cannot be spent by the wallet')
+                if form == 'p2tr':
+                    required_key = extract_p2tr_output_key(script=tx_lock_script)
+                    if required_key != taproot_output_key(internal_xonly=xonly):
+                        raise ValueError('unknown pubkey required')
+                else:
+                    if form == 'p2wpkh':
+                        required_hash = extract_p2wpkh_hash(script=tx_lock_script)
+                    else:  # 'p2pkh'
+                        required_hash = script2pkh(tx_lock_script)
+                    if required_hash != pubhash:
+                        raise ValueError('unknown pubkey required')
                 txhash = bytes.fromhex(u['tx'])
                 vin.append(CIn(
                     txhash=txhash, n=u['out_n'],
                     script=tx_lock_script, sequence=0xffffffff,
                 ))
                 signers.append((tp.privkey, pubkey))
-        return vin, in_amount, signers
+                spend.append(SpendInput(amount=u['amount'],
+                                        script_pubkey=tx_lock_script))
+        return vin, in_amount, signers, spend
 
     @require_kwargs_only
     def _scan_inputs(
@@ -363,19 +483,21 @@ class Wallet(object):
 
         Input selection is delegated to `_select_inputs`; this method
         handles only the build/sign/fee-tune loop and the TxResult
-        assembly.
+        assembly. Signing dispatches per input scheme
+        (`sign_segwit`): legacy UTXOs sign exactly as v0.1, witness
+        UTXOs (P2WPKH/P2TR) produce the BIP-143/BIP-341 witness.
         """
         from yubtc.crypto import make_vout
         vin_sources, src = self._select_inputs(
             sources=sources, amount=amount, scan=scan,
             confirmations=confirmations, cashback_addr=cashback_addr,
             on_address=on_address)
-        vin, in_amount, signers = self._make_vin(sources=vin_sources)
+        vin, in_amount, signers, spend = self._make_vin(sources=vin_sources)
         if fee:
             vout_result = make_vout(src=src, dst=dst, in_amount=in_amount,
                                     amount=amount, fee=fee)
             tx = CTransaction(vin=vin, vout=vout_result.vout, locktime=0)
-            stx = tx.sign(signers=signers)
+            stx = tx.sign_segwit(signers=signers, spend=spend)
             return TxResult(tx=stx, cashback=vout_result.cashback,
                             amount=vout_result.amount, fee=fee)
 
@@ -386,6 +508,10 @@ class Wallet(object):
         # can appear. (The old `_fee == newfee` fixed-point break could
         # oscillate forever between two values on digit-boundary sizes;
         # there is deliberately no iteration cap -- decision C3.)
+        # Phase 13: the loop's size unit is the vsize (BIP-141), so
+        # witness inputs pay their discounted weight; for transactions
+        # without witness vsize == bytes and every result is identical
+        # to v0.1.
         by_size = {}
         seen_sizes = set()
         current_fee = 0
@@ -393,8 +519,8 @@ class Wallet(object):
             vout_result = make_vout(src=src, dst=dst, in_amount=in_amount,
                                     amount=amount, fee=current_fee)
             tx = CTransaction(vin=vin, vout=vout_result.vout, locktime=0)
-            stx = tx.sign(signers=signers)
-            txsize = len(stx.serialize())
+            stx = tx.sign_segwit(signers=signers, spend=spend)
+            txsize = stx.vsize()
             newfee = int(txsize * feekb / 1000)
             by_size.setdefault(txsize, []).append((current_fee, vout_result, stx))
             if txsize in seen_sizes:
