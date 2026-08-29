@@ -24,6 +24,17 @@ flag.
 from yubtc.fwd import TAddress, DEFAULT_TIMEOUT_HTTP
 
 
+def _address_str(address: TAddress) -> str:
+    """Normalise an address to the `str` the URL builders need.
+
+    v0.1 call sites pass base58 addresses as `bytes` (the
+    `privkey2addr`/`pubkey2addr` return type); the Phase 13 multi-form
+    wallet also queries native-SegWit/Taproot addresses, which are
+    `str` (`bc1...`). Mirrors the Rust port, where an address is an
+    opaque string end to end."""
+    return address.decode('ascii') if isinstance(address, bytes) else address
+
+
 class NetworkBackend:
     """Pluggable network I/O for the wallet.
 
@@ -71,8 +82,9 @@ class BlockchainInfoBackend(NetworkBackend):
     def get_unspent(self, address: TAddress, **kwargs) -> list:
         import requests
         from json.decoder import JSONDecodeError
+        address = _address_str(address)
         url = '{base}/unspent?active={address}'.format(
-            base=self._base_url, address=address.decode('ascii'))
+            base=self._base_url, address=address)
         try:
             return requests.get(url, timeout=DEFAULT_TIMEOUT_HTTP).json()['unspent_outputs']
         except JSONDecodeError:
@@ -81,7 +93,7 @@ class BlockchainInfoBackend(NetworkBackend):
     def get_info(self, address: TAddress, **kwargs) -> dict:
         import requests
         from json.decoder import JSONDecodeError
-        address_str = address.decode('ascii')
+        address_str = _address_str(address)
         try:
             url = '{base}/balance?active={address}'.format(
                 base=self._base_url, address=address_str)
@@ -128,8 +140,9 @@ class EsploraBackend(NetworkBackend):
 
     def get_unspent(self, address: TAddress, **kwargs) -> list:
         import requests
+        address = _address_str(address)
         url = '{base}/address/{addr}/utxo'.format(
-            base=self._base_url, addr=address.decode('ascii'))
+            base=self._base_url, addr=address)
         utxos = requests.get(url, timeout=DEFAULT_TIMEOUT_HTTP).json()
         if not utxos:
             # No UTXOs: skip the tip lookup, no script to reconstruct.
@@ -158,7 +171,7 @@ class EsploraBackend(NetworkBackend):
     def get_info(self, address: TAddress, **kwargs) -> dict:
         import requests
         url = '{base}/address/{addr}'.format(
-            base=self._base_url, addr=address.decode('ascii'))
+            base=self._base_url, addr=_address_str(address))
         stats = requests.get(url, timeout=DEFAULT_TIMEOUT_HTTP).json()
         chain = stats.get('chain_stats') or {}
         mempool = stats.get('mempool_stats') or {}
@@ -210,13 +223,13 @@ class EsploraBackend(NetworkBackend):
 
     @staticmethod
     def _lock_script(address: TAddress) -> bytes:
-        """Reconstruct the lock script from a P2PKH/P2SH address.
+        """Reconstruct the lock script from the address.
 
         The Esplora UTXO endpoint omits the script; for the wallet's
         input builder to recognise the UTXO as spendable, the script
-        has to be reconstructed. For P2PKH and P2SH addresses the
-        address itself encodes the hash, so the script is uniquely
-        determined.
+        has to be reconstructed. For the forms the wallet owns
+        (P2PKH/P2SH base58 and P2WPKH/P2TR `bc1...`) the address
+        itself encodes the script, so it is uniquely determined.
         """
         from yubtc.crypto import make_lock_script
         return bytes(make_lock_script(address=address))
@@ -266,7 +279,6 @@ def get_backend(name: str = 'blockchain.info') -> NetworkBackend:
     return BACKENDS[name]()
 
 
-
 # ---------------------------------------------------------------------------
 # Module-level free functions: the public entry point.
 #
@@ -274,6 +286,7 @@ def get_backend(name: str = 'blockchain.info') -> NetworkBackend:
 # argument. The test suite can intercept by passing a stub backend
 # (or monkeypatching the free function itself).
 # ---------------------------------------------------------------------------
+
 
 def get_address_unspent(backend: NetworkBackend, address: TAddress) -> list:
     """Return the UTXOs for `address` via `backend`."""

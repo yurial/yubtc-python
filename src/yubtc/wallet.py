@@ -1,9 +1,15 @@
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from yubtc.fwd import (TNonce, TSatoshi, TBTC, TSeed, TAddress, TPassphrase,
                        MIN_RELAY_TX_FEE, AddrType, ADDR_TYPES)
 from yubtc.transaction import CTransaction, SpendInput
 from yubtc.util import NotNone, OPTIONAL, require_kwargs_only
+
+if TYPE_CHECKING:
+    # Type hints only: importing these at runtime would create a cycle
+    # (net -> wallet) and pull coincurve into annotation-only call sites.
+    from coincurve import PrivateKey
+    from yubtc.net import NetworkBackend
 
 
 class TxResult(NamedTuple):
@@ -146,12 +152,16 @@ class TPrivKey(object):
         nonce->path mapping: for the pbkdf2 KDF the BIP-32 purpose is
         44 (legacy) / 84 (native, BIP-84) / 86 (taproot, BIP-86); for
         the non-BIP-32 KDFs variant A applies -- the same key for
-        every type, only the address encoding differs. Omitted means
-        `legacy`, keeping every v0.1 derivation byte-for-byte (the
-        multi-form scan that would make `native` the safe default
-        lands with the wallet stage-2 integration, as on the Rust
-        side)."""
-        from yubtc.crypto import seed2privkey
+        every type, only the address encoding differs.
+
+        Omitted means `legacy` -- the v0.1 constructor, kept
+        bit-for-bit (mirroring the Rust split where `TPrivKey::new`
+        pins `AddrType::Legacy` while the CLI/FFI surface passes its
+        own default, `DEFAULT_ADDR_TYPE` = native). The multi-form
+        scan (spec ОВ-4) makes every form of every nonce visible
+        regardless of this type: it affects only the key's own
+        receiving/cashback encoding, never what a scan can see."""
+        from yubtc.crypto import default_kdf, seed2privkey
         from yubtc.fwd import AddrType
         from yubtc.net import get_backend
         if not seed:
@@ -160,9 +170,19 @@ class TPrivKey(object):
         if resolved_addr_type not in ADDR_TYPES:
             raise ValueError(f'unknown addr type: {resolved_addr_type!r}')
         self._addr_type = resolved_addr_type
+        # The KDF this key was derived with (mirrors the Rust `kdf`
+        # field). Python routes the KDF on the passphrase, so the
+        # resolved name is exactly what `seed2privkey` used below.
+        self.kdf = default_kdf(passphrase)
         self.privkey = seed2privkey(seed=seed, nonce=nonce, passphrase=passphrase,
                                     addr_type=resolved_addr_type)
         self.nonce = nonce
+        # This key's own-form address (str for every type), cached at
+        # construction like the Rust `address` field: the cached
+        # network methods query it, so a native-typed key asks the
+        # backend about its `bc1q...` address, not the legacy one.
+        self.address = _address_for_key(privkey=self.privkey,
+                                        addr_type=resolved_addr_type)
         self._backend = backend if backend is not None else get_backend()
         self._info = None
 
@@ -170,12 +190,16 @@ class TPrivKey(object):
         from yubtc.crypto import privkey2privwif
         return privkey2privwif(privkey=self.privkey)
 
-    def get_p2pkh_address(self) -> bytes:
-        """The legacy P2PKH address (bytes, v0.1 surface). Kept as the
-        legacy shortcut mirroring the Rust `p2pkh_address()`; the
+    def get_p2pkh_address(self):
+        """v0.1 name, kept for call-site compatibility (mirrors the
+        Rust `TPrivKey::get_p2pkh_address` alias): returns the key's
+        own-form address -- the legacy P2PKH bytes for a legacy key,
+        the SegWit/Taproot encoding (str) for witness keys. The
         type-aware entry point is `address_of`."""
-        from yubtc.crypto import privkey2addr
-        return privkey2addr(privkey=self.privkey)
+        if self._addr_type == AddrType.LEGACY:
+            from yubtc.crypto import privkey2addr
+            return privkey2addr(privkey=self.privkey)
+        return self.address
 
     @require_kwargs_only
     def address_of(self, addr_type: str = OPTIONAL) -> str:
@@ -185,26 +209,33 @@ class TPrivKey(object):
         (`bc1p...`). Omitted resolves to the type this key was
         derived for. The result is a `str` for every form.
 
-        Note (spec ОВ-2): for the non-BIP-32 KDFs all three forms
-        encode the same key; for pbkdf2 only the type this key was
-        derived with (m/44'/84'/86') matches external wallets at this
-        nonce."""
-        from yubtc.crypto import privkey2pubkey, pubkey2addr
-        from yubtc.crypto import pubkey2segwit_addr, pubkey2taproot_addr
+        Allowed in two cases:
+        - the key's own type (trivially -- the cached address);
+        - a variant-A key (non-pbkdf2 KDF), which is the *same*
+          secret for every type and therefore re-encodes freely.
+
+        A pbkdf2 key asked for a *different* type is an error (mirrors
+        the Rust purpose guard): its leaves are disjoint BIP-32
+        subtrees, so re-encoding would hand back an address no
+        external BIP-84/86 wallet would agree with. Derive the right
+        key with `TPrivKey(addr_type=...)` instead."""
         resolved = self._addr_type if addr_type is OPTIONAL else addr_type
         if resolved not in ADDR_TYPES:
             raise ValueError(f'unknown addr type: {resolved!r}')
-        pubkey = privkey2pubkey(privkey=self.privkey)
-        if resolved == AddrType.NATIVE:
-            return pubkey2segwit_addr(pubkey=pubkey)
-        if resolved == AddrType.TAPROOT:
-            return pubkey2taproot_addr(pubkey=pubkey)
-        return pubkey2addr(pubkey=pubkey).decode('ascii')
+        if resolved == self._addr_type:
+            return self.address
+        from yubtc.crypto import KDF_PBKDF2
+        if self.kdf == KDF_PBKDF2:
+            raise ValueError(
+                'pbkdf2 keys are purpose-bound: this key addresses {own}, '
+                'not {other} (derive the key via TPrivKey(addr_type=...))'.format(
+                    own=self._addr_type, other=resolved))
+        return _address_for_key(privkey=self.privkey, addr_type=resolved)
 
     def get_info(self) -> dict:
         from yubtc.net import get_address_info
         if not self._info:
-            self._info = get_address_info(self._backend, self.get_p2pkh_address())
+            self._info = get_address_info(self._backend, self.address)
         return self._info
 
     def is_unused(self) -> bool:
@@ -215,7 +246,7 @@ class TPrivKey(object):
     def get_unspent(self, confirmations: int = NotNone) -> list:
         from yubtc.net import get_address_unspent
         result = list()
-        for x in get_address_unspent(self._backend, self.get_p2pkh_address()):
+        for x in get_address_unspent(self._backend, self.address):
             if x['confirmations'] >= confirmations:
                 result.append({
                     'tx': x['tx_hash'], 'out_n': x['tx_output_n'],
@@ -223,6 +254,77 @@ class TPrivKey(object):
                     'confirmations': x['confirmations'],
                 })
         return result
+
+
+@require_kwargs_only
+def _address_for_key(privkey: 'PrivateKey' = NotNone,
+                     addr_type: str = NotNone) -> str:
+    """Address of `privkey` in the given encoding (mirrors
+    `wallet.rs::address_for_key`): `legacy` -> P2PKH (`1...`),
+    `native` -> P2WPKH bech32 (`bc1q...`), `taproot` -> P2TR bech32m
+    (`bc1p...`, through the BIP-86 TapTweak). Always a `str`."""
+    from yubtc.crypto import (privkey2pubkey, pubkey2addr,
+                              pubkey2segwit_addr, pubkey2taproot_addr)
+    pubkey = privkey2pubkey(privkey=privkey)
+    if addr_type == AddrType.NATIVE:
+        return pubkey2segwit_addr(pubkey=pubkey)
+    if addr_type == AddrType.TAPROOT:
+        return pubkey2taproot_addr(pubkey=pubkey)
+    return pubkey2addr(pubkey=pubkey).decode('ascii')
+
+
+class AddressForm(NamedTuple):
+    """One queryable address form at a nonce (mirrors
+    `wallet.rs::AddressForm`): the type, the key that spends that
+    form, and the address to ask the backend about.
+
+    For the BIP-39-standard pbkdf2 KDF each form carries a *distinct*
+    key (the m/44'/84'/86' leaves); for the non-BIP-32 KDFs (вариант
+    A, spec ОВ-2) all three forms share the same secret, re-encoded.
+    Each form gets its own `TPrivKey` view: the cached network methods
+    (`get_info`/`get_unspent`) always query the key's own `address`,
+    so the per-form queries land on the right addresses."""
+    addr_type: str
+    privkey: 'TPrivKey'
+    address: str
+
+
+@require_kwargs_only
+def nonce_address_forms(seed: TSeed = NotNone, nonce: TNonce = NotNone,
+                        passphrase: TPassphrase = NotNone,
+                        backend: 'NetworkBackend' = NotNone) -> list:
+    """Every address form the wallet can own at `nonce`, in canonical
+    scan order P2PKH -> P2WPKH -> P2TR (mirrors
+    `wallet.rs::nonce_address_forms`).
+
+    - pbkdf2 (non-empty passphrase): three distinct keys, derived at
+      `m/44'...` (legacy), `m/84'...` (BIP-84, native) and `m/86'...`
+      (BIP-86, taproot);
+    - yubtc cascade (вариант A / empty passphrase): one secret,
+      encoded three ways -- the WIF is identical across the forms.
+
+    P2SH is deliberately absent -- the wallet never creates P2SH for
+    itself (it only ever *receives* to P2SH via external request)."""
+    forms = []
+    for addr_type in ADDR_TYPES:
+        pk = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase,
+                      backend=backend, addr_type=addr_type)
+        forms.append(AddressForm(addr_type=addr_type, privkey=pk,
+                                 address=pk.address))
+    return forms
+
+
+@require_kwargs_only
+def _nonce_is_used(forms: list = NotNone) -> bool:
+    """Whether any form of the nonce has ever received funds (mirrors
+    `wallet.rs::nonce_is_used`): the gap rule generalised to nonces --
+    a nonce is "used" when at least one form was ever paid.
+    `total_received > 0` is the v0.1 `is_unused` sentinel, kept
+    bit-for-bit."""
+    for form in forms:
+        if form.privkey.get_info()['total_received'] > 0:
+            return True
+    return False
 
 
 class Wallet(object):
@@ -243,9 +345,15 @@ class Wallet(object):
         `addr_type` threads the Phase 13 address-type selection into
         every derived key (see `TPrivKey`): pbkdf2 walks the matching
         BIP-32 purpose path, non-BIP-32 KDFs re-encode the same key.
-        Omitted means `legacy` -- the scan-compatible v0.1 behaviour
-        until the multi-form scan (spec ОВ-4) lands with the wallet
-        stage-2 integration."""
+        Omitted means `legacy` -- the v0.1 constructor, kept
+        bit-for-bit (the CLI passes its own default,
+        `DEFAULT_ADDR_TYPE` = native, explicitly).
+
+        The gap walk spans all three address forms per nonce (spec
+        ОВ-4): a nonce counts as used when ANY of its forms ever
+        received funds, so a wallet opened as `legacy` still sees a
+        nonce that only ever held a `bc1...` UTXO, and the keys it
+        keeps are the wallet's own receive type."""
         from yubtc.fwd import AddrType
         from yubtc.net import get_backend
         if not seed:
@@ -263,11 +371,16 @@ class Wallet(object):
         self._addr_type = resolved_addr_type
         self.privkeys = []
         while True:
-            privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase,
-                               backend=self._backend, addr_type=resolved_addr_type)
-            if privkey.is_unused():
+            forms = nonce_address_forms(seed=seed, nonce=nonce,
+                                        passphrase=passphrase,
+                                        backend=self._backend)
+            if not _nonce_is_used(forms=forms):
                 break
-            self.privkeys.append(privkey)
+            # `nonce_address_forms` always emits every `AddrType` --
+            # including the wallet's receive type -- so the mapping
+            # cannot miss (documented invariant).
+            form_by_type = {form.addr_type: form.privkey for form in forms}
+            self.privkeys.append(form_by_type[resolved_addr_type])
             nonce = nonce + 1
         for i in range(new_addresses):
             privkey = TPrivKey(seed=seed, nonce=nonce, passphrase=passphrase,
@@ -366,55 +479,85 @@ class Wallet(object):
             target: TSatoshi = None,
             confirmations: int = NotNone,
             on_address: object = None) -> tuple:
-        """Walk forward from nonce 0 collecting addresses' UTXOs.
+        """Walk forward from nonce 0 collecting every form's UTXOs
+        (multi-form scan, spec ОВ-4; mirrors the Rust
+        `scan_inputs_until`).
 
-        Stops when either:
-        - the running total of satoshis >= `target` (when target is not None), or
-        - an address that has never received funds AND currently has no
-          UTXOs is found (the BIP-44 gap limit).
+        On each nonce ALL THREE forms (P2PKH + P2WPKH + P2TR) are
+        queried. The walk stops when either:
+        - the running total of satoshis >= `target` (when target is
+          not None), or
+        - a nonce where NO form has ever received funds is found (the
+          gap rule generalised to nonces: a nonce whose every form is
+          unused hides nothing newer).
 
-        `on_address`, if provided, is invoked as `on_address(tp, unspent)`
-        for every address that contributes a UTXO. The gap-limit stop and
-        target-met stop are *not* reported -- only the addresses that
-        actually fed inputs. Callers can use this to print progress as the
-        scan runs (e.g. mirroring `balance`'s per-address line).
+        Returns `(sources, cashback_addr)`:
+        - one source `(TPrivKey, unspent)` per contributing
+          `(nonce, form)`, with the key that spends that form;
+        - `cashback_addr` is the address to send any change to:
+          - gap stop: the gap nonce's address in the wallet's own
+            receive type (`_addr_type`) -- the v0.1 "unused address
+            gets the change" rule, generalised to forms;
+          - target met: the address of the LAST contributing
+            `(nonce, form)` -- the same `(nonce, form)` the last
+            source came from, NOT the wallet's receive type.
 
-        Returns (sources, cashback_addr) where sources is a list of
-        (TPrivKey, unspent) tuples in scan order and cashback_addr is the
-        address to send any change to:
-        - if the scan stopped due to the gap limit, cashback_addr is the
-          unused address itself (the wallet's next address, which is
-          hidden in the gap and ready to receive change);
-        - otherwise cashback_addr is the last sourced address.
+        `on_address`, if provided, is invoked as `on_address(tp,
+        unspent)` for every contributing source (in scan order). The
+        gap stop and target-met stop are not reported.
 
-        Note on gap detection: an address that *was* paid to but has
-        since been fully spent returns [] from get_unspent() yet is not
-        unused by the wallet-init definition (which checks
-        total_received). Treating that as a gap would truncate the scan
-        and miss later addresses with fresh UTXOs.
+        Note on `confirmations`: accepted for API stability but not
+        applied at the scan layer (mirrors the Rust
+        `scan_inputs_until`): the scan returns every UTXO found at
+        contributing addresses so callers can re-filter. The default
+        non-scan path (`_select_inputs` without `scan`) filters by
+        `confirmations` as before.
+
+        Note on gap detection: a form that *was* paid to but has since
+        been fully spent returns [] from get_unspent() yet counts as
+        used (`total_received > 0`), so the walk continues past it --
+        treating it as a gap would truncate the scan and miss later
+        addresses with fresh UTXOs.
         """
         sources = []
         total = 0
         nonce = 0
         cashback_addr = None
         while True:
-            pk = TPrivKey(seed=self._seed, nonce=nonce, passphrase=self._passphrase,
-                          backend=self._backend)
-            unspent = pk.get_unspent(confirmations=confirmations)
-            if pk.is_unused() and not unspent:
-                # True gap: this address has never received anything and
-                # has nothing to spend. Cashback goes here.
-                cashback_addr = pk.get_p2pkh_address()
+            forms = nonce_address_forms(seed=self._seed, nonce=nonce,
+                                        passphrase=self._passphrase,
+                                        backend=self._backend)
+            if not _nonce_is_used(forms=forms):
+                # True gap: no form of this nonce ever received
+                # anything. Cashback goes here, in the wallet's own
+                # receive encoding (the address is hidden in the gap
+                # and ready to receive change).
+                addr_by_type = {form.addr_type: form.address for form in forms}
+                cashback_addr = addr_by_type[self._addr_type]
                 break
-            if unspent:
-                sources.append((pk, unspent))
+            # Fetch the UTXOs of every used form (an unused form never
+            # received anything, so it cannot hold UTXOs -- the
+            # `get_unspent` round-trip is skipped for it).
+            contributed = False
+            last_addr = None
+            for form in forms:
+                if form.privkey.get_info()['total_received'] == 0:
+                    continue
+                unspent = form.privkey.get_unspent(confirmations=0)
+                if not unspent:
+                    # Used form, but everything was spent.
+                    continue
                 for u in unspent:
                     total += u['amount']
+                sources.append((form.privkey, unspent))
+                contributed = True
+                last_addr = form.address
                 if on_address is not None:
-                    on_address(pk, unspent)
-            if target is not None and total >= target:
-                # Target met: cashback goes to the last sourced address.
-                cashback_addr = pk.get_p2pkh_address()
+                    on_address(form.privkey, unspent)
+            if contributed and target is not None and total >= target:
+                # Target met: cashback goes to the same (nonce, form)
+                # the last source came from.
+                cashback_addr = last_addr
                 break
             nonce += 1
         return sources, cashback_addr
@@ -427,18 +570,23 @@ class Wallet(object):
             scan: bool = NotNone,
             confirmations: int = NotNone,
             cashback_addr: TAddress = None,
-            on_address: object = None) -> tuple:
+            on_address: object = None,
+            fee: TSatoshi = NotNone) -> tuple:
         """Pick `(vin_sources, src)` for the next transaction.
 
         Three input modes:
         - `sources` provided: caller has already selected inputs (e.g.
           via the interactive TUI). `cashback_addr` is the destination
           for any change; the scan is skipped.
-        - `scan=True`: walk the seed forward collecting UTXOs until
-          `amount` is met or the gap limit is hit. Cashback goes to the
-          last sourced address, or to the gap-limit unused address.
+        - `scan=True`: walk the seed forward over every address form
+          collecting UTXOs until `amount + fee` is met or the gap
+          limit is hit (the Rust CLI's target: the collected inputs
+          must cover the payment AND the fee). Cashback goes to the
+          last contributing `(nonce, form)`, or to the gap nonce's
+          address in the wallet's receive type.
         - otherwise: use the wallet's primary address's UTXOs only;
-          cashback goes back to the same address.
+          cashback goes back to the same address (in the key's own
+          form).
 
         `amount` is consulted only in scan mode (as the stop target).
         Returns `(vin_sources, src)`: a list of `(TPrivKey, unspent)`
@@ -453,17 +601,18 @@ class Wallet(object):
                 raise TypeError('cashback_addr not set')
             return sources, cashback_addr
         if scan:
-            # When scanning, fetch UTXOs from every address starting at
-            # nonce 0 until either the target amount is met or an unused
-            # address is hit. Cashback goes to the last input or to the
-            # unused address (when the scan halted via gap limit).
+            # When scanning, fetch UTXOs from every address form
+            # starting at nonce 0 until either the target (amount +
+            # fee, so the inputs cover the payment and the fee) is met
+            # or an unused nonce is hit. Drain (`amount=None`) never
+            # early-terminates: it walks to the gap limit.
+            target = None if amount is None else amount + fee
             return self._scan_inputs(
-                target=amount, confirmations=confirmations,
+                target=target, confirmations=confirmations,
                 on_address=on_address)
-        # Default: just the primary address's UTXOs.
-        from yubtc.crypto import privkey2pubkey, pubkey2addr
-        pubkey = privkey2pubkey(self.privkeys[0].privkey)
-        src = pubkey2addr(pubkey=pubkey)
+        # Default: just the primary address's UTXOs, cashback to the
+        # same address in its own encoding.
+        src = self.privkeys[0].address_of()
         unspent = self.privkeys[0].get_unspent(confirmations=confirmations)
         return [(self.privkeys[0], unspent)], src
 
@@ -491,7 +640,7 @@ class Wallet(object):
         vin_sources, src = self._select_inputs(
             sources=sources, amount=amount, scan=scan,
             confirmations=confirmations, cashback_addr=cashback_addr,
-            on_address=on_address)
+            on_address=on_address, fee=fee)
         vin, in_amount, signers, spend = self._make_vin(sources=vin_sources)
         if fee:
             vout_result = make_vout(src=src, dst=dst, in_amount=in_amount,
