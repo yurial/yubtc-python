@@ -16,6 +16,7 @@ dependencies = [
     "coincurve",
     "base58",
     "pycryptodome",
+    "argon2-cffi",
 ]
 
 [project.optional-dependencies]

@@ -1,6 +1,11 @@
 import pytest
 
 
+# The canonical 12-word BIP-39 test mnemonic; the same phrase the Rust
+# core's kdf tests use ("abandon ".repeat(11).trim() + " about").
+_M12_SEED = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+
+
 @pytest.mark.parametrize('seed, privhex, privwif, address',
                          [('qwe',
                            '1814825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455',
@@ -111,6 +116,190 @@ def test_seed2bin_passphrase_is_sensitive_to_value():
     a = seed2bin(seed='qwe', nonce=0, passphrase='alpha')
     b = seed2bin(seed='qwe', nonce=0, passphrase='beta')
     assert a != b
+
+
+# ---------------------------------------------------------------------------
+# seed2bin(kdf=...): all four KDF algorithms (the Phase 0+ backport).
+#
+# Mirrors yubtc core/src/kdf.rs::seed2bin. Every expected hex constant
+# below is a KAT verified bit-for-bit against the Rust core: the vectors
+# were derived with this module and re-verified by the Rust cross-compat
+# harness (`cargo build -p yubtc-core --example kat_check`, then the
+# JSONL vector lines piped through stdin; exit code 0 means the Rust
+# core reproduced the same bytes for every vector).
+# ---------------------------------------------------------------------------
+
+
+def test_default_kdf_matches_rust():
+    """`KdfAlgo::default_for`: empty passphrase -> 'yubtc', non-empty
+    -> 'pbkdf2'."""
+    from yubtc.crypto import default_kdf
+    assert default_kdf(passphrase='') == 'yubtc'
+    assert default_kdf(passphrase='hunter2') == 'pbkdf2'
+
+
+def test_kdf_error_hierarchy():
+    """The typed KDF errors mirror the Rust `KdfError` variants and all
+    share the `ValueError` base so generic "bad KDF input" handlers work."""
+    from yubtc.crypto import (
+        Bip32Error, EmptyPassphraseIncompatible, KdfError, PassphraseRequired,
+    )
+    assert issubclass(KdfError, ValueError)
+    for variant in (PassphraseRequired, EmptyPassphraseIncompatible, Bip32Error):
+        assert issubclass(variant, KdfError)
+
+
+@pytest.mark.parametrize('seed, nonce, passphrase, kdf, expected', [
+    # Legacy cascade, empty passphrase: identical bytes to the
+    # pre-passphrase wallets (see the KAT above: same vector family).
+    (_M12_SEED, 0, '', 'yubtc',
+     'e47a0307ca0c0415fea1fdf37816950f7b337a9f1822313770c76d102180a548'),
+    # BIP-39-compatible pbkdf2.
+    (_M12_SEED, 0, 'test', 'pbkdf2',
+     '8f444af967d53a26ae807f06c4f85702478b0b227b1070bd989c8ca6a29b853b'),
+    (_M12_SEED, 7, 'hunter2', 'pbkdf2',
+     'fa12b7ba0c1b4a1b462ecda99f86c965eff85aec256d1229cabee3edcde97b71'),
+    # pbkdf2 NFKD pin: the passphrase is NFKD-normalised, so the
+    # decomposed form (e + combining acute, 'e\u0301') lands on the
+    # same key as the composed one ('\u00e9'). Rust verified the same
+    # bytes for both rows.
+    (_M12_SEED, 0, 'é', 'pbkdf2',
+     '3c88f652acc3eb3e32f5cc5444d4b2c565919f69d810d9f397099c99a0c2c79e'),
+    (_M12_SEED, 0, 'e\u0301', 'pbkdf2',
+     '3c88f652acc3eb3e32f5cc5444d4b2c565919f69d810d9f397099c99a0c2c79e'),
+    # Argon2id: m=64 MiB, t=3, p=4, salt tag 'yubtc-argon2id-v1\0'.
+    (_M12_SEED, 0, 'test', 'argon2id',
+     '23ccae646483b73b670cfaf5e747ce7f72ca590a446c13e103145c0348d4365c'),
+    # Argon2id raw-bytes pin: NO NFKD here -- the decomposed passphrase
+    # hashes different bytes and therefore a different key than the
+    # composed one. Rust verified the same bytes.
+    (_M12_SEED, 0, 'e\u0301', 'argon2id',
+     '442f638bc7b108e7f0db8b8c3e94d1fea508d407f062c4ff806f26382819f271'),
+    # scrypt: N=2^15, r=16 (64 MiB), p=1, salt tag 'yubtc-scrypt-v2\0'.
+    (_M12_SEED, 0, 'test', 'scrypt',
+     'b55a8c1fa10704a68bd1182e094d4615f4669a0c1db02022770875547b3015df'),
+])
+def test_seed2bin_kdf_known_answers(seed, nonce, passphrase, kdf, expected):
+    from yubtc.crypto import seed2bin
+    out = seed2bin(seed=seed, nonce=nonce, passphrase=passphrase, kdf=kdf)
+    assert len(out) == 32
+    assert out.hex() == expected
+
+
+def test_seed2bin_explicit_yubtc_kdf_matches_legacy_vector():
+    """Passing kdf='yubtc' explicitly reproduces the pre-existing
+    legacy KAT -- the parameter did not move the legacy bytes."""
+    from yubtc.crypto import seed2bin
+    assert seed2bin(seed='qwe', nonce=0, passphrase='', kdf='yubtc').hex() == \
+        '1c14825e69d2e72eabfbec9c0168f5689dcc26509aa2a8590d859a90402f0455'
+    assert seed2bin(seed='qwe', nonce=7, passphrase='', kdf='yubtc').hex() == \
+        '1f2b3272b320b5be8dae398655d2e25924a9ba9676b78b9eb095691fcb2c8c23'
+
+
+@pytest.mark.parametrize('nonce, passphrase, kdf', [
+    (0, '', 'yubtc'),
+    (7, '', 'yubtc'),
+    (0, 'hunter2', 'pbkdf2'),
+])
+def test_seed2bin_without_kdf_matches_explicit_default(nonce, passphrase, kdf):
+    """Omitting `kdf` keeps the historic routing (empty passphrase ->
+    yubtc, non-empty -> pbkdf2): same bytes as the explicit choice."""
+    from yubtc.crypto import default_kdf, seed2bin
+    assert seed2bin(seed='qwe', nonce=nonce, passphrase=passphrase) == \
+        seed2bin(seed='qwe', nonce=nonce, passphrase=passphrase,
+                 kdf=default_kdf(passphrase=passphrase))
+
+
+def test_seed2bin_yubtc_kdf_rejects_passphrase():
+    """The legacy cascade is passphrase-free by definition (mirrors
+    `KdfError::EmptyPassphraseIncompatible`)."""
+    from yubtc.crypto import EmptyPassphraseIncompatible, seed2bin
+    with pytest.raises(EmptyPassphraseIncompatible,
+                       match='empty passphrase is incompatible with kdf=yubtc'):
+        seed2bin(seed='qwe', nonce=0, passphrase='x', kdf='yubtc')
+
+
+@pytest.mark.parametrize('kdf', ['pbkdf2', 'argon2id', 'scrypt'])
+def test_seed2bin_passphrase_kdfs_reject_empty_passphrase(kdf):
+    """The stretch needs a passphrase (mirrors `KdfError::PassphraseRequired`)."""
+    from yubtc.crypto import PassphraseRequired, seed2bin
+    with pytest.raises(PassphraseRequired, match=f'passphrase required for kdf={kdf}'):
+        seed2bin(seed='qwe', nonce=0, passphrase='', kdf=kdf)
+
+
+def test_seed2bin_unknown_kdf_raises():
+    from yubtc.crypto import seed2bin
+    with pytest.raises(ValueError, match="unknown kdf: 'sha3'"):
+        seed2bin(seed='qwe', nonce=0, passphrase='x', kdf='sha3')
+
+
+def test_seed2bin_rejects_kdf_none():
+    """An explicit `None` is not a KDF choice -- the wrapper rejects it
+    the same way it does for every other non-None-default parameter."""
+    from yubtc.crypto import seed2bin
+    with pytest.raises(ValueError, match='kdf is None'):
+        seed2bin(seed='qwe', nonce=0, passphrase='x', kdf=None)
+
+
+@pytest.mark.parametrize('kdf', ['yubtc', 'pbkdf2', 'argon2id', 'scrypt'])
+def test_seed2bin_kdf_separates_nonces(kdf):
+    """Regression guard (mirrors the Rust `every_kdf_separates_nonces`):
+    every KDF must derive distinct keys for distinct nonces -- one key
+    per nonce is what keeps the wallet from silently reusing an address."""
+    from yubtc.crypto import seed2bin
+    passphrase = '' if kdf == 'yubtc' else 'test'
+    outs = {seed2bin(seed=_M12_SEED, nonce=n, passphrase=passphrase, kdf=kdf)
+            for n in (0, 1, 999)}
+    assert len(outs) == 3
+
+
+@pytest.mark.parametrize('kdf', ['pbkdf2', 'argon2id', 'scrypt'])
+def test_seed2bin_kdf_is_sensitive_to_passphrase_value(kdf):
+    from yubtc.crypto import seed2bin
+    a = seed2bin(seed='qwe', nonce=0, passphrase='alpha', kdf=kdf)
+    b = seed2bin(seed='qwe', nonce=0, passphrase='beta', kdf=kdf)
+    assert a != b
+
+
+def test_seed2bin_rejects_nonce_at_hardened_flag():
+    """BIP-32 caps non-hardened child indexes at 2^31 (mirrors
+    `KdfError::Bip32` via `make_bip44_path`). The check lives in the
+    shared `_bip44_leaf`, so one KDF exercises it for all three."""
+    from yubtc.crypto import Bip32Error, seed2bin
+    with pytest.raises(Bip32Error, match='BIP-32 derivation failed'):
+        seed2bin(seed=_M12_SEED, nonce=0x80000000, passphrase='test', kdf='pbkdf2')
+
+
+def test_seed2privkey_explicit_yubtc_kdf_keeps_clamp():
+    """Decision C1: kdf='yubtc' is the clamped branch, exactly like the
+    omitted-kdf default with an empty passphrase."""
+    from yubtc.crypto import bin2privkey, seed2bin, seed2privkey
+    raw = seed2bin(seed='qwe', nonce=0, passphrase='', kdf='yubtc')
+    key = seed2privkey(seed='qwe', nonce=0, passphrase='', kdf='yubtc')
+    assert key.secret == bin2privkey(raw)
+
+
+@pytest.mark.parametrize('kdf', ['pbkdf2', 'argon2id', 'scrypt'])
+def test_seed2privkey_bip44_kdfs_skip_clamp(kdf):
+    """Decision C1: the BIP-44-leaf KDFs feed the raw leaf to
+    secp256k1 verbatim -- no clamp -- so addresses match what
+    Trezor/Ledger/Electrum derive for the same (mnemonic, passphrase)."""
+    from yubtc.crypto import bin2privkey, seed2bin, seed2privkey
+    raw = seed2bin(seed=_M12_SEED, nonce=0, passphrase='test', kdf=kdf)
+    key = seed2privkey(seed=_M12_SEED, nonce=0, passphrase='test', kdf=kdf)
+    assert key.secret == raw
+    assert key.secret != bin2privkey(raw)
+
+
+@pytest.mark.parametrize('nonce, passphrase', [(0, ''), (0, 'hunter2')])
+def test_seed2privkey_without_kdf_matches_explicit_default(nonce, passphrase):
+    """Omitting `kdf` in seed2privkey keeps the historic routing and
+    clamp policy: same key as passing `default_kdf(passphrase)`."""
+    from yubtc.crypto import default_kdf, seed2privkey
+    auto = seed2privkey(seed='qwe', nonce=nonce, passphrase=passphrase)
+    explicit = seed2privkey(seed='qwe', nonce=nonce, passphrase=passphrase,
+                            kdf=default_kdf(passphrase=passphrase))
+    assert auto.secret == explicit.secret
 
 
 def test_seed2privkey_raises_when_nonce_missing():

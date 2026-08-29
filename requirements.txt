@@ -3,3 +3,4 @@ click
 coincurve
 base58
 pycryptodome
+argon2-cffi
