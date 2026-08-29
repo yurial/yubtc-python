@@ -75,9 +75,9 @@ def test_broadcastTx_raises_on_non_2xx(monkeypatch):
     fake.status_code = 500
     fake.text = 'Internal Server Error'
     monkeypatch.setattr(requests, 'post', lambda url, **kwargs: fake)
-    from yubtc.net import broadcastTx
+    from yubtc.net import broadcastTx, get_backend
     with pytest.raises(RuntimeError, match='broadcast failed'):
-        broadcastTx(b'\x00')
+        broadcastTx(get_backend(), b'\x00')
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ def test_get_address_unspent_returns_unspent_outputs(monkeypatch):
         ],
     }
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
-    from yubtc.net import get_address_unspent
+    from yubtc.net import get_address_unspent, get_backend
     out = get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
     assert out == [
         {'tx': 'aaa', 'out_n': 0, 'amount': 1000},
@@ -113,7 +113,7 @@ def test_get_address_unspent_uses_unspent_endpoint(monkeypatch):
     fake.json.return_value = {'unspent_outputs': []}
     captured = []
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: (captured.append(url), fake)[1])
-    from yubtc.net import get_address_unspent
+    from yubtc.net import get_address_unspent, get_backend
     get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
     assert captured == ['https://blockchain.info/unspent?active=1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k']
 
@@ -123,7 +123,7 @@ def test_get_address_unspent_returns_empty_on_json_decode_error(monkeypatch):
     fake = MagicMock()
     fake.json.side_effect = JSONDecodeError('msg', 'doc', 0)
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
-    from yubtc.net import get_address_unspent
+    from yubtc.net import get_address_unspent, get_backend
     assert get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == []
 
 
@@ -133,7 +133,7 @@ def test_get_address_unspent_propagates_non_json_errors(monkeypatch):
     fake = MagicMock()
     fake.json.return_value = {'wrong_key': []}  # KeyError when we look up 'unspent_outputs'
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
-    from yubtc.net import get_address_unspent
+    from yubtc.net import get_address_unspent, get_backend
     with pytest.raises(KeyError):
         get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
 
@@ -147,7 +147,7 @@ def test_get_address_unspent_passes_timeout(monkeypatch):
     captured = []
     monkeypatch.setattr(requests, 'get',
                         lambda url, **kwargs: (captured.append(kwargs), fake)[1])
-    from yubtc.net import get_address_unspent
+    from yubtc.net import get_address_unspent, get_backend
     get_address_unspent(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
     assert 'timeout' in captured[0]
     assert captured[0]['timeout'] > 0
@@ -159,7 +159,7 @@ def test_get_address_info_returns_address_subdict(monkeypatch):
     info = {'total_received': 5000, 'final_balance': 3000, 'n_tx': 7}
     fake.json.return_value = {'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k': info}
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
-    from yubtc.net import get_address_info
+    from yubtc.net import get_address_info, get_backend
     assert get_address_info(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == info
 
 
@@ -169,7 +169,7 @@ def test_get_address_info_uses_balance_endpoint(monkeypatch):
     fake.json.return_value = {'1addr': {'total_received': 0}}
     captured = []
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: (captured.append(url), fake)[1])
-    from yubtc.net import get_address_info
+    from yubtc.net import get_address_info, get_backend
     get_address_info(get_backend(), b'1addr')
     assert captured == ['https://blockchain.info/balance?active=1addr']
 
@@ -179,7 +179,7 @@ def test_get_address_info_returns_zero_received_on_json_decode_error(monkeypatch
     fake = MagicMock()
     fake.json.side_effect = JSONDecodeError('msg', 'doc', 0)
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
-    from yubtc.net import get_address_info
+    from yubtc.net import get_address_info, get_backend
     assert get_address_info(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k') == {'total_received': 0}
 
 
@@ -189,7 +189,7 @@ def test_get_address_info_propagates_non_json_errors(monkeypatch):
     fake = MagicMock()
     fake.json.return_value = {'some_other_address': {'total_received': 0}}  # KeyError
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
-    from yubtc.net import get_address_info
+    from yubtc.net import get_address_info, get_backend
     with pytest.raises(KeyError):
         get_address_info(get_backend(), b'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k')
 
@@ -202,7 +202,7 @@ def test_get_address_info_passes_timeout(monkeypatch):
     captured = []
     monkeypatch.setattr(requests, 'get',
                         lambda url, **kwargs: (captured.append(kwargs), fake)[1])
-    from yubtc.net import get_address_info
+    from yubtc.net import get_address_info, get_backend
     get_address_info(get_backend(), b'1addr')
     assert 'timeout' in captured[0]
     assert captured[0]['timeout'] > 0
@@ -269,8 +269,6 @@ def test_free_functions_delegate_to_explicit_backend():
     ]
 
 
-
-
 def test_tprivkey_uses_injected_backend():
     """Backend injection: `TPrivKey` stores the backend it was given
     and routes `get_unspent`/`is_unused`/`get_info` through it."""
@@ -289,8 +287,6 @@ def test_wallet_uses_injected_backend():
     w = Wallet(seed='qwe', nonce=0, new_addresses=1, passphrase='',
                backend=OfflineBackend())
     assert len(w.privkeys) == 1
-
-
 
 
 def test_blockchain_info_backend_with_custom_base_url(monkeypatch):
@@ -639,7 +635,7 @@ def test_mempool_space_backend_send_tx_posts_to_mempool(monkeypatch):
 def test_BACKENDS_lists_all_three_providers():
     """The registry exposes the three providers the wallet supports."""
     from yubtc.net import (
-        get_backend, BACKENDS, BlockchainInfoBackend,
+        BACKENDS, BlockchainInfoBackend,
         BlockstreamBackend, MempoolSpaceBackend,
     )
     assert set(BACKENDS) == {'blockchain.info', 'blockstream', 'mempool.space'}

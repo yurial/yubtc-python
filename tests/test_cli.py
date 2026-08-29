@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 from click.testing import CliRunner
 
 import yubtc
@@ -14,17 +14,41 @@ ADDRESS = '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k'
 PRIVWIF = 'Kx2X5mom9zTGkQq38v8swx3z5ApAuRnwq4wfyF52Y55v6Ke5dRq5'
 
 
+def _address_for(seed, nonce, addr_type):
+    """The address of (seed, nonce) in the given form (Phase 13)."""
+    from yubtc.crypto import (privkey2pubkey, pubkey2addr,
+                              pubkey2segwit_addr, pubkey2taproot_addr,
+                              seed2privkey)
+    pubkey = privkey2pubkey(
+        privkey=seed2privkey(seed=seed, nonce=nonce, passphrase=''))
+    if addr_type == 'native':
+        return pubkey2segwit_addr(pubkey=pubkey)
+    if addr_type == 'taproot':
+        return pubkey2taproot_addr(pubkey=pubkey)
+    return pubkey2addr(pubkey=pubkey).decode('ascii')
+
+
+# The CLI's default receive form is native (P2WPKH, `bc1q...`) since
+# Phase 13 (spec ОВ-1); the legacy P2PKH vector above is selected with
+# `--addr-type legacy`. Balance/address/dumpprivkey print the selected
+# form, so default-invocation assertions target the native vector.
+NATIVE_ADDRESS = _address_for(SEED, 0, 'native')
+
+
 def _stub_offline(monkeypatch, unspent=None, info=None, used_nonces=0):
     """Stub out blockchain.info so the CLI can be exercised without network.
 
     `unspent`: list of fake UTXO dicts to return from `get_address_unspent`.
-        Defaults to [] (no UTXOs).
+        Defaults to [] (no UTXOs). Returned only for addresses of used
+        nonces, so fresh gap nonces stay empty.
     `info`: dict to return from `get_address_info`. Defaults to a "never used"
         address -- `total_received == 0`.
     `used_nonces`: number of leading nonces to mark as "used" (total_received=1).
         The remainder return the default info. Wallet's seed-scan loop walks
-        nonces until it finds an unused address; pin how many are used so the
-        loop terminates.
+        nonces until it finds an unused one; pin how many are used so the
+        loop terminates. Every address form (P2PKH/P2WPKH/P2TR) of a used
+        nonce is marked used -- the multi-form gap rule (Phase 13) treats a
+        nonce as used when ANY of its forms ever received funds.
 
     The mock is keyed on the *address* (not call order) so it stays stable
     across the multiple `is_unused()` calls made by both Wallet.__init__
@@ -36,15 +60,20 @@ def _stub_offline(monkeypatch, unspent=None, info=None, used_nonces=0):
     if info is None:
         info = {'total_received': 0, 'final_balance': 0, 'n_tx': 0}
     used = {'total_received': 1, 'final_balance': 0, 'n_tx': 1}
-    from yubtc.crypto import seed2privkey, privkey2addr
-    address_for = {n: privkey2addr(privkey=seed2privkey(seed=SEED, nonce=n, passphrase='')).decode('ascii')
-                   for n in range(used_nonces)}
+    used_addresses = set()
+    for n in range(used_nonces):
+        for addr_type in ('legacy', 'native', 'taproot'):
+            used_addresses.add(_address_for(SEED, n, addr_type))
 
-    def fake_info(address):
+    def fake_info(backend, address):
         address = address.decode('ascii') if isinstance(address, bytes) else address
-        return used if address in address_for.values() else info
+        return used if address in used_addresses else info
     monkeypatch.setattr(yubtc.net, 'get_address_info', fake_info)
-    monkeypatch.setattr(yubtc.net, 'get_address_unspent', lambda address, **kwargs: unspent)
+
+    def fake_unspent(backend, address, **kwargs):
+        address = address.decode('ascii') if isinstance(address, bytes) else address
+        return list(unspent) if address in used_addresses else []
+    monkeypatch.setattr(yubtc.net, 'get_address_unspent', fake_unspent)
 
 
 @pytest.fixture
@@ -147,9 +176,9 @@ def _stub_no_network(monkeypatch):
     and don't need the network stub to do anything specific.
     """
     monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
+                        lambda backend, address: {'total_received': 0, 'n_tx': 0})
     monkeypatch.setattr('yubtc.net.get_address_unspent',
-                        lambda address, **kwargs: [])
+                        lambda backend, address, **kwargs: [])
 
 
 def _stub_run_selection(monkeypatch, return_value):
@@ -197,12 +226,16 @@ def _stub_scan_inputs(monkeypatch, return_value=None, side_effect=None):
 # ---------------------------------------------------------------------------
 
 def test_address(offline):
-    assert ADDRESS in run(['address'], stdin='\n' + SEED + '\n\n' + '')
+    # Phase 13 (spec ОВ-1): the default receive form is native (P2WPKH,
+    # `bc1q...`); the legacy P2PKH encoding needs `--addr-type legacy`
+    # (pinned in test_segwit_cli).
+    assert NATIVE_ADDRESS in run(['address'], stdin='\n' + SEED + '\n\n' + '')
 
 
 def test_dumpprivkey(offline):
     output = run(['dumpprivkey'], stdin='\n' + SEED + '\n\n' + '')
-    assert ADDRESS in output
+    assert f'Address: {NATIVE_ADDRESS}' in output
+    # Variant-A KDF: the WIF is identical across address forms.
     assert PRIVWIF in output
 
 
@@ -253,8 +286,9 @@ def test_balance_hides_used_empty_addresses_by_default(monkeypatch):
     # Nonce 0 is "used" but currently empty (no UTXOs); nonce 1+ is fresh.
     _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0}, used_nonces=1)
     output = run(['balance'], stdin='\n' + SEED + '\n\n' + '')
-    # The header line `<nonce># <address>: 0.00000000 BTC` is suppressed.
-    assert ADDRESS not in output
+    # The header line `<nonce># <address>: 0.00000000 BTC` is suppressed
+    # (printed in the wallet's selected form -- native by default).
+    assert NATIVE_ADDRESS not in output
     assert 'Total: 0.00000000' in output
 
 
@@ -262,7 +296,7 @@ def test_balance_shows_used_empty_addresses_with_empty_flag(monkeypatch):
     """-e forces the empty-but-used address to be printed."""
     _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0}, used_nonces=1)
     output = run(['balance', '-e'], stdin='\n' + SEED + '\n\n' + '')
-    assert ADDRESS in output
+    assert NATIVE_ADDRESS in output
     assert '0.00000000 BTC' in output
 
 
@@ -329,10 +363,11 @@ def test_balance_shows_unused_label_for_unused_addresses(monkeypatch):
     _stub_offline(monkeypatch, unspent=[], info={'total_received': 0, 'n_tx': 0},
                   used_nonces=0)
     output = run(['balance'], stdin='\n' + SEED + '\n\n' + '')
-    # The wallet contains one unused address; it should print 'unused'
+    # The wallet contains one unused address (printed in the wallet's
+    # selected form -- native by default); it should print 'unused'
     # instead of '0.00000000 BTC' so the operator can tell it apart from
     # a used-but-currently-empty address.
-    assert f'0# {ADDRESS}: unused' in output
+    assert f'0# {NATIVE_ADDRESS}: unused' in output
     assert 'Total: 0.00000000' in output
 
 
@@ -342,7 +377,7 @@ def test_balance_used_empty_address_keeps_zero_btc_label(monkeypatch):
                   used_nonces=1)
     output = run(['balance', '-e'], stdin='\n' + SEED + '\n\n' + '')
     # Nonce 0 was used (total_received=1) but is now drained: '0.00000000 BTC'.
-    assert f'0# {ADDRESS}: 0.00000000 BTC' in output
+    assert f'0# {NATIVE_ADDRESS}: 0.00000000 BTC' in output
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +387,7 @@ def test_balance_used_empty_address_keeps_zero_btc_label(monkeypatch):
 
 def test_send_dry_run_prints_raw_tx(monkeypatch):
     """Default (no --broadcast) prints the raw tx hex; the network stub is not called."""
+    _stub_no_network(monkeypatch)
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     fake_tx = _stub_make_transaction(monkeypatch, amount=50_000)
@@ -367,6 +403,7 @@ def test_send_dry_run_prints_raw_tx(monkeypatch):
 
 def test_send_amount_all_means_none(monkeypatch):
     """Amount=ALL is converted to None before passing to the wallet."""
+    _stub_no_network(monkeypatch)
     captured = {}
     _stub_make_transaction(monkeypatch, amount=0, capture=captured)
     run(['send', '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', 'ALL'], stdin='\n' + SEED + '\n\n' + '')
@@ -375,6 +412,7 @@ def test_send_amount_all_means_none(monkeypatch):
 
 def test_send_declined_by_user_prints_nothing(monkeypatch):
     """With --broadcast, answering 'n' to the confirm prompt skips broadcastTx but the dump is still printed."""
+    _stub_no_network(monkeypatch)
     fake_tx = _stub_make_transaction(monkeypatch, amount=50_000)
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
@@ -391,6 +429,7 @@ def test_send_declined_by_user_prints_nothing(monkeypatch):
 
 def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
     """Without --broadcast, no confirmation prompt is asked -- the dump just prints."""
+    _stub_no_network(monkeypatch)
     fake_tx = _stub_make_transaction(monkeypatch, amount=50_000)
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
@@ -408,6 +447,7 @@ def test_send_dry_run_does_not_prompt_yesno(monkeypatch):
 
 def test_send_with_broadcast_flag_calls_broadcastTx(monkeypatch):
     """--broadcast routes the tx through net.broadcastTx (the stub)."""
+    _stub_no_network(monkeypatch)
     _stub_make_transaction(monkeypatch, amount=50_000)
     # Mock broadcastTx to record the call.
     sent = MagicMock()
@@ -424,6 +464,7 @@ def test_send_with_yes_flag_skips_broadcast_prompt(monkeypatch):
 
     No 'y' in stdin -- the prompt would hang or raise if it were shown.
     """
+    _stub_no_network(monkeypatch)
     _stub_make_transaction(monkeypatch, amount=50_000)
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
@@ -436,6 +477,7 @@ def test_send_with_yes_flag_skips_broadcast_prompt(monkeypatch):
 
 def test_send_with_yes_short_flag_works(monkeypatch):
     """-y is the short form of --yes."""
+    _stub_no_network(monkeypatch)
     _stub_make_transaction(monkeypatch, amount=50_000)
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
@@ -447,6 +489,7 @@ def test_send_with_yes_short_flag_works(monkeypatch):
 
 def test_send_with_yes_without_broadcast_does_not_send(monkeypatch):
     """`--yes` without `--broadcast` is a no-op for the broadcast step."""
+    _stub_no_network(monkeypatch)
     _stub_make_transaction(monkeypatch, amount=50_000)
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
@@ -473,13 +516,18 @@ def _invoke(args, stdin=None):
 
 
 def test_pushtx_reads_hex_from_stdin_and_broadcasts(offline, monkeypatch):
-    """`pushtx` parses hex from stdin and calls broadcastTx with the bytes."""
+    """`pushtx` parses hex from stdin and calls broadcastTx with the bytes.
+
+    Backend injection (Phase 13): broadcastTx receives the resolved
+    backend as its first argument -- matched with ANY here; the
+    provider-to-backend wiring is pinned by test_pushtx_accepts_provider.
+    """
     sent = MagicMock()
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     rawtx_hex = 'deadbeef00ff'
     result = _invoke(['pushtx', '--yes'], stdin=rawtx_hex)
     assert result.exit_code == 0, result.output
-    sent.assert_called_once_with(bytes.fromhex(rawtx_hex))
+    sent.assert_called_once_with(ANY, bytes.fromhex(rawtx_hex))
 
 
 def test_pushtx_short_yes_flag_works(offline, monkeypatch):
@@ -488,7 +536,7 @@ def test_pushtx_short_yes_flag_works(offline, monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     result = _invoke(['pushtx', '-y'], stdin='aabbcc')
     assert result.exit_code == 0, result.output
-    sent.assert_called_once_with(b'\xaa\xbb\xcc')
+    sent.assert_called_once_with(ANY, b'\xaa\xbb\xcc')
 
 
 def test_pushtx_prints_txid_size_and_rawtx(offline, monkeypatch):
@@ -512,7 +560,7 @@ def test_pushtx_without_yes_prompts_and_broadcasts_on_yes(offline, monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     result = _invoke(['pushtx'], stdin='aabb\ny\n')
     assert result.exit_code == 0, result.output
-    sent.assert_called_once_with(b'\xaa\xbb')
+    sent.assert_called_once_with(ANY, b'\xaa\xbb')
 
 
 def test_pushtx_without_yes_and_user_says_no_does_not_broadcast(offline, monkeypatch):
@@ -531,7 +579,7 @@ def test_pushtx_strips_whitespace_around_hex(offline, monkeypatch):
     monkeypatch.setattr(yubtc.net, 'broadcastTx', sent)
     result = _invoke(['pushtx', '--yes'], stdin='  aabbcc  \n')
     assert result.exit_code == 0, result.output
-    sent.assert_called_once_with(b'\xaa\xbb\xcc')
+    sent.assert_called_once_with(ANY, b'\xaa\xbb\xcc')
 
 
 def test_pushtx_empty_stdin_errors(offline):
@@ -557,6 +605,7 @@ def test_pushtx_invalid_hex_errors(offline):
 
 def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
     """--scan routes through Wallet.send with scan=True."""
+    _stub_no_network(monkeypatch)
     captured = {}
     _stub_make_transaction(monkeypatch, amount=50_000, capture=captured)
     sent = MagicMock()
@@ -570,6 +619,7 @@ def test_send_with_scan_flag_passes_scan_to_wallet(monkeypatch):
 
 def test_send_with_scan_and_all_drains(monkeypatch):
     """--scan + ALL drains every scanned UTXO."""
+    _stub_no_network(monkeypatch)
     captured = {}
     _stub_make_transaction(monkeypatch, amount=80_000, capture=captured)
     monkeypatch.setattr(yubtc.net, 'broadcastTx', MagicMock())
@@ -594,7 +644,7 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
         return '76a914' + hash160(pubkey).hex() + '88ac'
 
     def fake_unspent(specs):
-        def get_unspent(address, **kwargs):
+        def get_unspent(backend, address, **kwargs):
             address = address.decode('ascii') if isinstance(address, bytes) else address
             for n, amts in specs.items():
                 if addr_for(SEED, n) == address:
@@ -628,8 +678,9 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
         ).sign(signers=[(privkey, pubkey)])
         return TxResult(tx=tx, cashback=39_000, amount=80_000, fee=1_000)
 
-    monkeypatch.setattr('yubtc.net.get_address_info',
-                        lambda address: {'total_received': 0, 'n_tx': 0})
+    # Nonces 0 and 1 are used (the multi-form scan walks both); the
+    # UTXOs sit on their P2PKH forms.
+    _stub_offline(monkeypatch, used_nonces=2)
     monkeypatch.setattr('yubtc.net.get_address_unspent',
                         fake_unspent({0: [60_000], 1: [60_000]}))
 
@@ -641,6 +692,8 @@ def test_send_scan_prints_each_address_like_balance(monkeypatch):
         stdin='\n' + SEED + '\n\n' + '',
     )
     # Per-address lines in the `balance` format: `{nonce}# {addr}: {amount:0.08f} BTC`.
+    # The contributing sources are the P2PKH forms holding the UTXOs, so
+    # the callback prints those forms' addresses.
     assert f'0# {addr_for(SEED, 0)}: 0.00060000 BTC' in output
     assert f'1# {addr_for(SEED, 1)}: 0.00060000 BTC' in output
 
@@ -673,7 +726,8 @@ def test_send_interactive_passes_scan_target_none_to_gap(monkeypatch):
     from yubtc.crypto import seed2privkey, privkey2addr
     captured = {}
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='',
+                              backend=object())
     cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     # Big enough UTXO to cover the 0.001 BTC request so the feasibility
     # short-circuit doesn't kick in.
@@ -725,7 +779,8 @@ def test_send_interactive_builds_tx_with_caller_selection(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='',
+                              backend=object())
     cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     utxo_dict = _make_utxo(nonce=0, amount=100_000, tx_hash='a' * 64)
 
@@ -773,7 +828,8 @@ def test_send_interactive_skips_tui_when_target_unreachable(monkeypatch):
     the UI and print an insufficient-funds message naming both numbers."""
     import yubtc.wallet as wallet_mod
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='',
+                              backend=object())
     # Tiny UTXO (100 satoshi = 0.00000100 BTC); the request is 0.001 BTC.
     utxo = _make_utxo(nonce=0, amount=100, tx_hash='aa' * 32)
 
@@ -804,7 +860,8 @@ def test_send_interactive_drain_mode_skips_feasibility_check(monkeypatch):
     short-circuit is skipped even if available funds are tiny."""
     import yubtc.wallet as wallet_mod
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='',
+                              backend=object())
     utxo = _make_utxo(nonce=0, amount=100, tx_hash='aa' * 32)
 
     ui_called = []
@@ -833,7 +890,8 @@ def test_send_interactive_broadcast_prompts_and_calls_sendtx(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='',
+                              backend=object())
     cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     utxo_dict = _make_utxo(nonce=0, amount=100_000, tx_hash='a' * 64)
 
@@ -864,7 +922,8 @@ def test_send_interactive_broadcast_declined_does_not_send(monkeypatch):
     import yubtc.wallet as wallet_mod
     from yubtc.crypto import seed2privkey, privkey2addr
 
-    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='')
+    pk0 = wallet_mod.TPrivKey(seed='qwe', nonce=0, passphrase='',
+                              backend=object())
     cashback = privkey2addr(privkey=seed2privkey(seed='qwe', nonce=1, passphrase=''))
     utxo_dict = _make_utxo(nonce=0, amount=100_000, tx_hash='a' * 64)
 
@@ -906,16 +965,18 @@ def test_send_interactive_rejects_positional_args():
         _send_interactive(None)
 
 
-def test_send_interactive_raises_when_required_kwarg_missing():
+def test_send_interactive_raises_when_required_kwarg_missing(monkeypatch):
     """Each required kwarg has its own 'X not set' guard."""
     from yubtc.cli import _send_interactive
     from yubtc.wallet import Wallet
-    base = dict(wallet=Wallet(seed='qwe', nonce=0, new_addresses=1, passphrase=''),
+    _stub_no_network(monkeypatch)
+    base = dict(wallet=Wallet(seed='qwe', nonce=0, new_addresses=1,
+                              passphrase='', backend=object()),
                 address='1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k',
                 amount=None, fee=TBTC(0), feekb=2000, confirmations=0,
-                broadcast=False)
+                broadcast=False, on_address=None, yes=False)
     for missing in ('wallet', 'address', 'fee', 'feekb',
-                    'confirmations', 'broadcast'):
+                    'confirmations', 'broadcast', 'on_address', 'yes'):
         kwargs = {k: v for k, v in base.items() if k != missing}
         with pytest.raises(TypeError, match=f'{missing} not set'):
             _send_interactive(**kwargs)
@@ -980,7 +1041,8 @@ def test_address_default_provider_is_blockchain_info(offline, monkeypatch):
 
     monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
                                                 {'__init__': spy_init}))
-    _invoke(['address'], stdin='\n' + SEED + '\n\n' + '')
+    result = _invoke(['address'], stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code == 0, result.output
     assert seen['type'] == BlockchainInfoBackend.__name__
 
 
@@ -1005,24 +1067,25 @@ def test_balance_accepts_provider(offline, monkeypatch):
 
     monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
                                                 {'__init__': spy_init}))
-    _invoke(['balance', '--provider', 'blockstream'],
-            stdin='\n' + SEED + '\n\n' + '')
+    result = _invoke(['balance', '--provider', 'blockstream'],
+                     stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code == 0, result.output
     assert seen['type'] == BlockstreamBackend.__name__
 
 
 def test_pushtx_accepts_provider(offline, monkeypatch):
     """`pushtx --provider mempool.space` resolves the named backend and
-    hands it to broadcastTx (spy via the module function)."""
-    import yubtc.cli as cli_mod
+    hands it to broadcastTx (spy via the net module function -- pushtx
+    imports `broadcastTx` from `yubtc.net` at call time)."""
     from yubtc.net import MempoolSpaceBackend
     seen = {}
-    real_fn = cli_mod.broadcastTx
 
     def spy_broadcast(backend, rawtx):
         seen['type'] = type(backend).__name__
 
-    monkeypatch.setattr(cli_mod, 'broadcastTx', spy_broadcast)
-    _invoke(['pushtx', '--provider', 'mempool.space', '--yes'], stdin='aabb')
+    monkeypatch.setattr(yubtc.net, 'broadcastTx', spy_broadcast)
+    result = _invoke(['pushtx', '--provider', 'mempool.space', '--yes'], stdin='aabb')
+    assert result.exit_code == 0, result.output
     assert seen['type'] == MempoolSpaceBackend.__name__
 
 
@@ -1041,11 +1104,12 @@ def test_send_accepts_provider(offline, monkeypatch):
                                                 {'__init__': spy_init}))
     # The make_transaction stub avoids needing real UTXOs.
     _stub_make_transaction(monkeypatch, amount=50_000)
-    _invoke(
+    result = _invoke(
         ['send', '--provider', 'blockstream',
          '1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k', '0.0005'],
         stdin='\n' + SEED + '\n\n' + '',
     )
+    assert result.exit_code == 0, result.output
     assert seen['type'] == BlockstreamBackend.__name__
 # This block was removed from cli.py -- yubtc/__main__.py already invokes
 # `cli`, so the guard was redundant. See test_main.py for the real entry-point

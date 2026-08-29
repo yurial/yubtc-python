@@ -117,8 +117,12 @@ def newseed(n: int, unique: bool) -> None:
     # new, the wallet has no funds, and the user will be asked for a
     # passphrase on the next command that opens an existing wallet.
     # Pass `''` explicitly so the decorator doesn't reject the call.
+    # `backend=None` must be passed explicitly (kwargs-strictness):
+    # the wrapper treats every declared parameter as required, and
+    # `None` resolves the default `blockchain.info` backend.
     wallet = Wallet(seed=seed, nonce=DEFAULT_NONCE,
-                    new_addresses=DEFAULT_NEW_ADDRESSES, passphrase='')
+                    new_addresses=DEFAULT_NEW_ADDRESSES, passphrase='',
+                    backend=None)
     print('{seed}\r\nAddress: {address}'.format(seed=seed,
                                                 address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
