@@ -3,6 +3,8 @@
 import click
 
 from yubtc.fwd import (
+    ADDR_TYPES,
+    DEFAULT_ADDR_TYPE,
     DEFAULT_CONFIRMATIONS,
     DEFAULT_FEE,
     DEFAULT_NEW_ADDRESSES,
@@ -31,6 +33,21 @@ _STRICT_BIP39_OPTION = click.option(
     help='Enforce strict BIP-39 seed validation (wordlist, checksum and entropy floor). '
          'Default: permissive -- any non-empty seed is accepted (low-entropy seeds warn).',
     default=False, required=False, is_flag=True,
+)
+
+# Phase 13 (spec ОВ-1): the receive-address type. `native` (P2WPKH,
+# `bc1q...`) is the default per DEFAULT_ADDR_TYPE; `taproot` (P2TR,
+# `bc1p...`) is opt-in; `legacy` (P2PKH, `1...`) reproduces the v0.1
+# encoding bit-for-bit. Mirrors the Rust CLI's AddrTypeOpt: the type
+# affects only the receiving/cashback encoding -- the multi-form scan
+# makes balance/send see and spend UTXOs of every form regardless.
+_ADDR_TYPE_OPTION = click.option(
+    '--addr-type',
+    help='Receive-address type: native (P2WPKH bc1q..., default), taproot (P2TR bc1p...) or '
+         'legacy (P2PKH, v0.1 behaviour). Affects only the receiving/cashback encoding -- '
+         'balance and send still see and spend UTXOs of every form.',
+    default=DEFAULT_ADDR_TYPE, required=False, nargs=1,
+    type=click.Choice(ADDR_TYPES, case_sensitive=False),
 )
 
 
@@ -106,34 +123,40 @@ def newseed(n: int, unique: bool) -> None:
                                                 address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
 
 
-@cli.command('address', help='Show native (P2PKH) address and exit.')
+@cli.command('address', help='Show the receive address and exit.')
 @click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
 @click.option('--new', help='Count of new unused addresses',
               default=DEFAULT_NEW_ADDRESSES, required=False, nargs=1, type=int)
+@_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
-def address(nonce: TNonce, new: int, strict_bip39: bool, provider: str) -> None:
+def address(nonce: TNonce, new: int, addr_type: str, strict_bip39: bool, provider: str) -> None:
     backend = _resolve_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
-                    passphrase=passphrase, backend=backend)
-    print(wallet.privkeys[0].get_p2pkh_address().decode('ascii'))
+                    passphrase=passphrase, backend=backend, addr_type=addr_type)
+    # The address in the selected form (str for every type).
+    print(wallet.privkeys[0].address_of())
 
 
 @cli.command('dumpprivkey', help='Show private key in WIF format and exit.')
 @click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
+@_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
-def dumpprivkey(nonce: TNonce, strict_bip39: bool, provider: str) -> None:
+def dumpprivkey(nonce: TNonce, addr_type: str, strict_bip39: bool, provider: str) -> None:
     backend = _resolve_provider(name=provider)
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
-                    passphrase=passphrase, backend=backend)
-    print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
+                    passphrase=passphrase, backend=backend, addr_type=addr_type)
+    # The address in the selected form; the WIF is the key of that
+    # form (for pbkdf2 each addr_type is its own BIP-32 leaf, for the
+    # variant-A KDFs the WIF is identical across types).
+    print('Address: {address}'.format(address=wallet.privkeys[0].address_of()))
     print(wallet.privkeys[0].get_privwif().decode('ascii'))
 
 
@@ -148,17 +171,18 @@ def dumpprivkey(nonce: TNonce, strict_bip39: bool, provider: str) -> None:
               default=False, required=False, is_flag=True)
 @click.option('-v', '--verbose', help='Print verbosity',
               default=False, required=False, is_flag=True)
+@_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
 def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
-            verbose: bool, strict_bip39: bool, provider: str) -> None:
+            verbose: bool, addr_type: str, strict_bip39: bool, provider: str) -> None:
     from yubtc.misc import satoshi2btc
     backend = _resolve_provider(name=provider)
     total = TBTC(0)
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
-                    passphrase=passphrase, backend=backend)
+                    passphrase=passphrase, backend=backend, addr_type=addr_type)
     for privkey in wallet.privkeys:
         txs = privkey.get_unspent(confirmations=confirmations)
         in_amount = 0
@@ -166,7 +190,10 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
             in_amount += tx['amount']
         if not empty and in_amount == 0 and not privkey.is_unused():
             continue
-        address = privkey.get_p2pkh_address().decode('ascii')
+        # The address in the wallet's selected form (str for every
+        # type); the multi-form scan still reports UTXOs of every form
+        # the wallet owns.
+        address = privkey.address_of()
         if privkey.is_unused():
             # Never received funds -- a fresh address from the gap.
             # Distinguish it from a "used but currently empty" address
@@ -186,7 +213,8 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
     print(f'Total: {total:0.08f}')
 
 
-@cli.command('send', help='Send BTC to address. ADDRESS - Destination address. Only P2PKH or P2SH addresses supported. '
+@cli.command('send', help='Send BTC to address. ADDRESS - Destination address: base58 (P2PKH/P2SH) '
+             'or native SegWit (bc1q... P2WPKH / bc1p... P2TR). '
              'AMOUNT - value to send in decimal. Set "ALL" to send all available funds.')
 @click.option('-n', '--nonce', help='Scan addresses from given nonce',
               default=DEFAULT_NONCE, required=False, nargs=1, type=int)
@@ -208,6 +236,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
 @click.option('-y', '--yes', help='Skip the broadcast confirmation prompt. Implies --broadcast when '
               'used in non-interactive mode; safe to combine with --broadcast explicitly.',
               default=False, is_flag=True)
+@_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
 @click.argument('address', type=str)
@@ -223,6 +252,7 @@ def send(
         scan: bool,
         interactive: bool,
         yes: bool,
+        addr_type: str,
         strict_bip39: bool,
         provider: str) -> None:
     backend = _resolve_provider(name=provider)
@@ -230,15 +260,15 @@ def send(
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
-                    passphrase=passphrase, backend=backend)
-    print('Address: {address}'.format(address=wallet.privkeys[0].get_p2pkh_address().decode('ascii')))
+                    passphrase=passphrase, backend=backend, addr_type=addr_type)
+    # The receive address in the selected form.
+    print('Address: {address}'.format(address=wallet.privkeys[0].address_of()))
 
     def on_address(tp, unspent):
         from yubtc.misc import satoshi2btc
         in_amount = sum(u['amount'] for u in unspent)
-        addr = tp.get_p2pkh_address().decode('ascii')
         amount_btc = satoshi2btc(in_amount)
-        print(f'{tp.nonce}# {addr}: {amount_btc:0.08f} BTC')
+        print(f'{tp.nonce}# {tp.address_of()}: {amount_btc:0.08f} BTC')
 
     if interactive:
         _send_interactive(

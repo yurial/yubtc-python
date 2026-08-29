@@ -1068,12 +1068,21 @@ BIP39_SEED = ('legal winner thank year wave sausage worth useful '
 
 
 class _FakePrivKey:
-    """Duck-typed privkey stub: enough surface for the four seed commands."""
+    """Duck-typed privkey stub: enough surface for the four seed commands.
+
+    Phase 13: the CLI prints the receive address via `address_of()`
+    (the type-aware accessor), so the stub implements it alongside the
+    v0.1 `get_p2pkh_address` alias -- both surface the same fake
+    string, which is what the seed-policy assertions below match on.
+    """
 
     nonce = 0
 
     def get_p2pkh_address(self):
         return b'1FakeAddressNotReal0000000000'
+
+    def address_of(self, addr_type=None):
+        return '1FakeAddressNotReal0000000000'
 
     def get_privwif(self):
         return b'L1FakeWifNotReal'
