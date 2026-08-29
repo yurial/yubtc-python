@@ -25,3 +25,14 @@ def blake2b256(data: bytes) -> bytes:
 
 def hash160(data: bytes) -> bytes:
     return ripemd160(sha256(data))
+
+
+def tagged_hash(tag: bytes, msg: bytes) -> bytes:
+    """BIP-340/341 tagged hash: `sha256(sha256(tag) || sha256(tag) || msg)`.
+
+    Shared by the Taproot address derivation (`TapTweak`) and the
+    BIP-341 signature digest (`TapSighash`). Mirrors
+    `yubtc core/src/misc.rs::tagged_hash` bit-for-bit.
+    """
+    tag_hash = sha256(tag)
+    return sha256(tag_hash + tag_hash + msg)

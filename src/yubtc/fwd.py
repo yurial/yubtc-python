@@ -70,3 +70,36 @@ DEFAULT_CONFIRMATIONS: int = 6
 # a hung backend as a "slow wallet" instead of surfacing the network
 # error to the user.
 DEFAULT_TIMEOUT_HTTP: int = 5
+
+
+class AddrType(object):
+    """Address type selector (mirrors `yubtc core` Phase 13
+    `AddrType { Legacy, Native, Taproot }`; the values are the
+    `--addr-type` CLI names).
+
+    - `LEGACY`: mainnet P2PKH (`1...`), the v0.1 behaviour.
+    - `NATIVE`: native SegWit P2WPKH (`bc1q...`, BIP-84 for the
+      pbkdf2 KDF).
+    - `TAPROOT`: P2TR key-path (`bc1p...`, BIP-86 for the pbkdf2 KDF).
+    """
+
+    LEGACY = 'legacy'
+    NATIVE = 'native'
+    TAPROOT = 'taproot'
+
+
+# All valid AddrType values, in registration order.
+ADDR_TYPES = (AddrType.LEGACY, AddrType.NATIVE, AddrType.TAPROOT)
+
+# Default address type after Phase 13 (spec ОВ-1): Native (P2WPKH);
+# Taproot stays opt-in. Mirrors `fwd.rs::DEFAULT_ADDR_TYPE`.
+DEFAULT_ADDR_TYPE: str = AddrType.NATIVE
+
+# Dust thresholds (satoshi), per Bitcoin Core `GetDustThreshold` with
+# dustRelayFee = 3 sat/kvB and the spend weight of the canonical
+# spending input (witness forms 67 vB, legacy 148 vB). Mirrors the
+# Phase 13 `fwd.rs` constants.
+DUST_THRESHOLD_P2PKH: int = 546
+DUST_THRESHOLD_P2SH: int = 540
+DUST_THRESHOLD_P2WPKH: int = 294
+DUST_THRESHOLD_P2TR: int = 330

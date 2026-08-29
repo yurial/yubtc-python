@@ -10,7 +10,11 @@ What the wallet actually uses:
   `CScriptOp` and short byte strings.
 - `OP_DUP`, `OP_HASH160`, `OP_EQUALVERIFY`, `OP_CHECKSIG`, `OP_EQUAL`
   (the five opcodes that make up P2PKH and P2SH scripts).
+- Phase 13: the native-SegWit witness lock scripts (`OP_0`/`OP_1`
+  shapes) with their strict extractors -- see the bottom of this file.
 """
+
+from yubtc.util import NotNone, require_kwargs_only
 
 
 class CScriptOp(int):
@@ -22,6 +26,7 @@ class CScriptOp(int):
 OP_0 = CScriptOp(0x00)
 OP_FALSE = OP_0
 OP_PUSHBYTES_20 = CScriptOp(0x14)
+OP_PUSHBYTES_32 = CScriptOp(0x20)
 OP_PUSHDATA1 = CScriptOp(0x4c)
 OP_PUSHDATA2 = CScriptOp(0x4d)
 OP_PUSHDATA4 = CScriptOp(0x4e)
@@ -188,3 +193,72 @@ class CScript(bytes):
             else:
                 raise TypeError(f'cannot coerce {type(item).__name__} to CScript element')
         return super().__new__(cls, b''.join(parts))
+
+
+# --- Witness lock scripts (Phase 13; mirrors core/src/script.rs) ------
+#
+# The wallet builds only the two canonical native-SegWit lock scripts
+# and recognises them back with strict shape checks (no generic script
+# decoder): `OP_0 OP_PUSHBYTES_20 <20B>` for P2WPKH (22 bytes) and
+# `OP_1 OP_PUSHBYTES_32 <32B>` for P2TR (34 bytes).
+
+
+@require_kwargs_only
+def make_p2wpkh_lock_script(hash160: bytes = NotNone) -> CScript:
+    """Build the canonical P2WPKH witness lock script for a 20-byte
+    hash160 (native SegWit, witness version 0).
+
+    Layout: `OP_0 OP_PUSHBYTES_20 <20 bytes>` -- exactly 22 bytes
+    (`00 14 <hash>`). This is the `scriptPubKey` corresponding to a
+    `bc1q...` address."""
+    hash160 = bytes(hash160)
+    if len(hash160) != 20:
+        raise ValueError(f'hash160 must be 20 bytes, got {len(hash160)}')
+    return CScript(bytes([OP_0, OP_PUSHBYTES_20]) + hash160)
+
+
+@require_kwargs_only
+def make_p2tr_lock_script(output_key: bytes = NotNone) -> CScript:
+    """Build the canonical P2TR witness lock script for a 32-byte
+    x-only output key (witness version 1, BIP-341/Taproot).
+
+    Layout: `OP_1 OP_PUSHBYTES_32 <32 bytes>` -- exactly 34 bytes
+    (`51 20 <key>`). This is the `scriptPubKey` corresponding to a
+    `bc1p...` address."""
+    output_key = bytes(output_key)
+    if len(output_key) != 32:
+        raise ValueError(f'output key must be 32 bytes, got {len(output_key)}')
+    return CScript(bytes([OP_1, OP_PUSHBYTES_32]) + output_key)
+
+
+@require_kwargs_only
+def extract_p2wpkh_hash(script: bytes = NotNone) -> bytes:
+    """Extract the 20-byte hash160 from a canonical P2WPKH witness
+    script.
+
+    Strict shape check (like `transaction.script2pkh`, not a general
+    script decoder): the script must be exactly `00 14 <20 bytes>` --
+    22 bytes. Anything else is rejected with `ValueError('invalid
+    script: expected P2WPKH layout, got N bytes')`."""
+    script = bytes(script)
+    if (len(script) != 22
+            or script[0] != OP_0
+            or script[1] != OP_PUSHBYTES_20):
+        raise ValueError(f'invalid script: expected P2WPKH layout, got {len(script)} bytes')
+    return script[2:]
+
+
+@require_kwargs_only
+def extract_p2tr_output_key(script: bytes = NotNone) -> bytes:
+    """Extract the 32-byte x-only output key from a canonical P2TR
+    witness script.
+
+    Strict shape check: the script must be exactly `51 20 <32 bytes>`
+    -- 34 bytes. Anything else is rejected with `ValueError('invalid
+    script: expected P2TR layout, got N bytes')`."""
+    script = bytes(script)
+    if (len(script) != 34
+            or script[0] != OP_1
+            or script[1] != OP_PUSHBYTES_32):
+        raise ValueError(f'invalid script: expected P2TR layout, got {len(script)} bytes')
+    return script[2:]
