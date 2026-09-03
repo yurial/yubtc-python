@@ -13,11 +13,11 @@ offline.
 Skipping
 --------
 
-The `psbt` CLI group is Phase 14 **stage 2** of the Rust repo and may
-not be merged yet. Every test here probes the binary once (session
-scope): if the group is absent -- or `SKIP_CLI_XCOMPAT=1` is set --
-the tests self-skip cleanly. The parity KATs in `test_psbt.py` cover
-the Python side independently of this harness.
+The `psbt` CLI group landed with Rust Phase 14 stage 2 (issue-psbt
+`adda63a`); the probe below stays only as a guard for checkouts whose
+binary predates it (or `SKIP_CLI_XCOMPAT=1`): then the tests still
+self-skip cleanly. The parity KATs in `test_psbt.py` cover the Python
+side independently of this harness.
 
 Interface assumptions (spec CLI section, `yubtc psbt ...`)
 ----------------------------------------------------------
@@ -44,24 +44,40 @@ import pytest
 
 from yubtc.psbt import UnknownKv, combine_psbt, extract_transaction, \
     finalize_psbt, from_base64, psbt_summary, to_base64
-from tests.test_psbt import RUST_ROWS, SEED, build_row, fixture_key, replay
+from tests.test_psbt import RUST_ROWS, ROWS, SEED, build_row, fixture_key, \
+    replay
 
 # ---------------------------------------------------------------------------
-# Locate (and lazily build) the Rust CLI binary -- same convention as
-# test_cli_xcompat.py.
+# Locate (and lazily build) the Rust CLI binary -- the sibling Rust
+# worktree first (it carries the Phase 14 `psbt` group), then the old
+# side-by-side convention of test_cli_xcompat.py.
 # ---------------------------------------------------------------------------
 
-_DEFAULT_RUST_CLI_BIN = str(
-    Path(__file__).resolve().parents[2]
-    / 'yubtc'
-    / 'target'
-    / 'release'
-    / 'yubtc'
-)
+
+def _default_rust_cli_bin_candidates() -> list:
+    """Binary locations, best first.
+
+    1. The sibling Rust worktree carrying the Phase 14 `psbt` group
+       (`wt/<rust-repo>/issue-psbt` next to this checkout) -- the
+       group is not on the main checkout yet.
+    2. The side-by-side main checkouts (the old convention).
+    """
+    here = Path(__file__).resolve()
+    return [
+        here.parents[3] / 'yubtc' / 'issue-psbt' / 'target' / 'release'
+        / 'yubtc',
+        here.parents[2] / 'yubtc' / 'target' / 'release' / 'yubtc',
+    ]
 
 
 def _rust_cli_bin() -> str:
-    return os.environ.get('RUST_CLI_BIN', _DEFAULT_RUST_CLI_BIN)
+    env = os.environ.get('RUST_CLI_BIN')
+    if env:
+        return env
+    for cand in _default_rust_cli_bin_candidates():
+        if cand.is_file():
+            return str(cand)
+    return str(_default_rust_cli_bin_candidates()[0])
 
 
 @pytest.fixture(scope='session')
@@ -124,6 +140,18 @@ def _sign_stdin(psbt_b64: str, seed: str = SEED, passphrase: str = '') -> str:
     return f'{seed}\n{passphrase}\n{psbt_b64}\n'
 
 
+# Each KAT row is pinned at its own (seed, passphrase) tuple (test_psbt
+# ROWS); `psbt sign` must be fed exactly that pair.
+_ROW_SIGN_INPUTS = {name: (seed, passphrase)
+                    for name, seed, passphrase, _kdf in ROWS}
+
+
+def _row_sign_stdin(name: str, psbt_b64: str) -> str:
+    """`psbt sign` stdin for one KAT row: its own tuple."""
+    seed, passphrase = _ROW_SIGN_INPUTS[name]
+    return _sign_stdin(psbt_b64, seed, passphrase)
+
+
 # ---------------------------------------------------------------------------
 # Offline parity: the CLI stages on the same fixed rows the unit-suite
 # KAT pins. The expected values are the RUST_ROWS constants generated
@@ -138,7 +166,8 @@ def test_psbt_cli_sign_matches_core_kat(psbt_cli, name):
     """`psbt sign` must reproduce the core-generated signed stage of
     the same unsigned PSBT (all offline; the walk runs in the CLI)."""
     row = RUST_ROWS[name]
-    signed = _run_psbt_ok(psbt_cli, ['sign'], _sign_stdin(row['unsigned']))
+    signed = _run_psbt_ok(psbt_cli, ['sign'], _row_sign_stdin(name,
+                                                              row['unsigned']))
     assert signed == row['signed'], f'{name}: CLI sign vs core KAT'
 
 
@@ -181,7 +210,8 @@ def test_psbt_cli_sign_matches_python_taproot(psbt_cli):
     so no divergence neutralization is needed)."""
     row = RUST_ROWS['taproot_single']
     cli_signed = _run_psbt_ok(psbt_cli, ['sign'],
-                              _sign_stdin(row['unsigned']))
+                              _row_sign_stdin('taproot_single',
+                                              row['unsigned']))
     psbt = build_row('taproot_single')
     assert replay(psbt, SEED, '', 'yubtc')[1] == cli_signed
 
