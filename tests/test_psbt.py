@@ -25,7 +25,7 @@ from yubtc.crypto import (seed2privkey, privkey2pubkey,
                           taproot_output_key, sign_hash)
 from yubtc.fwd import (PSBT_MAX_SIZE, PSBT_SIGN_MAX_NONCE,
                        PSBT_SIGHASH_ALL, PSBT_SIGHASH_DEFAULT, AddrType)
-from yubtc.hash import hash160, sha256
+from yubtc.hash import hash160
 from yubtc.psbt import (ConflictingField, CreateInput, ForeignTransaction,
                         IncompleteInput, InvalidFieldValue, InvalidMagic,
                         InvalidKeyLength, InvalidUnsignedTx, MapCountMismatch,
@@ -43,7 +43,7 @@ from yubtc.script import (CScript, OP_CHECKSIG, OP_DUP, OP_EQUAL,
                           OP_EQUALVERIFY, OP_HASH160, make_p2tr_lock_script,
                           make_p2wpkh_lock_script)
 from yubtc.transaction import (CTransaction, CIn, COut, SpendInput,
-                               bip143_sighash, dsha256, p2wpkh_script_code)
+                               bip143_sighash, p2wpkh_script_code)
 
 # --- Official BIP-174 test vectors ------------------------------------
 #
@@ -418,10 +418,11 @@ VAL_ZERO_INPUTS = (
 
 # --- Parity KAT constants (generated from the Rust oracle) -------------
 #
-# Production recipe (pinned at commit 0af39e4 of the yubtc Rust repo,
-# the `core/src/psbt.rs` bit-for-bit oracle):
+# Production recipe (pinned at commit 3f97d66 of the yubtc Rust repo,
+# the `core/src/psbt.rs` bit-for-bit oracle with the ECDSA
+# digest-commit and pushed scriptSig layout fixes):
 #
-#     git -C <rust-worktree> archive 0af39e4 | tar -x -C <snapshot>
+#     git -C <rust-worktree> archive 3f97d66 | tar -x -C <snapshot>
 #     # add <snapshot>/core/examples/psbtgen.rs (the row generator:
 #     # fixed fixture rows, the same builders as below, run through
 #     # create -> sign_psbt_with -> finalize -> extract_transaction)
@@ -433,11 +434,10 @@ VAL_ZERO_INPUTS = (
 # `combined` the merge with a synthetic disjoint-signer partial sig
 # and one extra unknown global pair (test_rust_parity_combine).
 #
-# ECDSA note: the Rust oracle signs its ECDSA digests through k256's
-# message-hashing `Signer::sign` (i.e. commits to SHA256(sighash));
-# test_rust_parity_all_rows_with_ecdsa_prehash_neutralized reproduces
-# exactly that to reach byte equality, and
-# test_rust_ecdsa_divergence_documented pins the divergence itself.
+# ECDSA note: since 3f97d66 both sides sign the sighash digest itself
+# (k256's message-hashing `Signer::sign` prehash is gone) and the
+# finalizer emits the pushed legacy scriptSig layout, so every row is
+# pinned as DIRECT parity -- no transformer on the Python side.
 RUST_ROWS = {
     'native_single': {
         'unsigned':
@@ -446,18 +446,18 @@ RUST_ROWS = {
         'signed':
             'cHNidP8BAFICAAAAASIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAQAAAAD+////ARAnAAAAAAAAFgAUTBLtl+ap'
             'WoocU+0vHbvW1uHb1dIAAAAAAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQiAgPP60d0gfI8waNv0lWDr37F'
-            'XM3FA6rypcq2N53tyvQcjEgwRQIhAMg8A+II+LHvflt7z0JrnoMFL8+l/aEd1dL86rhqQEmXAiAMdLTN9Air3ZII2l9llTkt'
-            'pamd3ljeb8f8XLx/2cj1fgEAAA==',
+            'XM3FA6rypcq2N53tyvQcjEcwRAIgVNHk0Jq9Y/bQ67SyXaAZe4MkhYq0YihW4wQBHuEC8JACIDUn3fX4XsiDavD1pA+AkNDD'
+            '+uhklo0sxmtGOOqilt1vAQAA',
         'finalized':
             'cHNidP8BAFICAAAAASIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAQAAAAD+////ARAnAAAAAAAAFgAUTBLtl+ap'
-            'WoocU+0vHbvW1uHb1dIAAAAAAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQBCGwCSDBFAiEAyDwD4gj4se9+'
-            'W3vPQmuegwUvz6X9oR3V0vzquGpASZcCIAx0tM30CKvdkgjaX2WVOS2lqZ3eWN5vx/xcvH/ZyPV+ASEDz+tHdIHyPMGjb9JV'
-            'g69+xVzNxQOq8qXKtjed7cr0HIwAAA==',
+            'WoocU+0vHbvW1uHb1dIAAAAAAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQBCGsCRzBEAiBU0eTQmr1j9tDr'
+            'tLJdoBl7gySFirRiKFbjBAEe4QLwkAIgNSfd9fheyINq8PWkD4CQ0MP66GSWjSzGa0Y46qKW3W8BIQPP60d0gfI8waNv0lWD'
+            'r37FXM3FA6rypcq2N53tyvQcjAAA',
         'hex':
             '0200000000010122222222222222222222222222222222222222222222222222222222222222220100000000feffffff'
-            '0110270000000000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d202483045022100c83c03e208f8b1ef7e'
-            '5b7bcf426b9e83052fcfa5fda11dd5d2fceab86a40499702200c74b4cdf408abdd9208da5f6595392da5a99dde58de6f'
-            'c7fc5cbc7fd9c8f57e012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c00000000',
+            '0110270000000000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d202473044022054d1e4d09abd63f6d0eb'
+            'b4b25da0197b8324858ab4622856e304011ee102f09002203527ddf5f85ec8836af0f5a40f8090d0c3fae864968d2cc6'
+            '6b4638eaa296dd6f012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c00000000',
     },
     'taproot_single': {
         'unsigned':
@@ -494,34 +494,34 @@ RUST_ROWS = {
             'ABYAFEwS7ZfmqVqKHFPtLx271tbh29XSAAAAAAABAJ8CAAAAARERERERERERERERERERERERERERERERERERERERERERAwAA'
             'AAD/////A2DqAAAAAAAAGXapFFY6d7gsdY7hprumpQ2EoI2qc36kiKwwdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36k'
             'IE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQAAAAAiAgPP60d0gfI8waNv0lWDr37FXM3FA6ry'
-            'pcq2N53tyvQcjEcwRAIgJGkhfpEvfHb0jV/qGR0goi9bNWIKCiRm1bs5V5k1U0MCIFafF4SgKO1u1IEeGDwELk0X2le9T+IS'
-            '5ZTXgkKz7Xj5AQABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36kIgIDz+tHdIHyPMGjb9JVg69+xVzNxQOq8qXK'
-            'tjed7cr0HIxHMEQCIHl9eG6ZJeT4dP6QslghFA0tQEQ1b6m/Fr41ksrzLZWNAiAYit5VqzOQsmh9EN399bcFVqAxD1zwuTR3'
-            'hYA6lKo3EwEAAQErIE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfSICA8/rR3SB8jzBo2/SVYOv'
-            'fsVczcUDqvKlyrY3ne3K9ByMQDhdUw7JlOOGHgFhHe/WRwucNU96VwqejkplzVe0jRz2qWWQxmhDC7vCnM/fbSn1IQE4mEZI'
-            'HqLjrdUkknm0M7cAAA==',
+            'pcq2N53tyvQcjEcwRAIga2Z+dfIErC++MDkKb6ILnEEzscJT7DLCbMWmoV04ezACIDS0l075Pj0EBQR+SZ6/Pbd+tj7J/raV'
+            't30aOV4Cyy/WAQABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36kIgIDz+tHdIHyPMGjb9JVg69+xVzNxQOq8qXK'
+            'tjed7cr0HIxIMEUCIQCokNLCxTNc1T87YrsMGCS02ph1pp5SRNTOMma3riwTfgIgEaJLVSMJfH+sbYAq67ia+gqYqi4sSk3H'
+            'W5wJCWtBkyYBAAEBKyBOAAAAAAAAIlEgxDqBttxCRWSTXiT5etIW9+94qTUGsWypLnBWWNs/KX0iAgPP60d0gfI8waNv0lWD'
+            'r37FXM3FA6rypcq2N53tyvQcjEA4XVMOyZTjhh4BYR3v1kcLnDVPelcKno5KZc1XtI0c9qllkMZoQwu7wpzP320p9SEBOJhG'
+            'SB6i463VJJJ5tDO3AAA=',
         'finalized':
             'cHNidP8BAKQCAAAAA8xBPACqSuFbU2cnWu5cYxECT75yBSw5dUYVKmzWKzatAAAAAAD+////IiIiIiIiIiIiIiIiIiIiIiIi'
             'IiIiIiIiIiIiIiIiIiIBAAAAAP7///8zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMwAAAAAA/v///wEQJwAAAAAA'
             'ABYAFEwS7ZfmqVqKHFPtLx271tbh29XSAAAAAAABAJ8CAAAAARERERERERERERERERERERERERERERERERERERERERERAwAA'
             'AAD/////A2DqAAAAAAAAGXapFFY6d7gsdY7hprumpQ2EoI2qc36kiKwwdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36k'
-            'IE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQAAAAABB2gwRAIgJGkhfpEvfHb0jV/qGR0goi9b'
-            'NWIKCiRm1bs5V5k1U0MCIFafF4SgKO1u1IEeGDwELk0X2le9T+IS5ZTXgkKz7Xj5AQPP60d0gfI8waNv0lWDr37FXM3FA6ry'
-            'pcq2N53tyvQcjAABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36kAQhrAkcwRAIgeX14bpkl5Ph0/pCyWCEUDS1A'
-            'RDVvqb8WvjWSyvMtlY0CIBiK3lWrM5CyaH0Q3f31twVWoDEPXPC5NHeFgDqUqjcTASEDz+tHdIHyPMGjb9JVg69+xVzNxQOq'
-            '8qXKtjed7cr0HIwAAQErIE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQEIQgFAOF1TDsmU44Ye'
-            'AWEd79ZHC5w1T3pXCp6OSmXNV7SNHPapZZDGaEMLu8Kcz99tKfUhATiYRkgeouOt1SSSebQztwAA',
+            'IE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQAAAAABB2pHMEQCIGtmfnXyBKwvvjA5Cm+iC5xB'
+            'M7HCU+wywmzFpqFdOHswAiA0tJdO+T49BAUEfkmevz23frY+yf62lbd9GjleAssv1gEhA8/rR3SB8jzBo2/SVYOvfsVczcUD'
+            'qvKlyrY3ne3K9ByMAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQBCGwCSDBFAiEAqJDSwsUzXNU/O2K7DBgk'
+            'tNqYdaaeUkTUzjJmt64sE34CIBGiS1UjCXx/rG2AKuu4mvoKmKouLEpNx1ucCQlrQZMmASEDz+tHdIHyPMGjb9JVg69+xVzN'
+            'xQOq8qXKtjed7cr0HIwAAQErIE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQEIQgFAOF1TDsmU'
+            '44YeAWEd79ZHC5w1T3pXCp6OSmXNV7SNHPapZZDGaEMLu8Kcz99tKfUhATiYRkgeouOt1SSSebQztwAA',
         'hex':
-            '02000000000103cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad000000006830440220'
-            '2469217e912f7c76f48d5fea191d20a22f5b35620a0a2466d5bb3957993553430220569f1784a028ed6ed4811e183c04'
-            '2e4d17da57bd4fe212e594d78242b3ed78f90103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379ded'
-            'caf41c8cfeffffff22222222222222222222222222222222222222222222222222222222222222220100000000feffff'
-            'ff33333333333333333333333333333333333333333333333333333333333333330000000000feffffff011027000000'
-            '0000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d200024730440220797d786e9925e4f874fe90b2582114'
-            '0d2d4044356fa9bf16be3592caf32d958d0220188ade55ab3390b2687d10ddfdf5b70556a0310f5cf0b9347785803a94'
-            'aa3713012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c0140385d530ec994e386'
-            '1e01611defd6470b9c354f7a570a9e8e4a65cd57b48d1cf6a96590c668430bbbc29ccfdf6d29f52101389846481ea2e3'
-            'add5249279b433b700000000',
+            '02000000000103cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad000000006a47304402'
+            '206b667e75f204ac2fbe30390a6fa20b9c4133b1c253ec32c26cc5a6a15d387b30022034b4974ef93e3d0405047e499e'
+            'bf3db77eb63ec9feb695b77d1a395e02cb2fd6012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab637'
+            '9dedcaf41c8cfeffffff22222222222222222222222222222222222222222222222222222222222222220100000000fe'
+            'ffffff33333333333333333333333333333333333333333333333333333333333333330000000000feffffff01102700'
+            '00000000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d20002483045022100a890d2c2c5335cd53f3b62bb'
+            '0c1824b4da9875a69e5244d4ce3266b7ae2c137e022011a24b5523097c7fac6d802aebb89afa0a98aa2e2c4a4dc75b9c'
+            '09096b419326012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c0140385d530ec9'
+            '94e3861e01611defd6470b9c354f7a570a9e8e4a65cd57b48d1cf6a96590c668430bbbc29ccfdf6d29f5210138984648'
+            '1ea2e3add5249279b433b700000000',
     },
     'multi_nonce': {
         'unsigned':
@@ -537,34 +537,34 @@ RUST_ROWS = {
             'ABYAFEwS7ZfmqVqKHFPtLx271tbh29XSAAAAAAABAJ8CAAAAARERERERERERERERERERERERERERERERERERERERERERAwAA'
             'AAD/////A2DqAAAAAAAAGXapFFY6d7gsdY7hprumpQ2EoI2qc36kiKwwdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36k'
             'IE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQAAAAAiAgPP60d0gfI8waNv0lWDr37FXM3FA6ry'
-            'pcq2N53tyvQcjEgwRQIhAJ+/Yq3FglZhvv6WnMhHHigD93rU7A4VYs57Tqn/GrBnAiAoUKZP0eW0j8LeWeaps+V/V73GQY1m'
-            'SUGWu1z1p1XziwEAAQEfMHUAAAAAAAAWABRWOne4LHWO4aa7pqUNhKCNqnN+pCICA8/rR3SB8jzBo2/SVYOvfsVczcUDqvKl'
-            'yrY3ne3K9ByMSDBFAiEAs/1BVuCJETnPiqQdvgw6XONof0aE18sD1v9GqhYdyGYCIBqK2d7wciEXEQ8+TDXP9VVCGiU2mwAp'
-            'Ji/nB2cs9iD5AQABASsgTgAAAAAAACJRIAR5WzPk8jn7OgD8YC3zfDXuxlJgnM3kIRKQ4hW7TZ3LIgICLnkHtgqyLjDI8GeL'
-            'nXG/IkMuGrTmMKYyi+3lNrDaiPhABlxgetyHgSw4ewhhUvTvsNZx7vF41Yq9Rt61/zvk+d+1EFPK7/THd1sTNQaxvnrue6jq'
-            'ClD2y2kbLQeeNvaUTAAA',
+            'pcq2N53tyvQcjEcwRAIgJwPvd4N+dC6sAt6xadKfzf0CvKsnGeNBrrdZn1oe1+QCIGFPiJkC+L5/ZP9qUiUDzPT5pQdKt8PL'
+            'D+AWfnuu/PWZAQABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36kIgIDz+tHdIHyPMGjb9JVg69+xVzNxQOq8qXK'
+            'tjed7cr0HIxIMEUCIQDjE+LUsMB04xx/CdV0uNdaHTC+x2ihT8uYhEC4p0WYUAIgYT/WO9KVWLN2HzkJbj93NwxcKqoqhXBF'
+            'RZ7eC/TPpwABAAEBKyBOAAAAAAAAIlEgBHlbM+TyOfs6APxgLfN8Ne7GUmCczeQhEpDiFbtNncsiAgIueQe2CrIuMMjwZ4ud'
+            'cb8iQy4atOYwpjKL7eU2sNqI+EAGXGB63IeBLDh7CGFS9O+w1nHu8XjVir1G3rX/O+T537UQU8rv9Md3WxM1BrG+eu57qOoK'
+            'UPbLaRstB5429pRMAAA=',
         'finalized':
             'cHNidP8BAKQCAAAAA8xBPACqSuFbU2cnWu5cYxECT75yBSw5dUYVKmzWKzatAAAAAAD+////IiIiIiIiIiIiIiIiIiIiIiIi'
             'IiIiIiIiIiIiIiIiIiIBAAAAAP7///9ERERERERERERERERERERERERERERERERERERERERERAAAAAAA/v///wEQJwAAAAAA'
             'ABYAFEwS7ZfmqVqKHFPtLx271tbh29XSAAAAAAABAJ8CAAAAARERERERERERERERERERERERERERERERERERERERERERAwAA'
             'AAD/////A2DqAAAAAAAAGXapFFY6d7gsdY7hprumpQ2EoI2qc36kiKwwdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36k'
-            'IE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQAAAAABB2kwRQIhAJ+/Yq3FglZhvv6WnMhHHigD'
-            '93rU7A4VYs57Tqn/GrBnAiAoUKZP0eW0j8LeWeaps+V/V73GQY1mSUGWu1z1p1XziwEDz+tHdIHyPMGjb9JVg69+xVzNxQOq'
-            '8qXKtjed7cr0HIwAAQEfMHUAAAAAAAAWABRWOne4LHWO4aa7pqUNhKCNqnN+pAEIbAJIMEUCIQCz/UFW4IkROc+KpB2+DDpc'
-            '42h/RoTXywPW/0aqFh3IZgIgGorZ3vByIRcRDz5MNc/1VUIaJTabACkmL+cHZyz2IPkBIQPP60d0gfI8waNv0lWDr37FXM3F'
-            'A6rypcq2N53tyvQcjAABASsgTgAAAAAAACJRIAR5WzPk8jn7OgD8YC3zfDXuxlJgnM3kIRKQ4hW7TZ3LAQhCAUAGXGB63IeB'
-            'LDh7CGFS9O+w1nHu8XjVir1G3rX/O+T537UQU8rv9Md3WxM1BrG+eu57qOoKUPbLaRstB5429pRMAAA=',
+            'IE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQAAAAABB2pHMEQCICcD73eDfnQurALesWnSn839'
+            'AryrJxnjQa63WZ9aHtfkAiBhT4iZAvi+f2T/alIlA8z0+aUHSrfDyw/gFn57rvz1mQEhA8/rR3SB8jzBo2/SVYOvfsVczcUD'
+            'qvKlyrY3ne3K9ByMAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQBCGwCSDBFAiEA4xPi1LDAdOMcfwnVdLjX'
+            'Wh0wvsdooU/LmIRAuKdFmFACIGE/1jvSlVizdh85CW4/dzcMXCqqKoVwRUWe3gv0z6cAASEDz+tHdIHyPMGjb9JVg69+xVzN'
+            'xQOq8qXKtjed7cr0HIwAAQErIE4AAAAAAAAiUSAEeVsz5PI5+zoA/GAt83w17sZSYJzN5CESkOIVu02dywEIQgFABlxgetyH'
+            'gSw4ewhhUvTvsNZx7vF41Yq9Rt61/zvk+d+1EFPK7/THd1sTNQaxvnrue6jqClD2y2kbLQeeNvaUTAAA',
         'hex':
-            '02000000000103cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad000000006930450221'
-            '009fbf62adc5825661befe969cc8471e2803f77ad4ec0e1562ce7b4ea9ff1ab06702202850a64fd1e5b48fc2de59e6a9'
-            'b3e57f57bdc6418d66494196bb5cf5a755f38b0103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379d'
-            'edcaf41c8cfeffffff22222222222222222222222222222222222222222222222222222222222222220100000000feff'
-            'ffff44444444444444444444444444444444444444444444444444444444444444440000000000feffffff0110270000'
-            '000000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d20002483045022100b3fd4156e0891139cf8aa41dbe'
-            '0c3a5ce3687f4684d7cb03d6ff46aa161dc86602201a8ad9def0722117110f3e4c35cff555421a25369b0029262fe707'
-            '672cf620f9012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c0140065c607adc87'
-            '812c387b086152f4efb0d671eef178d58abd46deb5ff3be4f9dfb51053caeff4c7775b133506b1be7aee7ba8ea0a50f6'
-            'cb691b2d079e36f6944c00000000',
+            '02000000000103cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad000000006a47304402'
+            '202703ef77837e742eac02deb169d29fcdfd02bcab2719e341aeb7599f5a1ed7e40220614f889902f8be7f64ff6a5225'
+            '03ccf4f9a5074ab7c3cb0fe0167e7baefcf599012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab637'
+            '9dedcaf41c8cfeffffff22222222222222222222222222222222222222222222222222222222222222220100000000fe'
+            'ffffff44444444444444444444444444444444444444444444444444444444444444440000000000feffffff01102700'
+            '00000000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d20002483045022100e313e2d4b0c074e31c7f09d5'
+            '74b8d75a1d30bec768a14fcb988440b8a74598500220613fd63bd29558b3761f39096e3f77370c5c2aaa2a857045459e'
+            'de0bf4cfa700012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c0140065c607adc'
+            '87812c387b086152f4efb0d671eef178d58abd46deb5ff3be4f9dfb51053caeff4c7775b133506b1be7aee7ba8ea0a50'
+            'f6cb691b2d079e36f6944c00000000',
     },
     'legacy_only': {
         'unsigned':
@@ -577,20 +577,20 @@ RUST_ROWS = {
             'qVqKHFPtLx271tbh29XSiKwAAAAAAAEAnwIAAAABEREREREREREREREREREREREREREREREREREREREREREDAAAAAP////8D'
             'YOoAAAAAAAAZdqkUVjp3uCx1juGmu6alDYSgjapzfqSIrDB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQgTgAAAAAA'
             'ACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9AAAAACICA8/rR3SB8jzBo2/SVYOvfsVczcUDqvKlyrY3ne3K'
-            '9ByMSDBFAiEA29N/YfoE1wsCk9XwmCsL83Axr61LScoD7C+Xa/S7eqsCIHCuCqh9kEW84NHHbjwaxHb844Bh4pipTlEoPpmK'
-            'vOaRAQAA',
+            '9ByMSDBFAiEAl8iq5xg8LINUTRn/0XnMFit2XqFBj/ZUaHrVKp2MUMQCIC+ToL460TvVMoqDVMue3lj5CfBZokybniIvEVsZ'
+            '9fyIAQAA',
         'finalized':
             'cHNidP8BAFUCAAAAAcxBPACqSuFbU2cnWu5cYxECT75yBSw5dUYVKmzWKzatAAAAAAD+////ARAnAAAAAAAAGXapFEwS7Zfm'
             'qVqKHFPtLx271tbh29XSiKwAAAAAAAEAnwIAAAABEREREREREREREREREREREREREREREREREREREREREREDAAAAAP////8D'
             'YOoAAAAAAAAZdqkUVjp3uCx1juGmu6alDYSgjapzfqSIrDB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQgTgAAAAAA'
-            'ACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9AAAAAAEHaTBFAiEA29N/YfoE1wsCk9XwmCsL83Axr61LScoD'
-            '7C+Xa/S7eqsCIHCuCqh9kEW84NHHbjwaxHb844Bh4pipTlEoPpmKvOaRAQPP60d0gfI8waNv0lWDr37FXM3FA6rypcq2N53t'
-            'yvQcjAAA',
+            'ACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9AAAAAAEHa0gwRQIhAJfIqucYPCyDVE0Z/9F5zBYrdl6hQY/2'
+            'VGh61SqdjFDEAiAvk6C+OtE71TKKg1TLnt5Y+QnwWaJMm54iLxFbGfX8iAEhA8/rR3SB8jzBo2/SVYOvfsVczcUDqvKlyrY3'
+            'ne3K9ByMAAA=',
         'hex':
-            '0200000001cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad00000000693045022100db'
-            'd37f61fa04d70b0293d5f0982b0bf37031afad4b49ca03ec2f976bf4bb7aab022070ae0aa87d9045bce0d1c76e3c1ac4'
-            '76fce38061e298a94e51283e998abce6910103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedca'
-            'f41c8cfeffffff0110270000000000001976a9144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d288ac00000000',
+            '0200000001cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad000000006b483045022100'
+            '97c8aae7183c2c83544d19ffd179cc162b765ea1418ff654687ad52a9d8c50c402202f93a0be3ad13bd5328a8354cb9e'
+            'de58f909f059a24c9b9e222f115b19f5fc88012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379d'
+            'edcaf41c8cfeffffff0110270000000000001976a9144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d288ac00000000',
     },
     'pbkdf2_native': {
         'unsigned':
@@ -599,18 +599,18 @@ RUST_ROWS = {
         'signed':
             'cHNidP8BAFICAAAAASIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAQAAAAD+////ARAnAAAAAAAAFgAUmgLRVlWq'
             'kNhgX5+KNmAvDYcnJ6gAAAAAAAEBHzB1AAAAAAAAFgAU88QUMCXNl6cJ4KbnvWFf7CWF3AsiAgPepyNRsHdYroQxaf/Drkk9'
-            '54qgrRtRX62IMxtDncoQN0gwRQIhAN65eJ/xlXDNjOIRFrVaLKZET1EwaAAYFvnlRdZ5syJgAiABFqh7+YalAJfqJ7ggLr4D'
-            'OvaG6YdRk62A/pD20wGH6AEAAA==',
+            '54qgrRtRX62IMxtDncoQN0gwRQIhAOIzWK7pNs3ODwnaXV2+4Ma01/XE29+V51t6UTKxCP/4AiBsaPNgMpoGZr0LnFaNrO57'
+            'zyXM1OKgwupGvf7M+mzs3QEAAA==',
         'finalized':
             'cHNidP8BAFICAAAAASIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAQAAAAD+////ARAnAAAAAAAAFgAUmgLRVlWq'
-            'kNhgX5+KNmAvDYcnJ6gAAAAAAAEBHzB1AAAAAAAAFgAU88QUMCXNl6cJ4KbnvWFf7CWF3AsBCGwCSDBFAiEA3rl4n/GVcM2M'
-            '4hEWtVospkRPUTBoABgW+eVF1nmzImACIAEWqHv5hqUAl+onuCAuvgM69obph1GTrYD+kPbTAYfoASED3qcjUbB3WK6EMWn/'
+            'kNhgX5+KNmAvDYcnJ6gAAAAAAAEBHzB1AAAAAAAAFgAU88QUMCXNl6cJ4KbnvWFf7CWF3AsBCGwCSDBFAiEA4jNYruk2zc4P'
+            'CdpdXb7gxrTX9cTb35XnW3pRMrEI//gCIGxo82AymgZmvQucVo2s7nvPJczU4qDC6ka9/sz6bOzdASED3qcjUbB3WK6EMWn/'
             'w65JPeeKoK0bUV+tiDMbQ53KEDcAAA==',
         'hex':
             '0200000000010122222222222222222222222222222222222222222222222222222222222222220100000000feffffff'
-            '0110270000000000001600149a02d15655aa90d8605f9f8a36602f0d872727a802483045022100deb9789ff19570cd8c'
-            'e21116b55a2ca6444f513068001816f9e545d679b3226002200116a87bf986a50097ea27b8202ebe033af686e9875193'
-            'ad80fe90f6d30187e8012103dea72351b07758ae843169ffc3ae493de78aa0ad1b515fad88331b439dca103700000000',
+            '0110270000000000001600149a02d15655aa90d8605f9f8a36602f0d872727a802483045022100e23358aee936cdce0f'
+            '09da5d5dbee0c6b4d7f5c4dbdf95e75b7a5132b108fff802206c68f360329a0666bd0b9c568dacee7bcf25ccd4e2a0c2'
+            'ea46bdfeccfa6cecdd012103dea72351b07758ae843169ffc3ae493de78aa0ad1b515fad88331b439dca103700000000',
     },
     'unknown_fields': {
         'unsigned':
@@ -627,35 +627,35 @@ RUST_ROWS = {
             'ABYAFEwS7ZfmqVqKHFPtLx271tbh29XSAAAAAANRqrsDAQIDAAEAnwIAAAABERERERERERERERERERERERERERERERERERER'
             'EREREREDAAAAAP////8DYOoAAAAAAAAZdqkUVjp3uCx1juGmu6alDYSgjapzfqSIrDB1AAAAAAAAFgAUVjp3uCx1juGmu6al'
             'DYSgjapzfqQgTgAAAAAAACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9AAAAACICA8/rR3SB8jzBo2/SVYOv'
-            'fsVczcUDqvKlyrY3ne3K9ByMRzBEAiAkaSF+kS98dvSNX+oZHSCiL1s1YgoKJGbVuzlXmTVTQwIgVp8XhKAo7W7UgR4YPAQu'
-            'TRfaV71P4hLllNeCQrPtePkBAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQiAgPP60d0gfI8waNv0lWDr37F'
-            'XM3FA6rypcq2N53tyvQcjEcwRAIgeX14bpkl5Ph0/pCyWCEUDS1ARDVvqb8WvjWSyvMtlY0CIBiK3lWrM5CyaH0Q3f31twVW'
-            'oDEPXPC5NHeFgDqUqjcTAQJSzAIEBQABASsgTgAAAAAAACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9IgID'
-            'z+tHdIHyPMGjb9JVg69+xVzNxQOq8qXKtjed7cr0HIxAOF1TDsmU44YeAWEd79ZHC5w1T3pXCp6OSmXNV7SNHPapZZDGaEML'
-            'u8Kcz99tKfUhATiYRkgeouOt1SSSebQztwADU93uAQYA',
+            'fsVczcUDqvKlyrY3ne3K9ByMRzBEAiBrZn518gSsL74wOQpvogucQTOxwlPsMsJsxaahXTh7MAIgNLSXTvk+PQQFBH5Jnr89'
+            't362Psn+tpW3fRo5XgLLL9YBAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQiAgPP60d0gfI8waNv0lWDr37F'
+            'XM3FA6rypcq2N53tyvQcjEgwRQIhAKiQ0sLFM1zVPztiuwwYJLTamHWmnlJE1M4yZreuLBN+AiARoktVIwl8f6xtgCrruJr6'
+            'CpiqLixKTcdbnAkJa0GTJgECUswCBAUAAQErIE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfSIC'
+            'A8/rR3SB8jzBo2/SVYOvfsVczcUDqvKlyrY3ne3K9ByMQDhdUw7JlOOGHgFhHe/WRwucNU96VwqejkplzVe0jRz2qWWQxmhD'
+            'C7vCnM/fbSn1IQE4mEZIHqLjrdUkknm0M7cAA1Pd7gEGAA==',
         'finalized':
             'cHNidP8BAKQCAAAAA8xBPACqSuFbU2cnWu5cYxECT75yBSw5dUYVKmzWKzatAAAAAAD+////IiIiIiIiIiIiIiIiIiIiIiIi'
             'IiIiIiIiIiIiIiIiIiIBAAAAAP7///8zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMwAAAAAA/v///wEQJwAAAAAA'
             'ABYAFEwS7ZfmqVqKHFPtLx271tbh29XSAAAAAANRqrsDAQIDAAEAnwIAAAABERERERERERERERERERERERERERERERERERER'
             'EREREREDAAAAAP////8DYOoAAAAAAAAZdqkUVjp3uCx1juGmu6alDYSgjapzfqSIrDB1AAAAAAAAFgAUVjp3uCx1juGmu6al'
-            'DYSgjapzfqQgTgAAAAAAACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9AAAAAAEHaDBEAiAkaSF+kS98dvSN'
-            'X+oZHSCiL1s1YgoKJGbVuzlXmTVTQwIgVp8XhKAo7W7UgR4YPAQuTRfaV71P4hLllNeCQrPtePkBA8/rR3SB8jzBo2/SVYOv'
-            'fsVczcUDqvKlyrY3ne3K9ByMAAEBHzB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSgjapzfqQBCGsCRzBEAiB5fXhumSXk+HT+'
-            'kLJYIRQNLUBENW+pvxa+NZLK8y2VjQIgGIreVaszkLJofRDd/fW3BVagMQ9c8Lk0d4WAOpSqNxMBIQPP60d0gfI8waNv0lWD'
-            'r37FXM3FA6rypcq2N53tyvQcjAJSzAIEBQABASsgTgAAAAAAACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9'
-            'AQhCAUA4XVMOyZTjhh4BYR3v1kcLnDVPelcKno5KZc1XtI0c9qllkMZoQwu7wpzP320p9SEBOJhGSB6i463VJJJ5tDO3AANT'
-            '3e4BBgA=',
+            'DYSgjapzfqQgTgAAAAAAACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9AAAAAAEHakcwRAIga2Z+dfIErC++'
+            'MDkKb6ILnEEzscJT7DLCbMWmoV04ezACIDS0l075Pj0EBQR+SZ6/Pbd+tj7J/raVt30aOV4Cyy/WASEDz+tHdIHyPMGjb9JV'
+            'g69+xVzNxQOq8qXKtjed7cr0HIwAAQEfMHUAAAAAAAAWABRWOne4LHWO4aa7pqUNhKCNqnN+pAEIbAJIMEUCIQCokNLCxTNc'
+            '1T87YrsMGCS02ph1pp5SRNTOMma3riwTfgIgEaJLVSMJfH+sbYAq67ia+gqYqi4sSk3HW5wJCWtBkyYBIQPP60d0gfI8waNv'
+            '0lWDr37FXM3FA6rypcq2N53tyvQcjAJSzAIEBQABASsgTgAAAAAAACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljb'
+            'Pyl9AQhCAUA4XVMOyZTjhh4BYR3v1kcLnDVPelcKno5KZc1XtI0c9qllkMZoQwu7wpzP320p9SEBOJhGSB6i463VJJJ5tDO3'
+            'AANT3e4BBgA=',
         'hex':
-            '02000000000103cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad000000006830440220'
-            '2469217e912f7c76f48d5fea191d20a22f5b35620a0a2466d5bb3957993553430220569f1784a028ed6ed4811e183c04'
-            '2e4d17da57bd4fe212e594d78242b3ed78f90103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379ded'
-            'caf41c8cfeffffff22222222222222222222222222222222222222222222222222222222222222220100000000feffff'
-            'ff33333333333333333333333333333333333333333333333333333333333333330000000000feffffff011027000000'
-            '0000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d200024730440220797d786e9925e4f874fe90b2582114'
-            '0d2d4044356fa9bf16be3592caf32d958d0220188ade55ab3390b2687d10ddfdf5b70556a0310f5cf0b9347785803a94'
-            'aa3713012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c0140385d530ec994e386'
-            '1e01611defd6470b9c354f7a570a9e8e4a65cd57b48d1cf6a96590c668430bbbc29ccfdf6d29f52101389846481ea2e3'
-            'add5249279b433b700000000',
+            '02000000000103cc413c00aa4ae15b5367275aee5c6311024fbe72052c397546152a6cd62b36ad000000006a47304402'
+            '206b667e75f204ac2fbe30390a6fa20b9c4133b1c253ec32c26cc5a6a15d387b30022034b4974ef93e3d0405047e499e'
+            'bf3db77eb63ec9feb695b77d1a395e02cb2fd6012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab637'
+            '9dedcaf41c8cfeffffff22222222222222222222222222222222222222222222222222222222222222220100000000fe'
+            'ffffff33333333333333333333333333333333333333333333333333333333333333330000000000feffffff01102700'
+            '00000000001600144c12ed97e6a95a8a1c53ed2f1dbbd6d6e1dbd5d20002483045022100a890d2c2c5335cd53f3b62bb'
+            '0c1824b4da9875a69e5244d4ce3266b7ae2c137e022011a24b5523097c7fac6d802aebb89afa0a98aa2e2c4a4dc75b9c'
+            '09096b419326012103cfeb477481f23cc1a36fd25583af7ec55ccdc503aaf2a5cab6379dedcaf41c8c0140385d530ec9'
+            '94e3861e01611defd6470b9c354f7a570a9e8e4a65cd57b48d1cf6a96590c668430bbbc29ccfdf6d29f5210138984648'
+            '1ea2e3add5249279b433b700000000',
     },
     'combine': {
         'combined':
@@ -665,24 +665,24 @@ RUST_ROWS = {
             'EREDAAAAAP////8DYOoAAAAAAAAZdqkUVjp3uCx1juGmu6alDYSgjapzfqSIrDB1AAAAAAAAFgAUVjp3uCx1juGmu6alDYSg'
             'japzfqQgTgAAAAAAACJRIMQ6gbbcQkVkk14k+XrSFvfveKk1BrFsqS5wVljbPyl9AAAAACICAgICAgICAgICAgICAgICAgIC'
             'AgICAgICAgICAgICAgICQLu7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7'
-            'u7u7u7u7u7siAgPP60d0gfI8waNv0lWDr37FXM3FA6rypcq2N53tyvQcjEcwRAIgJGkhfpEvfHb0jV/qGR0goi9bNWIKCiRm'
-            '1bs5V5k1U0MCIFafF4SgKO1u1IEeGDwELk0X2le9T+IS5ZTXgkKz7Xj5AQABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2E'
-            'oI2qc36kIgIDz+tHdIHyPMGjb9JVg69+xVzNxQOq8qXKtjed7cr0HIxHMEQCIHl9eG6ZJeT4dP6QslghFA0tQEQ1b6m/Fr41'
-            'ksrzLZWNAiAYit5VqzOQsmh9EN399bcFVqAxD1zwuTR3hYA6lKo3EwEAAQErIE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb3'
-            '73ipNQaxbKkucFZY2z8pfSICA8/rR3SB8jzBo2/SVYOvfsVczcUDqvKlyrY3ne3K9ByMQDhdUw7JlOOGHgFhHe/WRwucNU96'
-            'VwqejkplzVe0jRz2qWWQxmhDC7vCnM/fbSn1IQE4mEZIHqLjrdUkknm0M7cAAA==',
+            'u7u7u7u7u7siAgPP60d0gfI8waNv0lWDr37FXM3FA6rypcq2N53tyvQcjEcwRAIga2Z+dfIErC++MDkKb6ILnEEzscJT7DLC'
+            'bMWmoV04ezACIDS0l075Pj0EBQR+SZ6/Pbd+tj7J/raVt30aOV4Cyy/WAQABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2E'
+            'oI2qc36kIgIDz+tHdIHyPMGjb9JVg69+xVzNxQOq8qXKtjed7cr0HIxIMEUCIQCokNLCxTNc1T87YrsMGCS02ph1pp5SRNTO'
+            'Mma3riwTfgIgEaJLVSMJfH+sbYAq67ia+gqYqi4sSk3HW5wJCWtBkyYBAAEBKyBOAAAAAAAAIlEgxDqBttxCRWSTXiT5etIW'
+            '9+94qTUGsWypLnBWWNs/KX0iAgPP60d0gfI8waNv0lWDr37FXM3FA6rypcq2N53tyvQcjEA4XVMOyZTjhh4BYR3v1kcLnDVP'
+            'elcKno5KZc1XtI0c9qllkMZoQwu7wpzP320p9SEBOJhGSB6i463VJJJ5tDO3AAA=',
         'a':
             'cHNidP8BAKQCAAAAA8xBPACqSuFbU2cnWu5cYxECT75yBSw5dUYVKmzWKzatAAAAAAD+////IiIiIiIiIiIiIiIiIiIiIiIi'
             'IiIiIiIiIiIiIiIiIiIBAAAAAP7///8zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMwAAAAAA/v///wEQJwAAAAAA'
             'ABYAFEwS7ZfmqVqKHFPtLx271tbh29XSAAAAAAABAJ8CAAAAARERERERERERERERERERERERERERERERERERERERERERAwAA'
             'AAD/////A2DqAAAAAAAAGXapFFY6d7gsdY7hprumpQ2EoI2qc36kiKwwdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36k'
             'IE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfQAAAAAiAgPP60d0gfI8waNv0lWDr37FXM3FA6ry'
-            'pcq2N53tyvQcjEcwRAIgJGkhfpEvfHb0jV/qGR0goi9bNWIKCiRm1bs5V5k1U0MCIFafF4SgKO1u1IEeGDwELk0X2le9T+IS'
-            '5ZTXgkKz7Xj5AQABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36kIgIDz+tHdIHyPMGjb9JVg69+xVzNxQOq8qXK'
-            'tjed7cr0HIxHMEQCIHl9eG6ZJeT4dP6QslghFA0tQEQ1b6m/Fr41ksrzLZWNAiAYit5VqzOQsmh9EN399bcFVqAxD1zwuTR3'
-            'hYA6lKo3EwEAAQErIE4AAAAAAAAiUSDEOoG23EJFZJNeJPl60hb373ipNQaxbKkucFZY2z8pfSICA8/rR3SB8jzBo2/SVYOv'
-            'fsVczcUDqvKlyrY3ne3K9ByMQDhdUw7JlOOGHgFhHe/WRwucNU96VwqejkplzVe0jRz2qWWQxmhDC7vCnM/fbSn1IQE4mEZI'
-            'HqLjrdUkknm0M7cAAA==',
+            'pcq2N53tyvQcjEcwRAIga2Z+dfIErC++MDkKb6ILnEEzscJT7DLCbMWmoV04ezACIDS0l075Pj0EBQR+SZ6/Pbd+tj7J/raV'
+            't30aOV4Cyy/WAQABAR8wdQAAAAAAABYAFFY6d7gsdY7hprumpQ2EoI2qc36kIgIDz+tHdIHyPMGjb9JVg69+xVzNxQOq8qXK'
+            'tjed7cr0HIxIMEUCIQCokNLCxTNc1T87YrsMGCS02ph1pp5SRNTOMma3riwTfgIgEaJLVSMJfH+sbYAq67ia+gqYqi4sSk3H'
+            'W5wJCWtBkyYBAAEBKyBOAAAAAAAAIlEgxDqBttxCRWSTXiT5etIW9+94qTUGsWypLnBWWNs/KX0iAgPP60d0gfI8waNv0lWD'
+            'r37FXM3FA6rypcq2N53tyvQcjEA4XVMOyZTjhh4BYR3v1kcLnDVPelcKno5KZc1XtI0c9qllkMZoQwu7wpzP320p9SEBOJhG'
+            'SB6i463VJJJ5tDO3AAA=',
     },
 }
 
@@ -1662,11 +1662,12 @@ def test_sign_finalize_extract_full_pipeline_all_forms():
     assert psbt.inputs[1].witness_utxo is not None
 
     tx = extract_transaction(psbt=psbt)
-    # Legacy: scriptSig = DER sig + sighash byte + compressed pubkey
-    # (the raw-concat layout of the Rust oracle's finalizer).
+    # Legacy: scriptSig = push(sig || 0x01) || push(pubkey) -- the
+    # pushed on-chain layout (spec; the direct-path CScript).
     pubkey = privkey2pubkey(privkey=key)
     assert tx.vin[0].script.endswith(pubkey)
-    assert tx.vin[0].script[0] == 0x30  # DER SEQUENCE
+    assert tx.vin[0].script[0] == len(tx.vin[0].script) - 35  # push prefix
+    assert tx.vin[0].script[1] == 0x30  # DER SEQUENCE, inside the push
     assert tx.vin[0].witness == ()
     assert len(tx.vin[1].witness) == 2
     assert len(tx.vin[1].witness[1]) == 33
@@ -2294,16 +2295,10 @@ def test_pipeline_wire_matches_the_direct_signing_path():
     finalize -> extract must reproduce the Phase 13 signing
     primitives byte-for-byte.
 
-    Two documented layout facts (see the module docstring of
-    `yubtc.psbt` and the divergences note in the repo report):
-
-    - P2WPKH/P2TR witness items are byte-identical to
-      `CTransaction.sign_segwit` output.
-    - The legacy `scriptSig` LAYOUT differs from the Python direct
-      path by design: the PSBT finalizer (mirroring the Rust oracle)
-      concatenates `DER sig || pubkey` raw, while the direct path
-      wraps both in `CScript` push opcodes. The SIGNATURE BYTES are
-      identical.
+    Every form is byte-identical to the direct path: P2WPKH/P2TR
+    witness items match `CTransaction.sign_segwit` output, and the
+    legacy `scriptSig` is the same pushed layout
+    (`push(sig || 0x01) || push(pubkey)` via `CScript`).
     """
     key = fixture_key(0)
     pubkey = privkey2pubkey(privkey=key)
@@ -2336,16 +2331,15 @@ def test_pipeline_wire_matches_the_direct_signing_path():
     assert tx.vin[2].witness == stx.vin[2].witness
     assert tx.vin[1].script == b'' == stx.vin[1].script
     assert tx.vin[2].script == b'' == stx.vin[2].script
-    # Legacy: same DER signature bytes, different layout (raw concat
-    # vs CScript pushes) -- the documented oracle layout.
-    raw_sig = tx.vin[0].script[:-33]
+    # Legacy: byte-identical pushed scriptSig (push(sig || 0x01) ||
+    # push(pubkey)), same as the Rust finalizer since 3f97d66.
     pushed = stx.vin[0].script
+    assert tx.vin[0].script == pushed
     assert pushed[0] == len(pushed) - 35  # CScript push header
-    assert raw_sig == pushed[1:1 + len(raw_sig)]
-    assert tx.vin[0].script.endswith(pubkey)
-    # Overall: the witness-section bytes are identical; the legacy
-    # input contributes 2 fewer bytes (no push headers).
-    assert len(tx.serialize_wire()) == len(stx.serialize_wire()) - 2
+    assert pushed[1] == 0x30  # DER SEQUENCE, inside the push
+    assert pushed.endswith(pubkey)
+    # Overall: the extracted wire transaction is byte-identical.
+    assert tx.serialize_wire() == stx.serialize_wire()
 
 
 # --- parity KAT (constants generated from the Rust oracle) --------------
@@ -2362,7 +2356,7 @@ ROWS = [
 
 def build_row(name):
     """The fixture rows -- byte-identical constructions to the Rust
-    generator (commit 0af39e4, `core/examples/psbtgen.rs`)."""
+    generator (commit 3f97d66, `core/examples/psbtgen.rs`)."""
     if name == 'native_single':
         unsigned = PsbtTransaction(
             version=2,
@@ -2470,9 +2464,8 @@ def replay(psbt, seed, passphrase, kdf):
 
 
 def test_rust_parity_taproot_row_byte_exact():
-    """Schnorr (BIP-340) is fully deterministic and the Rust signer
-    feeds it the raw digest, so the whole taproot pipeline is
-    byte-identical -- no divergence neutralization needed."""
+    """Schnorr (BIP-340) is fully deterministic, so the whole taproot
+    pipeline is byte-identical to the Rust oracle."""
     for stage, expected in zip(replay(build_row('taproot_single'), SEED, '', 'yubtc'),
                                (RUST_ROWS['taproot_single']['unsigned'],
                                 RUST_ROWS['taproot_single']['signed'],
@@ -2481,18 +2474,16 @@ def test_rust_parity_taproot_row_byte_exact():
         assert stage == expected
 
 
-def test_rust_parity_all_rows_with_ecdsa_prehash_neutralized(rust_ecdsa_prehash):
+def test_rust_parity_all_rows_byte_exact():
     """Bit-for-bit parity of every stage of every row against the
-    constants generated from `core/src/psbt.rs` (commit 0af39e4).
+    constants generated from `core/src/psbt.rs` (commit 3f97d66).
 
-    The `rust_ecdsa_prehash` fixture neutralizes the ONE documented
-    divergence (see `test_rust_ecdsa_divergence_documented`): the Rust
-    port's k256 `Signer::sign` call pre-hashes with SHA-256, so its
-    ECDSA signatures (legacy + P2WPKH) commit to
-    `SHA256(sighash)` instead of `sighash`. With that single
-    difference reproduced, every container byte -- canonical ordering,
-    UTXO fields, pubkeys, Schnorr values, finalizer layout, the
-    extracted wire transaction -- is identical.
+    Since the Rust digest-commit fix both sides sign the sighash
+    digest itself and the finalizer emits the pushed legacy scriptSig
+    layout, so every container byte -- canonical ordering, UTXO
+    fields, pubkeys, ECDSA/Schnorr signatures, the extracted wire
+    transaction -- is identical with NO transformer on the Python
+    side.
     """
     for name, seed, passphrase, kdf in ROWS:
         stages = replay(build_row(name), seed, passphrase, kdf)
@@ -2503,7 +2494,7 @@ def test_rust_parity_all_rows_with_ecdsa_prehash_neutralized(rust_ecdsa_prehash)
         assert stages[3] == expected['hex'], f'{name}: extracted wire hex'
 
 
-def test_rust_parity_combine(rust_ecdsa_prehash):
+def test_rust_parity_combine():
     """The combine KAT: a = signed three_forms; b = a plus a synthetic
     disjoint-signer partial sig on input 0 and one extra unknown
     global pair."""
@@ -2551,56 +2542,30 @@ def _rust_partial_sig(rust_signed_b64: bytes) -> bytes:
     raise AssertionError('no PARTIAL_SIG in the input map')  # pragma: no cover
 
 
-def test_rust_ecdsa_divergence_documented():
-    """Pins the ONE Rust-vs-Python semantic divergence found while
-    building this mirror, so it cannot drift silently.
+def test_rust_ecdsa_commits_to_the_sighash_digest():
+    """Pins the former ONE Rust-vs-Python semantic divergence, fixed
+    in the Rust oracle by 3f97d66 (commit message: "ECDSA must commit
+    to the sighash digest, not its SHA-256"): the ECDSA partial sigs
+    (legacy + P2WPKH) commit to the sighash digest itself, so the
+    Rust `native_single` partial sig is now byte-identical to the
+    Python one -- direct parity, no transformer.
 
-    For the `native_single` row the BIP-143 digests are identical on
-    both sides; the Rust port signs `SHA256(sighash)` (k256's
-    `Signer::sign` hashes its argument with SHA-256 before the
-    RFC6979 ECDSA) while the Python primitives sign `sighash` itself
-    (the Bitcoin-correct semantics, and the original yubtc-python
-    v0.1 behaviour). Proven here byte-for-byte: replaying the Rust
-    prehash reproduces the Rust signature exactly.
+    Until 3f97d66 the Rust port signed `SHA256(sighash)` (k256's
+    message-hashing `Signer::sign`); this test used to replay that
+    prehash to reach byte equality.
     """
-    from coincurve import PrivateKey
     psbt = build_row('native_single')
     key = fixture_key(0)
     assert sign_psbt_input(psbt=psbt, index=0, privkey=key)
     py_sig = psbt.inputs[0].partial_sigs[0][1]
     rust_sig = _rust_partial_sig(RUST_ROWS['native_single']['signed'])
-    assert py_sig != rust_sig, 'the divergence must be observable'
-    # The Python sig verifies against the sighash (correct semantics);
-    # the Rust sig verifies against SHA256(sighash).
+    assert rust_sig == py_sig, 'direct parity: both commit to the digest'
+    # The shared signature commits to the sighash digest itself (the
+    # on-chain semantics), not to SHA256(sighash).
     unsigned = psbt.unsigned_tx
     sighash = bip143_sighash(
         tx=unsigned, input_index=0,
         script_code=p2wpkh_script_code(
             script_pubkey=psbt.inputs[0].witness_utxo.script),
         amount=psbt.inputs[0].witness_utxo.amount)
-    assert rust_sig == PrivateKey(key.secret).sign(sha256(sighash),
-                                                   hasher=None) + b'\x01'
-    assert rust_sig != PrivateKey(key.secret).sign(sighash,
-                                                   hasher=None) + b'\x01'
-    # ...and the Python-side signature is exactly the sighash-committing
-    # counterpart of the same (identical) BIP-143 digest.
     assert py_sig == sign_hash(privkey=key, datahash=sighash) + b'\x01'
-
-
-@pytest.fixture
-def rust_ecdsa_prehash(monkeypatch):
-    """Neutralize the documented Rust ECDSA prehash divergence: patch
-    the signing primitives so they commit to `SHA256(x)` where the
-    unpatched primitives commit to `x` (the k256 `Signer::sign`
-    behaviour the Rust oracle accidentally uses for legacy + BIP-143)."""
-    from coincurve import PrivateKey
-
-    def patched_sign_hash(privkey, datahash):
-        return PrivateKey(privkey.secret).sign(sha256(datahash), hasher=None)
-
-    def patched_sign_data(privkey, data):
-        return PrivateKey(privkey.secret).sign(sha256(dsha256(data)),
-                                               hasher=None)
-
-    monkeypatch.setattr('yubtc.crypto.sign_hash', patched_sign_hash)
-    monkeypatch.setattr('yubtc.crypto.sign_data', patched_sign_data)

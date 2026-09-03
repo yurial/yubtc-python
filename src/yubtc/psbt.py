@@ -1239,8 +1239,9 @@ def finalize_psbt_input(psbt: Psbt = NotNone, index: int = NotNone) -> None:
     form is complete, convert its `PARTIAL_SIG` into the final
     fields --
 
-    - P2PKH: `FINAL_SCRIPTSIG` = signature (DER + ``0x01``) || pubkey,
-      byte-identical to the direct-path `scriptSig` convention;
+    - P2PKH: `FINAL_SCRIPTSIG` = ``push(sig || 0x01) || push(pubkey)``
+      (the pushed on-chain layout, byte-identical to the direct-path
+      `scriptSig` `CScript`);
     - P2WPKH: `FINAL_SCRIPTWITNESS` = ``[sig || 0x01, pubkey]``;
     - P2TR key-path: `FINAL_SCRIPTWITNESS` = ``[sig64]``.
 
@@ -1271,13 +1272,18 @@ def finalize_psbt_input(psbt: Psbt = NotNone, index: int = NotNone) -> None:
         raise IncompleteInput(index=index)
     kind, committed = form
     if kind == 'legacy':
+        from yubtc.script import CScript
         found = _partial_sig_by_hash(input_, committed)
         if found is None:
             raise IncompleteInput(index=index)
         pubkey, sig = found
         if not sig or sig[-1] != pinned:
             raise IncompleteInput(index=index)
-        input_.final_scriptsig = sig + pubkey
+        # The pushed on-chain layout (spec + the direct-path `CScript`):
+        # `sig` already ends with the sighash byte, so
+        # push(sig || 0x01) || push(pubkey) -- a raw concatenation
+        # would be interpreted as opcodes and never validate.
+        input_.final_scriptsig = bytes(CScript([sig, pubkey]))
     elif kind == 'p2wpkh':
         found = _partial_sig_by_hash(input_, committed)
         if found is None:

@@ -127,7 +127,7 @@ def _sign_stdin(psbt_b64: str, seed: str = SEED, passphrase: str = '') -> str:
 # ---------------------------------------------------------------------------
 # Offline parity: the CLI stages on the same fixed rows the unit-suite
 # KAT pins. The expected values are the RUST_ROWS constants generated
-# from the Rust core (commit 0af39e4) -- the CLI must agree with its
+# from the Rust core (commit 3f97d66) -- the CLI must agree with its
 # own core, and the taproot row agrees with the Python mirror directly.
 # ---------------------------------------------------------------------------
 
