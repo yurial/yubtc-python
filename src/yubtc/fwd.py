@@ -103,3 +103,23 @@ DUST_THRESHOLD_P2PKH: int = 546
 DUST_THRESHOLD_P2SH: int = 540
 DUST_THRESHOLD_P2WPKH: int = 294
 DUST_THRESHOLD_P2TR: int = 330
+
+# --- PSBT (BIP-174, Phase 14) -----------------------------------------
+# Frozen snapshot of the Phase 14 spec values (mirrors `fwd.rs`); see
+# spec.md «PSBT — BIP-174» and `psbt.py`.
+
+# Hard cap on the encoded size of a PSBT (bytes). A parse attempt on a
+# bigger blob fails with `PsbtTooLarge` before any allocation (fuzz/OOM
+# guard against allocation bombs through 64-bit compact sizes).
+PSBT_MAX_SIZE: int = 4 * 1024 * 1024
+
+# The Signer walk (ОВ-9): a stateless wallet has no UTXO->key map, so
+# "own" inputs are found by a bounded offline walk over nonces
+# `0..PSBT_SIGN_MAX_NONCE`, deriving all three address forms per nonce.
+# Inputs keyed beyond the bound stay unsigned and are reported back.
+PSBT_SIGN_MAX_NONCE: int = 1000
+
+# Sighash flags the signer produces or accepts for these forms; a PSBT
+# whose `SIGHASH_TYPE` field disagrees leaves the input unsigned (ОВ-8).
+PSBT_SIGHASH_ALL: int = 0x0000_0001
+PSBT_SIGHASH_DEFAULT: int = 0x0000_0000
