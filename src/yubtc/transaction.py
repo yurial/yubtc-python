@@ -1,8 +1,12 @@
 """Bitcoin transaction model, signing, and SegWit witness support.
 
-Legacy (pre-SegWit) model mirrors the original yubtc behaviour
-byte-for-byte: `CIn`/`COut`/`CTransaction` with `struct.pack`, the
-LEB128 `toVarInt`, and the SIGHASH_ALL blanked-serialization preimage.
+Transaction model mirrors the original yubtc behaviour byte-for-byte:
+`CIn`/`COut`/`CTransaction` with `struct.pack` and the SIGHASH_ALL
+blanked-serialization preimage. All counts and lengths serialize as
+Bitcoin CompactSize (`compact_size`; DEVIATIONS.md D-002 of the Rust
+oracle -- the legacy LEB128 `toVarInt` agreed with it only below 128,
+and the Phase 15 multisig scriptSig is the first yubtc script past
+that point).
 
 Phase 13 (SegWit/Taproot, mirrors `yubtc core/src/transaction.rs`):
 
@@ -52,7 +56,12 @@ def script2pkh(script: bytes) -> bytes:
 
 
 def toVarInt(value: int) -> bytes:
-    """Pack `value` into varint bytes"""
+    """Legacy LEB128 varint (kept for its pinned tests).
+
+    NOT used by the wire encoders any more (DEVIATIONS.md D-002):
+    every transaction count/length is a Bitcoin `compact_size` -- the
+    two encodings agree byte-for-byte below 128, which covers every
+    pre-Phase-15 flow."""
     from struct import pack
     if value < 0:
         raise ValueError('toVarInt value must be non-negative')
@@ -71,11 +80,12 @@ def toVarInt(value: int) -> bytes:
 def compact_size(n: int) -> bytes:
     """Bitcoin CompactSize wire encoding (`0xfd`/`0xfe`/`0xff` prefixes).
 
-    Used for witness item counts and lengths (mirrors
-    `transaction.rs::compact_size`). The legacy vin/vout layout keeps
-    `toVarInt` (LEB128): the two encodings coincide below 0xfd, which
-    covers every value the wallet serializes -- counts and
-    script/witness lengths alike."""
+    Every transaction count and length uses this encoding (mirrors
+    `transaction.rs::compact_size`; Phase 15 wire correction D-002).
+    The legacy LEB128 `toVarInt` is kept for its pinned tests, but is
+    no longer used by the wire encoders: the two encodings coincide
+    below 0xfd only, and the multisig `scriptSig` (>= 253 bytes) is
+    the first yubtc script past that point."""
     from struct import pack
     if n < 0:
         raise ValueError('compact_size value must be non-negative')
@@ -185,7 +195,7 @@ class CIn(object):
         from struct import pack
         result = self.txhash
         result += pack(b"<L", self.n)
-        result += toVarInt(len(self.script))
+        result += compact_size(len(self.script))
         result += self.script
         result += pack(b"<L", self.sequence)
         return result
@@ -210,7 +220,7 @@ class COut(object):
         """
         from struct import pack
         result = pack(b"<Q", self.amount)
-        result += toVarInt(len(self.script))
+        result += compact_size(len(self.script))
         result += self.script
         return result
 
@@ -240,10 +250,10 @@ class CTransaction(object):
         """
         from struct import pack
         result = pack(b"<l", self.version)
-        result += toVarInt(len(self.vin))
+        result += compact_size(len(self.vin))
         for i in self.vin:
             result += i.serialize()
-        result += toVarInt(len(self.vout))
+        result += compact_size(len(self.vout))
         for o in self.vout:
             result += o.serialize()
         result += pack(b"<L", self.locktime)
@@ -277,10 +287,10 @@ class CTransaction(object):
         from struct import pack
         result = pack(b"<l", self.version)
         result += b'\x00\x01'  # marker || flag
-        result += toVarInt(len(self.vin))
+        result += compact_size(len(self.vin))
         for i in self.vin:
             result += i.serialize()
-        result += toVarInt(len(self.vout))
+        result += compact_size(len(self.vout))
         for o in self.vout:
             result += o.serialize()
         for i in self.vin:

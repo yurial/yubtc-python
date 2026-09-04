@@ -123,3 +123,13 @@ PSBT_SIGN_MAX_NONCE: int = 1000
 # whose `SIGHASH_TYPE` field disagrees leaves the input unsigned (ОВ-8).
 PSBT_SIGHASH_ALL: int = 0x0000_0001
 PSBT_SIGHASH_DEFAULT: int = 0x0000_0000
+
+# --- Multi-sig (P2SH, Phase 15) -----------------------------------------
+# Frozen snapshot of the Phase 15 spec values (mirrors `fwd.rs`); see
+# spec.md «Multi-sig (P2SH)» and `script.py` / `wallet.py`.
+
+# Maximum keys in a CHECKMULTISIG quorum (R-MS-2): `1 ≤ M ≤ N ≤ 15`.
+# 15, not the consensus 20-key cap: an N = 16 redeem script is
+# 34·16 + 4 = 548 bytes > the 520-byte MAX_SCRIPT_ELEMENT_SIZE push
+# limit, so such a P2SH output is fundamentally unspendable.
+MS_MAX_PUBKEYS: int = 15

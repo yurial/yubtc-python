@@ -681,3 +681,340 @@ class Wallet(object):
             by_size=by_size, feekb=feekb)
         return TxResult(tx=best_stx, cashback=best_vout.cashback,
                         amount=best_vout.amount, fee=best_fee)
+
+
+# --- Multi-sig (P2SH, Phase 15) ---------------------------------------
+#
+# Mirror of the multisig half of `yubtc core/src/wallet.rs`: quorum
+# validation, the own-key derivation (R-MS-6), the greedy input
+# selection over the fixed quorum address (ОВ-13) and the `ms send`
+# Creator orchestration (ОВ-12 -- a thin composition of the existing
+# library stages, no new cryptography or serialization).
+
+# Upper bound of one ECDSA signature inside a multisig `scriptSig`:
+# 72-byte maximal low-S DER + 1 sighash byte. Used by the fee loop to
+# size a not-yet-complete quorum spend (other signers' signatures
+# cannot be known at creation time; the estimate is the worst case,
+# so the fee never underpays because of a shorter DER).
+MS_SIG_SIZE_ESTIMATE = 73
+
+
+class MsError(Exception):
+    """Everything that can go wrong in the multisig quorum surface
+    (spec.md «Multi-sig (P2SH) (Phase 15, v0.2)» -- validation
+    table). Base class of the typed variants mirroring the Rust
+    `MsError` enum one-for-one; every variant is a tested branch.
+    The messages are the Rust `thiserror` strings, one-for-one."""
+
+    #: The message a payload-less variant carries (mirrors the Rust
+    #: `#[error("...")]` attribute).
+    default_message = 'multisig error'
+
+    def __init__(self, *args):
+        if not args:
+            args = (self.default_message,)
+        super().__init__(*args)
+
+
+class QuorumBounds(MsError):
+    """The quorum is outside the spendable envelope (R-MS-2):
+    `1 ≤ M ≤ N ≤ 15` is violated. The 15 bound is the 520-byte
+    MAX_SCRIPT_ELEMENT_SIZE push limit, not the consensus 20-key
+    cap -- an N = 16 redeem script (548 bytes) could not even be
+    pushed into a `scriptSig`."""
+
+    default_message = 'quorum out of bounds: need 1 ≤ M ≤ N ≤ 15'
+
+
+class KeyCountMismatch(MsError):
+    """The number of distinct keys does not equal N (spec: «ровно N
+    различных, иначе MsError::KeyCountMismatch»). Carries the
+    expected and the actual count."""
+
+    @require_kwargs_only
+    def __init__(self, expected: int = NotNone, got: int = NotNone):
+        super().__init__(
+            'key count mismatch: expected exactly {expected} keys, '
+            'got {got}'.format(expected=expected, got=got))
+        self.expected = expected
+        self.got = got
+
+
+class DuplicateKey(MsError):
+    """A duplicate key in the quorum (R-MS-3): one key would have to
+    supply two signatures -- the quorum is degenerate."""
+
+    default_message = 'duplicate key in the quorum'
+
+
+class ForeignWif(MsError):
+    """The supplied WIF does not match the own key derived at the
+    given nonce (R-MS-6): yubtc only accepts a WIF for the *own* key
+    and only when its secret is exactly the derived one -- foreign
+    secrets are never accepted or stored (ОВ-11)."""
+
+    default_message = 'WIF does not match the key derived at this nonce'
+
+
+class NotAParticipant(MsError):
+    """The own key is not part of the quorum (`ms send` without
+    `-n`/WIF, or a quorum the wallet cannot co-sign): yubtc builds
+    spends only of quorums it participates in."""
+
+    default_message = 'own key is not a participant of this quorum'
+
+
+@require_kwargs_only
+def ms_create_address(n: int = NotNone, m: int = NotNone,
+                      keys: list = NotNone) -> tuple:
+    """Validate the quorum shape and derive the fixed P2SH address +
+    canonical redeem script (mirrors `wallet.rs::ms_create_address`).
+
+    `n` is the total key count, `m` the signature threshold, `keys`
+    the full quorum key set (own key already included by the caller --
+    derive it with `ms_own_pubkey` and append it before calling).
+
+    Checks (in order): distinct-key count equals `n`
+    (`KeyCountMismatch`), `1 ≤ m ≤ n ≤ 15` (`QuorumBounds`), no
+    duplicate keys (`DuplicateKey`) -- then the redeem script is
+    assembled with BIP-67 sorting (R-MS-4) and the address is
+    `base58check(0x05 ‖ hash160(redeem))` (ОВ-13: fixed by the
+    `(N, M, keys)` tuple, no scan/gap walk). Returns
+    `(address, redeem_script_bytes)`."""
+    from yubtc.fwd import MS_MAX_PUBKEYS
+    from yubtc.script import (InvalidMultisigRedeem,
+                              make_multisig_redeem_script,
+                              redeem2p2sh_addr)
+    if len(keys) != n:
+        raise KeyCountMismatch(expected=n, got=len(keys))
+    if m == 0 or m > n or n > MS_MAX_PUBKEYS:
+        raise QuorumBounds()
+    sorted_keys = sorted(bytes(k) for k in keys)
+    if any(a == b for a, b in zip(sorted_keys, sorted_keys[1:])):
+        raise DuplicateKey()
+    try:
+        redeem = make_multisig_redeem_script(m=m, keys=sorted_keys)
+    except InvalidMultisigRedeem:
+        # Bounds and duplicates validated above; 33-byte keys are the
+        # caller's contract -- the builder cannot fail here.
+        raise QuorumBounds()
+    return redeem2p2sh_addr(redeem=redeem), redeem
+
+
+@require_kwargs_only
+def ms_own_privkey(seed: TSeed = NotNone, nonce: TNonce = NotNone,
+                   passphrase: TPassphrase = '',
+                   kdf: str = OPTIONAL):
+    """The own key at `nonce` in its legacy form (R-MS-6, ОВ-10):
+    the same derivation as `dumpprivkey -n X` -- the P2PKH leaf for
+    `pbkdf2` (`m/44'/0'/0'/0/n`), the single shared key for the
+    non-BIP-32 KDFs (вариант А, ОВ-2). The multisig membership test
+    and every own signature use exactly this key.
+
+    `kdf` may be omitted to keep the historic passphrase routing
+    (empty -> 'yubtc', non-empty -> 'pbkdf2'), exactly like
+    `crypto.seed2privkey`."""
+    from yubtc.crypto import seed2privkey
+    from yubtc.fwd import AddrType
+    if not seed:
+        raise ValueError('seed cannot be empty')
+    return seed2privkey(seed=seed, nonce=nonce, passphrase=passphrase,
+                        kdf=kdf, addr_type=AddrType.LEGACY)
+
+
+@require_kwargs_only
+def ms_own_pubkey(seed: TSeed = NotNone, nonce: TNonce = NotNone,
+                  passphrase: TPassphrase = '',
+                  kdf: str = OPTIONAL) -> bytes:
+    """Compressed pubkey of `ms_own_privkey` -- the byte string that
+    must appear in the redeem script for the wallet to co-sign."""
+    from yubtc.crypto import privkey2pubkey
+    return privkey2pubkey(ms_own_privkey(seed=seed, nonce=nonce,
+                                         passphrase=passphrase, kdf=kdf))
+
+
+@require_kwargs_only
+def ms_wif_own_key(derived=NotNone, wif: str = NotNone) -> bytes:
+    """R-MS-6 / ОВ-11 primitive for the CLI `--key <WIF>` sugar
+    (stage 2): accept the WIF only when its secret is byte-identical
+    to the derived own key. Takes the *already derived* own key (from
+    `ms_own_privkey`); any malformed WIF or any mismatch -- including
+    every foreign WIF -- is `ForeignWif`. Returns the own compressed
+    pubkey (the quorum member)."""
+    from yubtc.crypto import privkey2pubkey, privwif2privkey
+    try:
+        secret = privwif2privkey(wif)
+    except Exception:
+        raise ForeignWif()
+    if secret.secret != derived.secret:
+        raise ForeignWif()
+    return privkey2pubkey(derived)
+
+
+@require_kwargs_only
+def ms_select_utxos(utxos: list = NotNone, target: TSatoshi = None) -> list:
+    """Greedy smallest-prefix input selection over the UTXOs of the
+    quorum address (ОВ-12/ОВ-13): walk in the network's natural order
+    and take the smallest prefix whose sum reaches `target` -- the
+    same principle as the CLI `default_selection`, applied to a
+    single address (nonce-walk grouping is meaningless for a fixed
+    quorum address). `target = None` selects everything (drain).
+
+    `utxos` are the backend dicts (`tx_hash`, `tx_output_n`, `value`,
+    `script`, `confirmations`); the selected prefix is returned in
+    order."""
+    out = []
+    total = 0
+    for u in utxos:
+        out.append(u)
+        total += u['value']
+        if target is not None and total >= target:
+            break
+    return out
+
+
+class MsPsbtOutcome(NamedTuple):
+    """Result of `ms_create_psbt`: the base64 PSBT (own partial
+    signatures included) plus the fee-loop outcome (mirrors
+    `wallet.rs::MsPsbtOutcome`)."""
+    psbt_b64: str
+    fee: TSatoshi
+    cashback: TSatoshi
+    amount: TSatoshi
+
+
+@require_kwargs_only
+def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
+                   backend: 'NetworkBackend' = NotNone,
+                   dst: TAddress = NotNone, amount: TSatoshi = NotNone,
+                   n: int = NotNone, m: int = NotNone,
+                   keys: list = NotNone, own_nonce: TNonce = None,
+                   confirmations: int = NotNone, feekb: TSatoshi = NotNone,
+                   fee: TSatoshi = NotNone) -> MsPsbtOutcome:
+    """Creator orchestration of `ms send` (ОВ-12): a thin composition
+    of the existing library stages, no new cryptography or
+    serialization (mirrors `wallet.rs::ms_create_psbt`) --
+
+    1. derive the own legacy-form key at `own_nonce` (R-MS-6) and
+       validate the quorum (`n`, `m`, cosigner `keys` + own key);
+    2. fetch the UTXOs of the fixed quorum address with one
+       `get_unspent` call (ОВ-13 -- no nonce walk) and filter by
+       `confirmations`;
+    3. greedily select the smallest UTXO prefix covering
+       `amount + fee` (`ms_select_utxos`);
+    4. run the vsize-keyed fee loop (`_pick_best_fee_loop_candidate`)
+       with the final `scriptSig` *sized* (never signed): each input
+       carries `1 + m·(1 + MS_SIG_SIZE_ESTIMATE) + pushlen(redeem)`
+       bytes of script;
+    5. build the PSBT via `psbt.create_psbt` -- every input gets
+       `NON_WITNESS_UTXO` (fetched with one `raw_transaction` per
+       selected UTXO) plus `REDEEM_SCRIPT`;
+    6. add the own partial signatures (`own_nonce=None` is
+       `NotAParticipant` -- yubtc spends only quorums it
+       participates in);
+    7. emit base64. Cashback goes to the **quorum address** (shared
+       funds must not drift into single-key control)."""
+    from yubtc.crypto import make_vout, privkey2pubkey
+    from yubtc.hash import hash160
+    from yubtc.net import get_address_unspent
+    from yubtc.psbt import (CreateInput, PsbtTransaction, PsbtTxIn,
+                            PsbtTxOut, _parse_tx, create_psbt,
+                            sign_psbt_input, to_base64)
+    from yubtc.script import (make_p2sh_lock_script, push_data_len)
+
+    nonce = own_nonce
+    if nonce is None:
+        raise NotAParticipant()
+    own_privkey = ms_own_privkey(seed=seed, nonce=nonce,
+                                 passphrase=passphrase)
+    own_pubkey = privkey2pubkey(own_privkey)
+    all_keys = [bytes(k) for k in keys] + [own_pubkey]
+    quorum_addr, redeem = ms_create_address(n=n, m=m, keys=all_keys)
+    quorum_script = bytes(make_p2sh_lock_script(hash160=hash160(redeem)))
+
+    # One UTXO query for the fixed quorum address (ОВ-13).
+    unspent = get_address_unspent(backend, quorum_addr)
+    affordable = [u for u in unspent
+                  if u['confirmations'] >= confirmations]
+    target = amount + fee
+    selected = ms_select_utxos(utxos=affordable, target=target)
+    in_amount = sum(u['value'] for u in selected)
+
+    # Final scriptSig size per input (R-MS-4/5 layout, worst-case
+    # signature lengths): dummy byte + M pushes + pushed redeem.
+    script_sig_len = (1 + m * (1 + MS_SIG_SIZE_ESTIMATE)
+                      + push_data_len(length=len(redeem)))
+
+    txhashes = [(bytes.fromhex(u['tx_hash']), u['tx_output_n'])
+                for u in selected]
+
+    def build_vin(sized: bool) -> list:
+        return [PsbtTxIn(txhash=txhash, n=out_n,
+                         script=b'\x00' * script_sig_len if sized else b'',
+                         sequence=0xfffffffe, witness=())
+                for txhash, out_n in txhashes]
+
+    if fee > 0:
+        # Explicit fee: the loop is skipped, exactly like
+        # `Wallet.make_transaction`.
+        best_vout = make_vout(src=quorum_addr, dst=dst,
+                              in_amount=in_amount, amount=amount, fee=fee)
+        best_fee = fee
+    else:
+        # Fee loop keyed on vsize (cycle detection by repeated vsize
+        # -- decision C3). The sized vin makes `vsize == bytes`
+        # reflect the final (still unsigned) scripts.
+        by_size = {}
+        seen_sizes = set()
+        current_fee = 0
+        while True:
+            vout_result = make_vout(src=quorum_addr, dst=dst,
+                                    in_amount=in_amount, amount=amount,
+                                    fee=current_fee)
+            tx = PsbtTransaction(
+                version=2, vin=tuple(build_vin(sized=True)),
+                vout=tuple(PsbtTxOut(amount=o.amount, script=o.script)
+                           for o in vout_result.vout), locktime=0)
+            # BIP-141 vsize: ceil(weight / 4); the sized vin makes
+            # `vsize == bytes` (legacy spend, no witness discount).
+            weight = (len(tx.serialize_stripped()) * 3
+                      + len(tx.serialize_wire()))
+            vsize = -(-weight // 4)
+            new_fee = vsize * feekb // 1000
+            by_size.setdefault(vsize, []).append(
+                (current_fee, vout_result, tx))
+            if vsize in seen_sizes:
+                break
+            seen_sizes.add(vsize)
+            current_fee = new_fee
+        _, (best_fee, best_vout, _) = _pick_best_fee_loop_candidate(
+            by_size=by_size, feekb=feekb)
+
+    # Creator: unsigned tx + NON_WITNESS_UTXO (one raw_transaction
+    # per selected UTXO) + REDEEM_SCRIPT per input.
+    create_inputs = []
+    for u, (txhash, _out_n) in zip(selected, txhashes):
+        txid_hex = u['tx_hash']
+        raw_hex = backend.raw_transaction(txid_hex)
+        try:
+            prev_tx = _parse_tx(bytes.fromhex(raw_hex.strip()),
+                                segwit_allowed=True)
+        except Exception as e:
+            raise ValueError('raw tx {txid}: {e}'.format(txid=txid_hex,
+                                                         e=e))
+        create_inputs.append(CreateInput(
+            amount=u['value'], script_pubkey=quorum_script,
+            prev_tx=prev_tx, redeem_script=redeem))
+    unsigned = PsbtTransaction(
+        version=2, vin=tuple(build_vin(sized=False)),
+        vout=tuple(PsbtTxOut(amount=o.amount, script=o.script)
+                   for o in best_vout.vout), locktime=0)
+    psbt = create_psbt(unsigned_tx=unsigned, inputs=create_inputs)
+
+    # Signer: the own key signs every input of the quorum spend.
+    for i in range(len(psbt.inputs)):
+        sign_psbt_input(psbt=psbt, index=i, privkey=own_privkey)
+
+    return MsPsbtOutcome(psbt_b64=to_base64(psbt=psbt), fee=best_fee,
+                         cashback=best_vout.cashback,
+                         amount=best_vout.amount)

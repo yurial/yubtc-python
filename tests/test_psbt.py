@@ -1752,7 +1752,9 @@ def test_finalize_input_reports_incomplete_inputs():
     psbt2.inputs[0].partial_sigs[0] = (psbt2.inputs[0].partial_sigs[0][0], bytes(sig))
     with pytest.raises(IncompleteInput):
         finalize_psbt_input(psbt=psbt2, index=0)
-    # Unknown script form (P2SH) is incomplete by definition.
+    # Unknown script form is incomplete by definition: a redeem-less
+    # P2SH input answers via the Phase 15 multisig branch (redeem
+    # absent), a P2WSH shape via the no-recognized-form arm.
     p2sh = bytes(CScript([OP_HASH160, b'\xab' * 20, OP_EQUAL]))
     psbt3 = create_psbt(unsigned_tx=one_input_tx(b'\x01' * 32),
                         inputs=[CreateInput(amount=1000,
@@ -1760,6 +1762,13 @@ def test_finalize_input_reports_incomplete_inputs():
                                             prev_tx=None)])
     with pytest.raises(IncompleteInput):
         finalize_psbt_input(psbt=psbt3, index=0)
+    p2wsh = b'\x00\x20' + b'\xab' * 32
+    psbt4 = create_psbt(unsigned_tx=one_input_tx(b'\x01' * 32),
+                        inputs=[CreateInput(amount=1000,
+                                            script_pubkey=p2wsh,
+                                            prev_tx=None)])
+    with pytest.raises(IncompleteInput):
+        finalize_psbt_input(psbt=psbt4, index=0)
 
 
 def test_finalize_skips_incomplete_inputs_silently():
@@ -1884,11 +1893,14 @@ def test_decode_witness_stack_rejects_oversized_count_and_trailing_bytes():
 
 def test_extract_refuses_inputs_without_a_recognizable_form():
     # The input has UTXO data and even a final field, but the
-    # scriptPubKey shape (P2SH) is not a form the extractor can
+    # scriptPubKey shape (P2WSH) is not a form the extractor can
     # validate -- refuse rather than emit an unverifiable tx.
-    p2sh = bytes(CScript([OP_HASH160, b'\xab' * 20, OP_EQUAL]))
+    # (Phase 15 moved P2SH to the supported forms; P2WSH stays
+    # preserve-only -- mirrors the Rust oracle's test move.)
+    p2wsh = b'\x00\x20' + b'\xab' * 32
     psbt = create_psbt(unsigned_tx=one_input_tx(b'\x01' * 32),
-                       inputs=[CreateInput(amount=1000, script_pubkey=p2sh,
+                       inputs=[CreateInput(amount=1000,
+                                           script_pubkey=p2wsh,
                                            prev_tx=None)])
     psbt.inputs[0].final_scriptsig = b'\x51'
     with pytest.raises(NotFinalized):

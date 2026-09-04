@@ -12,9 +12,35 @@ What the wallet actually uses:
   (the five opcodes that make up P2PKH and P2SH scripts).
 - Phase 13: the native-SegWit witness lock scripts (`OP_0`/`OP_1`
   shapes) with their strict extractors -- see the bottom of this file.
+- Phase 15 (multi-sig, mirrors the multisig half of
+  `yubtc core/src/script.rs`): `push_data`/`push_data_len` (the
+  scriptSig push encodings, escalating to OP_PUSHDATA1/2),
+  `make_multisig_redeem_script` (canonical bare
+  `OP_m ‖ (0x21 ‖ pubkey)×N ‖ OP_n ‖ OP_CHECKMULTISIG`, BIP-67
+  sorted), `extract_multisig_quorum` (the strict shape-check
+  counterpart), `make_multisig_script_sig` (the R-MS-5 finalize
+  layout) and `redeem2p2sh_addr` (the quorum `3...` address).
 """
 
 from yubtc.util import NotNone, require_kwargs_only
+
+
+class ScriptError(ValueError):
+    """Typed script-shape failure (mirrors
+    `yubtc core/src/script.rs::ScriptError`). The multisig surface
+    raises `InvalidMultisigRedeem`; the Phase 13 extractors keep
+    plain `ValueError` for continuity."""
+
+
+class InvalidMultisigRedeem(ScriptError):
+    """The script is not exactly the canonical bare CHECKMULTISIG
+    redeem `OP_m ‖ (0x21 ‖ 33B compressed pubkey)×N ‖ OP_n ‖
+    OP_CHECKMULTISIG` (R-MS-2/3 bounds, shapes, duplicates)."""
+
+    default_message = 'invalid multisig redeem script'
+
+    def __init__(self):
+        super().__init__(self.default_message)
 
 
 class CScriptOp(int):
@@ -262,3 +288,217 @@ def extract_p2tr_output_key(script: bytes = NotNone) -> bytes:
             or script[1] != OP_PUSHBYTES_32):
         raise ValueError(f'invalid script: expected P2TR layout, got {len(script)} bytes')
     return script[2:]
+
+
+# --- Multi-sig (Phase 15, P2SH; mirrors core/src/script.rs) ------------
+
+
+@require_kwargs_only
+def make_p2sh_lock_script(hash160: bytes = NotNone) -> CScript:
+    """Build the canonical P2SH lock script for a 20-byte hash160.
+
+    Layout: `OP_HASH160 <0x14> <20 bytes> OP_EQUAL` -- exactly 23
+    bytes (`a9 14 <hash> 87`). This is the `scriptPubKey` behind a
+    `3...` address; for the multisig wallet the hash is
+    `hash160(redeem_script)`."""
+    hash160 = bytes(hash160)
+    if len(hash160) != 20:
+        raise ValueError(f'hash160 must be 20 bytes, got {len(hash160)}')
+    return CScript(bytes([OP_HASH160, 0x14]) + hash160 + bytes([OP_EQUAL]))
+
+
+@require_kwargs_only
+def push_data(data: bytes = NotNone) -> bytes:
+    """Single-item data push: a length prefix followed by the item.
+
+    Items up to `0x4b` bytes use the one-opcode form
+    (`OP_PUSHBYTES_N`); 76-255 bytes escalate to `OP_PUSHDATA1` with
+    an explicit one-byte length; 256-65535 bytes escalate to
+    `OP_PUSHDATA2` with a little-endian two-byte length. The wallet's
+    largest item is a 15-key redeem script (34·15 + 4 = 514 bytes), so
+    `OP_PUSHDATA2` is the deepest encoding it ever needs. Longer
+    items would need the 5/9-byte `OP_PUSHDATA4` encoding -- dead
+    surface, rejected with `ValueError` instead of a silently
+    malformed script."""
+    data = bytes(data)
+    if len(data) > 0xffff:
+        raise ValueError(
+            'item too long for a single/OP_PUSHDATA1/OP_PUSHDATA2 '
+            'push: {} bytes'.format(len(data)))
+    if len(data) <= 0x4b:
+        return bytes([len(data)]) + data
+    if len(data) <= 0xff:
+        return bytes([OP_PUSHDATA1, len(data)]) + data
+    return bytes([OP_PUSHDATA2]) + len(data).to_bytes(2, 'little') + data
+
+
+@require_kwargs_only
+def push_data_len(length: int = NotNone) -> int:
+    """The on-wire length of `push_data` for an item of `length` bytes:
+    1 for the single-opcode form, 2 for `OP_PUSHDATA1`, 3 for
+    `OP_PUSHDATA2` (the spec's `pushlen(|redeem|)` in the multisig
+    scriptSig size model)."""
+    if length <= 0x4b:
+        return 1
+    if length <= 0xff:
+        return 2
+    return 3
+
+
+def _op_n(n: int) -> int:
+    """`OP_N` for N in `1..=16`: `0x50 + N` (single-byte `OP_1`...
+    `OP_16` small-integer opcodes)."""
+    return 0x50 + n
+
+
+def _is_canonical_compressed_pubkey(key: bytes) -> bool:
+    """The canonical compressed-pubkey shape accepted in a multisig
+    redeem script: SEC prefix `02` (even Y) or `03` (odd Y)."""
+    return key[0] == 0x02 or key[0] == 0x03
+
+
+@require_kwargs_only
+def make_multisig_redeem_script(m: int = NotNone,
+                                keys: list = NotNone) -> bytes:
+    """Build the canonical bare M-of-N CHECKMULTISIG redeem script
+    (spec.md «Правила» R-MS-2/3/4).
+
+    Layout: `OP_m ‖ (0x21 ‖ <33-byte compressed pubkey>)×N ‖ OP_n ‖
+    OP_CHECKMULTISIG` -- nothing else is ever built or accepted.
+
+    Validation:
+    - **R-MS-2 (quorum bounds)**: `1 ≤ m ≤ len(keys) ≤ 15`
+      (`yubtc.fwd.MS_MAX_PUBKEYS` -- above it the redeem script no
+      longer fits the 520-byte MAX_SCRIPT_ELEMENT_SIZE consensus
+      limit on a single push, so such a P2SH output is fundamentally
+      unspendable);
+    - **R-MS-3 (duplicates)**: two equal keys make the quorum
+      degenerate (one key would have to supply two signatures) and
+      are rejected.
+
+    Every key must be exactly 33 bytes -- the runtime equivalent of
+    the Rust oracle's `[[u8; 33]]` parameter type (the SEC 02/03
+    prefix stays the extractor's check, as there).
+
+    **R-MS-4 (BIP-67)**: the keys are sorted lexicographically by
+    their 33 compressed bytes before assembly, so the same key *set*
+    always yields the same redeem script -- and therefore the same
+    P2SH address -- regardless of argument order. Signers place
+    signatures by the *script's* key order
+    (`extract_multisig_quorum` returns it), not by argument order.
+
+    Every violation raises `InvalidMultisigRedeem` (the wallet maps
+    bounds/duplicates onto the typed `MsError` variants at its own
+    boundary)."""
+    from yubtc.fwd import MS_MAX_PUBKEYS
+    keys = [bytes(k) for k in keys]
+    n = len(keys)
+    if n == 0 or m == 0 or m > n or n > MS_MAX_PUBKEYS:
+        raise InvalidMultisigRedeem()
+    if any(len(k) != 33 for k in keys):
+        raise InvalidMultisigRedeem()
+    sorted_keys = sorted(keys)
+    for first, second in zip(sorted_keys, sorted_keys[1:]):
+        if first == second:
+            raise InvalidMultisigRedeem()
+    out = bytearray()
+    out.append(_op_n(m))
+    for key in sorted_keys:
+        out.append(0x21)
+        out += key
+    out.append(_op_n(n))
+    out.append(OP_CHECKMULTISIG)
+    return bytes(out)
+
+
+@require_kwargs_only
+def extract_multisig_quorum(script: bytes = NotNone) -> tuple:
+    """Extract the quorum `(m, keys)` from a canonical bare
+    CHECKMULTISIG redeem script -- keys in **script order** (the order
+    signatures must take in the final `scriptSig`, R-MS-4).
+
+    Strict shape check, symmetric with `transaction.script2pkh` -- not
+    a general script decoder: the script must be exactly
+    `OP_m ‖ (0x21 ‖ 33-byte compressed pubkey)×N ‖ OP_n ‖
+    OP_CHECKMULTISIG` with `1 ≤ m ≤ n ≤ 15`, no `OP_PUSHDATA`
+    wrappers, no trailing bytes, and no duplicate keys (R-MS-3 --
+    yubtc does not sign or finalize such scripts). Anything else
+    raises `InvalidMultisigRedeem`."""
+    from yubtc.fwd import MS_MAX_PUBKEYS
+    script = bytes(script)
+    # OP_m + one key push + OP_n + OP_CHECKMULTISIG is the minimum.
+    if len(script) < 3 + 34:
+        raise InvalidMultisigRedeem()
+    m_op = script[0]
+    n_op = script[len(script) - 2]
+    if script[len(script) - 1] != OP_CHECKMULTISIG:
+        raise InvalidMultisigRedeem()
+    # Small-integer opcodes only, with the R-MS-2 bound (OP_16 would
+    # be a 548-byte script -- unspendable).
+    op_bound = 0x50 + MS_MAX_PUBKEYS
+    if not (0x51 <= m_op <= op_bound) or not (0x51 <= n_op <= op_bound):
+        raise InvalidMultisigRedeem()
+    m = m_op - 0x50
+    n = n_op - 0x50
+    if m > n:
+        raise InvalidMultisigRedeem()
+    # The middle must be exactly N single-opcode 33-byte pushes.
+    if len(script) - 3 != n * 34:
+        raise InvalidMultisigRedeem()
+    keys = []
+    for i in range(n):
+        start = 1 + i * 34
+        if script[start] != 0x21:
+            raise InvalidMultisigRedeem()
+        key = script[start + 1:start + 34]
+        if not _is_canonical_compressed_pubkey(key):
+            raise InvalidMultisigRedeem()
+        keys.append(key)
+    # R-MS-3: duplicates make the quorum degenerate -- rejected.
+    if len(set(keys)) != len(keys):
+        raise InvalidMultisigRedeem()
+    return m, keys
+
+
+@require_kwargs_only
+def make_multisig_script_sig(redeem: bytes = NotNone,
+                             sigs: list = NotNone) -> bytes:
+    """Assemble the finalized P2SH-multisig `scriptSig`
+    (R-MS-4/R-MS-5):
+
+    ```
+    OP_0 ‖ push(sig_i ‖ 0x01)×M (in redeem-script key order) ‖ push(redeem)
+    ```
+
+    The leading `OP_0` is the empty-push dummy compensating the
+    off-by-one stack error of `OP_CHECKMULTISIG` (R-MS-5 -- BIP-147
+    NULLDUMMY makes a non-empty dummy consensus-invalid). `sigs` must
+    already be ordered by the redeem script's key order -- the
+    Finalizer derives that order from `extract_multisig_quorum`,
+    never from `PARTIAL_SIG` arrival order -- and each element must
+    be the complete `DER ‖ sighash` signature. The redeem script is
+    pushed with `push_data` (its length can escalate to
+    `OP_PUSHDATA1/2`)."""
+    out = bytearray()
+    out.append(OP_0)
+    for sig in sigs:
+        out += push_data(data=sig)
+    out += push_data(data=redeem)
+    return bytes(out)
+
+
+@require_kwargs_only
+def redeem2p2sh_addr(redeem: bytes = NotNone) -> str:
+    """Redeem script -> mainnet P2SH address (`3...`, base58check with
+    version `0x05`).
+
+    The hash is `hash160(redeem)` -- the same commitment
+    `make_p2sh_lock_script` embeds in the lock script, so an output
+    paid to the returned address is spendable exactly by revealing
+    and satisfying `redeem` (Phase 15: the multisig quorum address,
+    ОВ-13 -- fixed by the `(N, M, keys)` tuple, no scan/gap walk)."""
+    from yubtc.base58check import base58CheckEncode
+    from yubtc.crypto import PREFIX_P2SH
+    from yubtc.hash import hash160
+    return base58CheckEncode(
+        bytes([PREFIX_P2SH]) + hash160(bytes(redeem))).decode('ascii')

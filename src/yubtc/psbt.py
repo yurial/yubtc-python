@@ -40,12 +40,15 @@ Contract highlights (all tested, spec.md «Сериализация»):
 - **Map counts** -- the number of input/output maps must equal the
   unsigned tx's input/output counts (`MapCountMismatch`).
 
-Signing is restricted to P2PKH / P2WPKH / P2TR key-path and reuses the
-Phase 13 primitives (`bip143_sighash`, `taproot_keypath_sighash`,
+Signing is restricted to P2PKH / P2WPKH / P2TR key-path /
+P2SH-multisig (Phase 15 -- via a canonical `REDEEM_SCRIPT`:
+membership signing with `scriptCode = redeem`, the
+`OP_0 ‖ sigs ‖ redeem` finalize layout) and reuses the Phase 13
+primitives (`bip143_sighash`, `taproot_keypath_sighash`,
 `taproot_sign_sighash`, RFC6979 ECDSA, Schnorr with
 ``aux_rand = 0x00 * 32``); signatures match the direct `sign_segwit`
-path byte-for-byte. Inputs whose scripts require a redeem or witness
-script answer `UnsupportedInputScript`.
+path byte-for-byte. P2WSH and redeem-less P2SH inputs answer
+`UnsupportedInputScript`.
 """
 from struct import pack, unpack
 from typing import NamedTuple, Optional
@@ -55,7 +58,7 @@ from yubtc.fwd import (PSBT_MAX_SIZE, PSBT_SIGN_MAX_NONCE,
 from yubtc.util import NotNone, require_kwargs_only
 from yubtc.transaction import (compact_size, dsha256, p2wpkh_script_code,
                                bip143_sighash, taproot_keypath_sighash,
-                               taproot_sign_sighash, toVarInt)
+                               taproot_sign_sighash)
 
 # --- Errors (mirrors the 18 PsbtError variants of psbt.rs) ------------
 
@@ -163,10 +166,12 @@ class InvalidFieldValue(PsbtError):
 
 
 class UnsupportedInputScript(PsbtError):
-    """The input's UTXO `scriptPubKey` requires redeem/witness script
-    support (P2SH, including P2SH-wrapped SegWit, or P2WSH) which
-    yubtc deliberately does not implement (fields are preserved;
-    multi-sig is Phase 15)."""
+    """The input's UTXO `scriptPubKey` needs redeem/witness script
+    support yubtc refuses: a P2WSH shape, or a P2SH input whose
+    `REDEEM_SCRIPT` is absent or not a canonical bare CHECKMULTISIG
+    script (Phase 15: with a canonical redeem script a P2SH-multisig
+    input is signed, finalized and extracted; P2WSH and redeem-less
+    P2SH stay preserve-only)."""
 
     default_message = ('input script requires redeem/witness script '
                        'support (P2SH/P2WSH)')
@@ -418,7 +423,7 @@ class PsbtTxIn(NamedTuple):
     def serialize(self) -> bytes:
         result = self.txhash
         result += pack('<L', self.n)
-        result += toVarInt(len(self.script))
+        result += compact_size(len(self.script))
         result += self.script
         result += pack('<L', self.sequence)
         return result
@@ -431,7 +436,7 @@ class PsbtTxOut(NamedTuple):
 
     def serialize(self) -> bytes:
         result = pack('<Q', self.amount)
-        result += toVarInt(len(self.script))
+        result += compact_size(len(self.script))
         result += self.script
         return result
 
@@ -449,10 +454,10 @@ class PsbtTransaction(NamedTuple):
     def serialize_stripped(self) -> bytes:
         """The pre-SegWit layout; `id()` hashes exactly these bytes."""
         result = pack('<l', self.version)
-        result += toVarInt(len(self.vin))
+        result += compact_size(len(self.vin))
         for i in self.vin:
             result += i.serialize()
-        result += toVarInt(len(self.vout))
+        result += compact_size(len(self.vout))
         for o in self.vout:
             result += o.serialize()
         result += pack('<L', self.locktime)
@@ -470,10 +475,10 @@ class PsbtTransaction(NamedTuple):
             return self.serialize_stripped()
         result = pack('<l', self.version)
         result += b'\x00\x01'  # marker || flag
-        result += toVarInt(len(self.vin))
+        result += compact_size(len(self.vin))
         for i in self.vin:
             result += i.serialize()
-        result += toVarInt(len(self.vout))
+        result += compact_size(len(self.vout))
         for o in self.vout:
             result += o.serialize()
         for i in self.vin:
@@ -675,12 +680,20 @@ class CreateInput(NamedTuple):
     (mirrors the Rust `CreateInput`).
 
     `prev_tx` is the full previous transaction -- **required** for
-    legacy (P2PKH) inputs: it becomes the `NON_WITNESS_UTXO` field.
-    Ignored for witness-form inputs (the Creator writes exactly one
-    UTXO field per form, per spec)."""
+    legacy (P2PKH) inputs and for P2SH-multisig inputs (Phase 15:
+    both are legacy spends, it becomes the `NON_WITNESS_UTXO`
+    field). Ignored for witness-form inputs (the Creator writes
+    exactly one UTXO field per form, per spec).
+
+    `redeem_script` (Phase 15) is the canonical bare CHECKMULTISIG
+    redeem script of a P2SH-multisig input: it is validated against
+    the `scriptPubKey` commitment and written as `REDEEM_SCRIPT
+    (0x04)` -- the field becomes W/R on that path (preserve-only for
+    every other form)."""
     amount: int
     script_pubkey: bytes
     prev_tx: Optional[PsbtTransaction]
+    redeem_script: Optional[bytes] = None
 
 
 class Psbt(NamedTuple):
@@ -1100,10 +1113,12 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
     `unsigned_tx` must be truly unsigned -- empty `scriptSig` and
     empty witness stacks (the official BIP-174 vector with a filled
     scriptSig is exactly this refusal) -- with at least one output,
-    and `inputs` must parallel `vin`. For every legacy (P2PKH) input a
-    `prev_tx` whose txid matches the outpoint is required; witness-form
-    inputs get a `WITNESS_UTXO` from ``(amount, script_pubkey)``. Known
-    derivation data the wallet does not have (xpubs, BIP-32 paths) is
+    and `inputs` must parallel `vin`. For every legacy (P2PKH) input
+    and every P2SH-multisig input (Phase 15: `redeem_script` present,
+    canonical, committed to by the `scriptPubKey`) a `prev_tx` whose
+    txid matches the outpoint is required; witness-form inputs get a
+    `WITNESS_UTXO` from ``(amount, script_pubkey)``. Known derivation
+    data the wallet does not have (xpubs, BIP-32 paths) is
     deliberately not written (ОВ-9)."""
     if not unsigned_tx.vout:
         raise InvalidUnsignedTx()
@@ -1113,6 +1128,8 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
         raise InvalidUnsignedTx()
     psbt_inputs = []
     for i, (vin, create) in enumerate(zip(unsigned_tx.vin, inputs)):
+        from yubtc.hash import hash160
+        from yubtc.script import extract_multisig_quorum
         form = _form_of_script(create.script_pubkey)
         if form is not None and form[0] == 'legacy':
             prev = create.prev_tx
@@ -1123,6 +1140,33 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
             psbt_inputs.append(PsbtIn(
                 non_witness_utxo=prev, witness_utxo=None, partial_sigs=[],
                 sighash_type=None, redeem_script=None, witness_script=None,
+                final_scriptsig=None, final_scriptwitness=None, unknown=[]))
+        elif (_is_p2sh_script(create.script_pubkey)
+                and create.redeem_script is not None):
+            # Phase 15 Creator branch (spec «PSBT: Creator, Signer и
+            # Finalizer»): the input spends the P2SH of a known redeem
+            # script -- an explicit-address multisig UTXO. The redeem
+            # script must be canonical (R-MS-3) and hash to the
+            # `scriptPubKey` commitment; the full prev tx is mandatory
+            # (a P2SH input is legacy -- no witness discount, no
+            # BIP-143 amount commitment).
+            redeem = create.redeem_script
+            try:
+                extract_multisig_quorum(script=redeem)
+            except ValueError:
+                raise UnsupportedInputScript()
+            committed = create.script_pubkey[2:22]
+            if hash160(redeem) != committed:
+                raise UtxoMismatch()
+            prev = create.prev_tx
+            if prev is None:
+                raise IncompleteInput(index=i)
+            if prev.id() != vin.txhash:
+                raise UtxoMismatch()
+            psbt_inputs.append(PsbtIn(
+                non_witness_utxo=prev, witness_utxo=None,
+                partial_sigs=[], sighash_type=None,
+                redeem_script=redeem, witness_script=None,
                 final_scriptsig=None, final_scriptwitness=None, unknown=[]))
         else:
             psbt_inputs.append(PsbtIn(
@@ -1147,26 +1191,38 @@ def sign_psbt_input(psbt: Psbt = NotNone, index: int = NotNone,
     present -- the operation is idempotent), ``False`` when the input
     cannot be signed with this key (no UTXO data, foreign script, or
     an incomplete BIP-341 digest context). Errors:
-    `UnsupportedInputScript` for P2SH/P2WSH-shaped UTXOs (signing them
-    needs redeem/witness script support yubtc does not have),
-    `UnsupportedSighashType` when the input pins a sighash other than
-    the form's (ОВ-8 -- the wallet walk turns this into a silent
-    skip), `UtxoMismatch` when a present `NON_WITNESS_UTXO` fails the
-    txid check (BIP-174 "Data Signers Check For").
+    `UnsupportedInputScript` for P2WSH-shaped UTXOs and for P2SH
+    inputs whose `REDEEM_SCRIPT` is absent or not a canonical bare
+    CHECKMULTISIG script (R-MS-3 -- yubtc does not sign or finalize
+    such scripts; Phase 15), `UnsupportedSighashType` when the input
+    pins a sighash other than the form's (ОВ-8 -- the wallet walk
+    turns this into a silent skip), `UtxoMismatch` when a present
+    `NON_WITNESS_UTXO` fails the txid check or a P2SH redeem script
+    fails its `hash160` commitment (BIP-174 "Data Signers Check For").
 
     Digests reuse the Phase 13 machinery: legacy SIGHASH_ALL over the
-    blanked serialization with the UTXO `scriptPubKey` restored for
-    the signed input (byte-identical to the `build_vin`-based
-    signing), BIP-143 for P2WPKH and BIP-341 key-path for P2TR
+    blanked serialization with the signed input's scriptCode -- the
+    UTXO `scriptPubKey` for P2PKH (byte-identical to the
+    `build_vin`-based signing) and the redeem script for
+    P2SH-multisig (Phase 15; the same algorithm, parameterized
+    scriptCode), BIP-143 for P2WPKH and BIP-341 key-path for P2TR
     (``aux_rand = 0x00 * 32``), so signatures match the direct path
-    byte-for-byte (RFC6979 / BIP-340 determinism)."""
+    byte-for-byte (RFC6979 / BIP-340 determinism).
+
+    P2SH-multisig identification is **membership, not script
+    ownership** (R-MS-4): the P2SH `scriptPubKey` is never "ours" by
+    shape, so the input is signed iff the key's compressed pubkey is
+    one of the redeem script's N keys."""
     from yubtc.crypto import privkey2pubkey, sign_data
     data = input_utxo_data(psbt=psbt, index=index)
     if data is None:
         return False
     script_pubkey, amount = data
-    if _is_p2sh_script(script_pubkey) or _is_p2wsh_script(script_pubkey):
+    if _is_p2wsh_script(script_pubkey):
         raise UnsupportedInputScript()
+    if _is_p2sh_script(script_pubkey):
+        return _sign_psbt_input_p2sh_multisig(psbt=psbt, index=index,
+                                              privkey=privkey)
     pubkey = privkey2pubkey(privkey=privkey)
     form = _own_form(script_pubkey, pubkey)
     if form is None:
@@ -1205,6 +1261,59 @@ def sign_psbt_input(psbt: Psbt = NotNone, index: int = NotNone,
         sighash = taproot_keypath_sighash(tx=psbt.unsigned_tx,
                                           input_index=index, spend=spend)
         sig = taproot_sign_sighash(privkey=privkey, sighash=sighash)
+    _insert_partial_sig(input_, pubkey, sig)
+    return True
+
+
+def _sign_psbt_input_p2sh_multisig(psbt: Psbt, index: int, privkey) -> bool:
+    """Signer, P2SH-multisig branch (Phase 15, spec «PSBT: Creator,
+    Signer и Finalizer»): sign the legacy SIGHASH_ALL digest with
+    `scriptCode = redeem` when the key's compressed pubkey is a member
+    of the redeem script's quorum. See `sign_psbt_input` for the full
+    contract; `index` must reference a canonical-P2SH input."""
+    from yubtc.crypto import privkey2pubkey, sign_data
+    from yubtc.hash import hash160
+    from yubtc.script import InvalidMultisigRedeem, extract_multisig_quorum
+    pubkey = privkey2pubkey(privkey=privkey)
+    redeem = psbt.inputs[index].redeem_script
+    if redeem is None:
+        # P2SH without a redeem script: pre-Phase-15 refusal (yubtc
+        # cannot know what the hash commits to).
+        raise UnsupportedInputScript()
+    # R-MS-3: only canonical bare CHECKMULTISIG redeem scripts are
+    # signed; anything else (including duplicate keys) is refused.
+    try:
+        _, keys = extract_multisig_quorum(script=redeem)
+    except InvalidMultisigRedeem:
+        raise UnsupportedInputScript()
+    # BIP-174 "Data Signers Check For": the redeem script must hash
+    # to the commitment in the UTXO's P2SH scriptPubKey.
+    script_pubkey = input_utxo_data(psbt=psbt, index=index)[0]
+    if hash160(redeem) != script_pubkey[2:22]:
+        raise UtxoMismatch()
+    # Membership, not scriptPubKey shape (R-MS-4).
+    if not any(k == pubkey for k in keys):
+        return False
+    input_ = psbt.inputs[index]
+    # ОВ-8: the pinned sighash for the legacy ECDSA forms.
+    if input_.sighash_type is not None \
+            and input_.sighash_type != PSBT_SIGHASH_ALL:
+        raise UnsupportedSighashType(sighash_type=input_.sighash_type)
+    # BIP-174 "Data Signers Check For": the prev tx must hash to the
+    # outpoint being spent.
+    prev = input_.non_witness_utxo
+    if prev is not None and prev.id() != psbt.unsigned_tx.vin[index].txhash:
+        raise UtxoMismatch()
+    # Idempotent: our signature is already in place.
+    if any(k == pubkey for k, _ in input_.partial_sigs):
+        return True
+    # Legacy digest with scriptCode = redeem: the blanked
+    # serialization restores the redeem script into the signed input's
+    # `scriptSig` slot, then the SIGHASH_ALL suffix.
+    preimage = (_blanked_serialization(psbt.unsigned_tx, index, redeem)
+                + pack('<L', PSBT_SIGHASH_ALL))
+    sig = sign_data(privkey=privkey, data=preimage) \
+        + bytes([PSBT_SIGHASH_ALL])
     _insert_partial_sig(input_, pubkey, sig)
     return True
 
@@ -1253,7 +1362,17 @@ def finalize_psbt_input(psbt: Psbt = NotNone, index: int = NotNone) -> None:
     intermediate fields (`PARTIAL_SIG`, `SIGHASH_TYPE`,
     `REDEEM/WITNESS_SCRIPT`) are removed; UTXO and unknown fields are
     preserved (BIP-174 mandate: the Extractor checks the final tx
-    against the UTXOs)."""
+    against the UTXOs).
+
+    Phase 15 adds the P2SH-multisig path: a canonical-P2SH input with
+    a `REDEEM_SCRIPT` is finalized when `hash160(redeem)` matches the
+    `scriptPubKey` commitment and `PARTIAL_SIG` holds at least one
+    valid-sighash signature for M of the script's N keys. The final
+    `scriptSig` is assembled in *script* key order (R-MS-4), never in
+    `PARTIAL_SIG` arrival order: `OP_0 ‖ push(sig ‖ 0x01)×M ‖
+    push(redeem)` (R-MS-5). A non-canonical redeem script is
+    `UnsupportedInputScript` (yubtc does not finalize foreign
+    multisig forms)."""
     input_ = psbt.inputs[index] if index < len(psbt.inputs) else None
     if input_ is None:
         raise IncompleteInput(index=index)
@@ -1264,6 +1383,10 @@ def finalize_psbt_input(psbt: Psbt = NotNone, index: int = NotNone) -> None:
     if data is None:
         raise IncompleteInput(index=index)
     script_pubkey = data[0]
+    if _is_p2sh_script(script_pubkey):
+        _finalize_psbt_input_p2sh_multisig(psbt=psbt, index=index,
+                                           script_pubkey=script_pubkey)
+        return
     form = _form_of_script(script_pubkey)
     if form is None:
         raise IncompleteInput(index=index)
@@ -1305,15 +1428,71 @@ def finalize_psbt_input(psbt: Psbt = NotNone, index: int = NotNone) -> None:
 
 
 @require_kwargs_only
+def _finalize_psbt_input_p2sh_multisig(psbt: Psbt, index: int,
+                                       script_pubkey: bytes) -> None:
+    """Finalizer, P2SH-multisig branch (Phase 15). See
+    `finalize_psbt_input` for the full contract; `index` must
+    reference a canonical-P2SH input."""
+    from yubtc.hash import hash160
+    from yubtc.script import (InvalidMultisigRedeem,
+                              extract_multisig_quorum,
+                              make_multisig_script_sig)
+    input_ = psbt.inputs[index]
+    # A P2SH input is finalizable only with a known redeem script.
+    redeem = input_.redeem_script
+    if redeem is None:
+        raise IncompleteInput(index=index)
+    # R-MS-3: foreign (non-canonical) redeem scripts are refused, not
+    # merely left incomplete.
+    try:
+        m, keys = extract_multisig_quorum(script=redeem)
+    except InvalidMultisigRedeem:
+        raise UnsupportedInputScript()
+    # The redeem script must hash to the scriptPubKey commitment.
+    if hash160(redeem) != script_pubkey[2:22]:
+        raise UtxoMismatch()
+    # ОВ-8: SIGHASH_ALL is pinned; anything else blocks the input.
+    if input_.sighash_type is not None \
+            and input_.sighash_type != PSBT_SIGHASH_ALL:
+        raise IncompleteInput(index=index)
+    # One valid-sighash signature per participating script key.
+    # CHECKMULTISIG matching is greedy, so *any* M distinct member
+    # keys can carry the spend: collect the signatures that are
+    # present, in script-key order, and require at least M of them
+    # (R-MS-4 -- the layout below follows script order; extra members
+    # beyond the threshold are deterministically dropped from the
+    # tail).
+    member_sigs = []
+    for key in keys:
+        sig = next((s for pk, s in input_.partial_sigs if pk == key),
+                   None)
+        if sig is not None:
+            if not sig or sig[-1] != PSBT_SIGHASH_ALL:
+                raise IncompleteInput(index=index)
+            member_sigs.append(sig)
+    if len(member_sigs) < m:
+        raise IncompleteInput(index=index)
+    input_.final_scriptsig = make_multisig_script_sig(
+        redeem=redeem, sigs=member_sigs[:m])
+    # Intermediates out, UTXOs and unknowns stay.
+    input_.partial_sigs = []
+    input_.sighash_type = None
+    input_.redeem_script = None
+    input_.witness_script = None
+
+
 def finalize_psbt(psbt: Psbt = NotNone) -> None:
     """Finalizer: finalize every input that is complete, leave the
     rest untouched (per-input operation; completeness of the whole
     transaction is the Extractor's rule). Already-finalized inputs are
-    left as they are, so `finalize` is idempotent."""
+    left as they are, so `finalize` is idempotent. Per-input errors
+    (incomplete, unsupported/foreign multisig forms) are ignored --
+    the Rust oracle's `let _ = self.finalize_input(i)`; the library
+    primitive `finalize_psbt_input` reports them."""
     for i in range(len(psbt.inputs)):
         try:
             finalize_psbt_input(psbt=psbt, index=i)
-        except IncompleteInput:
+        except PsbtError:
             pass
 
 
@@ -1322,12 +1501,34 @@ def extract_transaction(psbt: Psbt = NotNone) -> PsbtTransaction:
     """Extractor: require every input to be finalized, then build the
     wire-format transaction (`serialize_wire`; the marker/flag section
     appears exactly when some input carries a witness stack). The PSBT
-    itself is not modified."""
+    itself is not modified.
+
+    Phase 15: a canonical-P2SH input (with a `REDEEM_SCRIPT`) is
+    extracted via its `FINAL_SCRIPTSIG` -- like legacy -- and must not
+    carry a witness stack (`IncompleteInput`). A P2SH input without a
+    redeem script stays a foreign form yubtc cannot validate
+    (`NotFinalized`)."""
     vin = []
     for i, input_ in enumerate(psbt.inputs):
         data = input_utxo_data(psbt=psbt, index=i)
-        form = None if data is None else _form_of_script(data[0])
+        script_pubkey = None if data is None else data[0]
+        form = None if data is None else _form_of_script(script_pubkey)
         if form is None:
+            if data is not None and _is_p2sh_script(script_pubkey):
+                # P2SH-multisig: legacy spend, no witness stack
+                # (BIP-141 -- a witness would make it a nested SegWit
+                # spend, explicitly rejected in Phase 13). Requires
+                # FINAL_SCRIPTSIG, like legacy. (The Finalizer strips
+                # the intermediate REDEEM_SCRIPT field, so
+                # presence-based completeness is the check that
+                # survives finalization.)
+                if input_.final_scriptwitness is not None:
+                    raise IncompleteInput(index=i)
+                if input_.final_scriptsig is None:
+                    raise NotFinalized()
+                vin.append(psbt.unsigned_tx.vin[i]._replace(
+                    script=input_.final_scriptsig))
+                continue
             # Without a recognizable UTXO form the Extractor cannot
             # validate completeness -- refuse (BIP-174 Extractor MUST
             # check).

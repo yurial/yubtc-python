@@ -678,3 +678,51 @@ def test_get_backend_unknown_name_raises_value_error():
     assert 'blockchain.info' in msg
     assert 'blockstream' in msg
     assert 'mempool.space' in msg
+
+
+# --- raw_transaction (Phase 14 Creator plumbing / Phase 15 multisig) ---
+
+
+def test_network_backend_raw_transaction_is_abstract():
+    """The base class refuses raw fetches: concrete backends implement
+    the endpoint (mirrors the Rust trait's required method)."""
+    from yubtc.net import NetworkBackend
+    with pytest.raises(NotImplementedError):
+        NetworkBackend().raw_transaction('ab' * 32)
+
+
+def test_blockchain_info_raw_transaction_fetches_hex(monkeypatch):
+    """blockchain.info serves the wire hex at
+    `/rawtx/<txid>?format=hex`; whitespace is stripped."""
+    import requests
+    from yubtc.net import BlockchainInfoBackend
+    captured = []
+
+    def fake_get(url, **kwargs):
+        captured.append((url, kwargs))
+        return type('R', (), {'text': '  deadbeef\n'})()
+
+    monkeypatch.setattr(requests, 'get', fake_get)
+    txid = 'ab' * 32
+    raw = BlockchainInfoBackend().raw_transaction(txid)
+    assert raw == 'deadbeef'
+    url, kwargs = captured[0]
+    assert url == 'https://blockchain.info/rawtx/{}?format=hex'.format(txid)
+    assert 'timeout' in kwargs
+
+
+def test_esplora_raw_transaction_fetches_hex(monkeypatch):
+    """Esplora serves raw transactions at `/tx/<txid>/hex`."""
+    import requests
+    from yubtc.net import BlockstreamBackend
+    captured = []
+
+    def fake_get(url, **kwargs):
+        captured.append(url)
+        return type('R', (), {'text': '00ffaabb'})()
+
+    monkeypatch.setattr(requests, 'get', fake_get)
+    txid = 'cd' * 32
+    raw = BlockstreamBackend().raw_transaction(txid)
+    assert raw == '00ffaabb'
+    assert captured[0] == 'https://blockstream.info/api/tx/{}/hex'.format(txid)

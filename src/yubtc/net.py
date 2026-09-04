@@ -65,6 +65,16 @@ class NetworkBackend:
         """Broadcast a signed raw transaction. Raise on failure."""
         raise NotImplementedError
 
+    def raw_transaction(self, txid: str, **kwargs) -> str:
+        """Fetch one raw transaction's wire-format hex by txid.
+
+        Phase 15 (multisig Creator) and the Phase 14 PSBT Creator need
+        the full previous transaction of a legacy input for the
+        `NON_WITNESS_UTXO` field. The body IS the hex string (the
+        Rust oracle's `decode_body_text` trims whitespace the same
+        way the callers do)."""
+        raise NotImplementedError
+
 
 class BlockchainInfoBackend(NetworkBackend):
     """Default backend: blockchain.info's public API.
@@ -119,6 +129,15 @@ class BlockchainInfoBackend(NetworkBackend):
             raise RuntimeError(
                 'broadcast failed: status={status} body={body}'.format(
                     status=response.status_code, body=response.text))
+
+    def raw_transaction(self, txid: str, **kwargs) -> str:
+        # blockchain.info serves the wire-format hex behind
+        # `/rawtx/<txid>?format=hex`; the body IS the hex string.
+        import requests
+        url = '{base}/rawtx/{txid}?format=hex'.format(
+            base=self._base_url, txid=txid)
+        return requests.get(url,
+                            timeout=DEFAULT_TIMEOUT_HTTP).text.strip()
 
 
 class EsploraBackend(NetworkBackend):
@@ -207,6 +226,14 @@ class EsploraBackend(NetworkBackend):
             raise RuntimeError(
                 'broadcast failed: status={status} body={body}'.format(
                     status=response.status_code, body=response.text))
+
+    def raw_transaction(self, txid: str, **kwargs) -> str:
+        # Esplora serves raw transactions as plain hex at
+        # `/tx/<txid>/hex`.
+        import requests
+        url = '{base}/tx/{txid}/hex'.format(base=self._base_url, txid=txid)
+        return requests.get(url,
+                            timeout=DEFAULT_TIMEOUT_HTTP).text.strip()
 
     def _tip_height(self) -> int:
         """Return the current chain tip height.
