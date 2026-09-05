@@ -71,6 +71,28 @@ DEFAULT_CONFIRMATIONS: int = 6
 # error to the user.
 DEFAULT_TIMEOUT_HTTP: int = 5
 
+# --- Network resilience (v0.3 failover) ---------------------------------
+# Mirrors the Rust `fwd.rs` constants (spec.md «Failover (v0.3)»). These
+# shape latency, not data, so they are NOT part of the bit-for-bit v0.1
+# contract.
+
+# Retries per HTTP request before the provider is given up on (the CLI
+# `--retries` default; 0 reproduces the v0.1 behaviour: exactly one
+# attempt, no backoff, no failover).
+DEFAULT_HTTP_RETRIES: int = 3
+# Base delay of the exponential backoff between retry attempts (in
+# seconds): 0.5 s before retry 1, doubled per subsequent retry.
+HTTP_RETRY_BASE_DELAY: float = 0.5
+# Cap of the exponential backoff: a retry never waits longer than this
+# regardless of the attempt number (0.5 s -> 1 s -> 2 s -> 2 s ...).
+HTTP_RETRY_MAX_DELAY: float = 2.0
+# A `Retry-After` header on a 429 response is honoured only when it is
+# an integer number of seconds within this sane window; anything else
+# (missing, non-numeric, negative, larger) falls back to the exponential
+# backoff so a hostile/misbehaving server cannot stall the wallet for
+# minutes.
+HTTP_RETRY_AFTER_MAX: int = 30
+
 
 class AddrType(object):
     """Address type selector (mirrors `yubtc core` Phase 13

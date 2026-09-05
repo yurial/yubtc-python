@@ -40,6 +40,30 @@ provider can't break the gap scan.
 An unknown `--provider` name is rejected by click before any network
 work runs -- no silent fallback to the default.
 
+Retries and automatic failover (v0.3)
+-------------------------------------
+
+Every HTTP request is retried up to `--retries N` times (default 3;
+`0` = a single attempt) with a short capped exponential backoff
+(0.5 s -> 1 s -> 2 s). Retried: connection errors, timeouts, server
+faults (5xx), request timeouts (408) and rate limiting (429 -- a sane
+`Retry-After` of up to 30 s is honoured). Not retried: every other 4xx
+(bad address, rejected transaction, ...) and broken response bodies --
+resending those would only duplicate the failure. After the retries
+run out you see the same error a single attempt would have produced.
+
+On top of that, `--provider auto` opts into failover across the three
+registered providers -- they are tried in registry order
+(blockchain.info -> blockstream -> mempool.space) per request, the
+first one to answer wins and is remembered for the rest of the
+command run (the wallet is stateless: nothing is stored between
+runs). If every provider fails, the error lists what was tried:
+
+    yubtc: all backends failed: blockchain.info: ...; blockstream: ...; mempool.space: ...
+
+The default provider stays `blockchain.info` -- `auto` and the retry
+loop are opt-in resilience, not a change of data source.
+
 Key derivation
 ==============
 

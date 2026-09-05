@@ -7,6 +7,7 @@ from yubtc.fwd import (
     DEFAULT_ADDR_TYPE,
     DEFAULT_CONFIRMATIONS,
     DEFAULT_FEE,
+    DEFAULT_HTTP_RETRIES,
     DEFAULT_NEW_ADDRESSES,
     DEFAULT_NONCE,
     DEFAULT_SEED_WORDS,
@@ -24,8 +25,10 @@ from yubtc.util import NotNone, require_kwargs_only
 
 
 def _provider_names() -> str:
-    """Return the comma-separated list of registered provider names."""
-    return ', '.join(sorted(BACKENDS))
+    """Return the comma-separated list of acceptable `--provider`
+    values: the registered providers plus the v0.3 `auto`
+    pseudo-provider."""
+    return ', '.join(sorted(BACKENDS) + ['auto'])
 
 
 _STRICT_BIP39_OPTION = click.option(
@@ -78,10 +81,14 @@ def _validate_entered_seed(seed: str = NotNone, strict: bool = NotNone) -> None:
         click.echo('warning: ' + warning, err=True)
 
 
-def _resolve_provider(name: str):
+def _resolve_provider(name: str, retries: int):
     """Resolve `name` to a backend instance (backend injection: the
     result is passed explicitly into Wallet/broadcastTx; there is no
     module-global current backend).
+
+    `retries` is the v0.3 per-request retry count threaded into the
+    returned backend (and into every member of the `auto` failover
+    order).
 
     Catches `ValueError` from `get_backend` (unknown name) and
     re-raises with the click-friendly message pre-formatted. The CLI
@@ -89,14 +96,28 @@ def _resolve_provider(name: str):
     sorted list, so in practice this only fires when the wallet is
     driven programmatically.
     """
-    return get_backend(name=name)
+    return get_backend(name=name, retries=retries)
 
+
+_PROVIDER_NAMES = sorted(BACKENDS) + ['auto']
 
 _PROVIDER_OPTION = click.option(
     '--provider',
-    help='Network provider (default: blockchain.info). Known: ' + _provider_names() + '.',
+    help='Network provider (default: blockchain.info). Known: ' + _provider_names() + '. '
+         'auto (v0.3) fails over across the three providers in registry order -- first '
+         'success wins, remembered for the rest of the run.',
     default='blockchain.info', required=False, nargs=1,
-    type=click.Choice(sorted(BACKENDS), case_sensitive=False),
+    type=click.Choice(_PROVIDER_NAMES, case_sensitive=False),
+)
+
+_RETRIES_OPTION = click.option(
+    '--retries',
+    help='Retries per HTTP request before the provider is given up on '
+         '(default {default}; 0 = a single attempt, the v0.1 behaviour). '
+         'Applies to every provider in the auto failover order too.'.format(
+             default=DEFAULT_HTTP_RETRIES),
+    default=DEFAULT_HTTP_RETRIES, required=False, nargs=1,
+    type=click.IntRange(min=0),
 )
 
 
@@ -135,8 +156,10 @@ def newseed(n: int, unique: bool) -> None:
 @_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
-def address(nonce: TNonce, new: int, addr_type: str, strict_bip39: bool, provider: str) -> None:
-    backend = _resolve_provider(name=provider)
+@_RETRIES_OPTION
+def address(nonce: TNonce, new: int, addr_type: str, strict_bip39: bool, provider: str,
+            retries: int) -> None:
+    backend = _resolve_provider(name=provider, retries=retries)
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=new,
@@ -151,8 +174,10 @@ def address(nonce: TNonce, new: int, addr_type: str, strict_bip39: bool, provide
 @_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
-def dumpprivkey(nonce: TNonce, addr_type: str, strict_bip39: bool, provider: str) -> None:
-    backend = _resolve_provider(name=provider)
+@_RETRIES_OPTION
+def dumpprivkey(nonce: TNonce, addr_type: str, strict_bip39: bool, provider: str,
+                retries: int) -> None:
+    backend = _resolve_provider(name=provider, retries=retries)
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
     wallet = Wallet(seed=seed, nonce=nonce, new_addresses=DEFAULT_NEW_ADDRESSES,
@@ -178,10 +203,12 @@ def dumpprivkey(nonce: TNonce, addr_type: str, strict_bip39: bool, provider: str
 @_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
+@_RETRIES_OPTION
 def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
-            verbose: bool, addr_type: str, strict_bip39: bool, provider: str) -> None:
+            verbose: bool, addr_type: str, strict_bip39: bool, provider: str,
+            retries: int) -> None:
     from yubtc.misc import satoshi2btc
-    backend = _resolve_provider(name=provider)
+    backend = _resolve_provider(name=provider, retries=retries)
     total = TBTC(0)
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
@@ -243,6 +270,7 @@ def balance(nonce: TNonce, confirmations: int, new: int, empty: bool,
 @_ADDR_TYPE_OPTION
 @_STRICT_BIP39_OPTION
 @_PROVIDER_OPTION
+@_RETRIES_OPTION
 @click.argument('address', type=str)
 @click.argument('amount', type=str)
 def send(
@@ -258,8 +286,9 @@ def send(
         yes: bool,
         addr_type: str,
         strict_bip39: bool,
-        provider: str) -> None:
-    backend = _resolve_provider(name=provider)
+        provider: str,
+        retries: int) -> None:
+    backend = _resolve_provider(name=provider, retries=retries)
     amount = None if amount == 'ALL' else TBTC(amount)
     seed, passphrase = get_seed_and_passphrase()
     _validate_entered_seed(seed=seed, strict=strict_bip39)
@@ -358,8 +387,9 @@ def _send_interactive(
 @click.option('-y', '--yes', help='Skip the broadcast confirmation prompt.',
               default=False, is_flag=True)
 @_PROVIDER_OPTION
-def pushtx(yes: bool, provider: str) -> None:
-    backend = _resolve_provider(name=provider)
+@_RETRIES_OPTION
+def pushtx(yes: bool, provider: str, retries: int) -> None:
+    backend = _resolve_provider(name=provider, retries=retries)
     import sys
     from yubtc.hash import sha256
     from yubtc.misc import yesno

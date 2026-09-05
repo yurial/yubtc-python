@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from yubtc.fwd import DEFAULT_HTTP_RETRIES
 from yubtc.net import NetworkBackend
 
 
@@ -91,6 +92,7 @@ def test_broadcastTx_raises_on_non_2xx(monkeypatch):
 def test_get_address_unspent_returns_unspent_outputs(monkeypatch):
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.return_value = {
         'unspent_outputs': [
             {'tx': 'aaa', 'out_n': 0, 'amount': 1000},
@@ -110,6 +112,7 @@ def test_get_address_unspent_uses_unspent_endpoint(monkeypatch):
     """The query string encodes the address; assert the URL is well-formed."""
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.return_value = {'unspent_outputs': []}
     captured = []
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: (captured.append(url), fake)[1])
@@ -121,6 +124,7 @@ def test_get_address_unspent_uses_unspent_endpoint(monkeypatch):
 def test_get_address_unspent_returns_empty_on_json_decode_error(monkeypatch):
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.side_effect = JSONDecodeError('msg', 'doc', 0)
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_unspent, get_backend
@@ -131,6 +135,7 @@ def test_get_address_unspent_propagates_non_json_errors(monkeypatch):
     """A KeyError is not JSONDecodeError, so it propagates out unchanged."""
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.return_value = {'wrong_key': []}  # KeyError when we look up 'unspent_outputs'
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_unspent, get_backend
@@ -143,6 +148,7 @@ def test_get_address_unspent_passes_timeout(monkeypatch):
     can't freeze the CLI indefinitely."""
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.return_value = {'unspent_outputs': []}
     captured = []
     monkeypatch.setattr(requests, 'get',
@@ -156,6 +162,7 @@ def test_get_address_unspent_passes_timeout(monkeypatch):
 def test_get_address_info_returns_address_subdict(monkeypatch):
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     info = {'total_received': 5000, 'final_balance': 3000, 'n_tx': 7}
     fake.json.return_value = {'1NHD3xcMHK7QW1bPQq1J5SCb6cpbMsCX7k': info}
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
@@ -166,6 +173,7 @@ def test_get_address_info_returns_address_subdict(monkeypatch):
 def test_get_address_info_uses_balance_endpoint(monkeypatch):
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.return_value = {'1addr': {'total_received': 0}}
     captured = []
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: (captured.append(url), fake)[1])
@@ -177,6 +185,7 @@ def test_get_address_info_uses_balance_endpoint(monkeypatch):
 def test_get_address_info_returns_zero_received_on_json_decode_error(monkeypatch):
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.side_effect = JSONDecodeError('msg', 'doc', 0)
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_info, get_backend
@@ -187,6 +196,7 @@ def test_get_address_info_propagates_non_json_errors(monkeypatch):
     """A KeyError is not JSONDecodeError, so it propagates out unchanged."""
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.return_value = {'some_other_address': {'total_received': 0}}  # KeyError
     monkeypatch.setattr(requests, 'get', lambda url, **kwargs: fake)
     from yubtc.net import get_address_info, get_backend
@@ -198,6 +208,7 @@ def test_get_address_info_passes_timeout(monkeypatch):
     """Same as the unspent counterpart -- timeout is pinned on every call."""
     import requests
     fake = MagicMock()
+    fake.status_code = 200
     fake.json.return_value = {'1addr': {'total_received': 0}}
     captured = []
     monkeypatch.setattr(requests, 'get',
@@ -300,6 +311,7 @@ def test_blockchain_info_backend_with_custom_base_url(monkeypatch):
     def fake_get(url, **kwargs):
         get_captured.append(url)
         fake = MagicMock()
+        fake.status_code = 200
         if 'unspent' in url:
             fake.json.return_value = {'unspent_outputs': []}
         else:
@@ -357,6 +369,7 @@ def _stub_esplora(monkeypatch, *, utxos, tip_height, address_stats):
     def fake_get(url, **kwargs):
         captured.append((url, kwargs))
         fake = MagicMock()
+        fake.status_code = 200
         if url.endswith('/utxo'):
             fake.json.return_value = utxos
         elif url.endswith('/blocks/tip/height'):
@@ -700,7 +713,7 @@ def test_blockchain_info_raw_transaction_fetches_hex(monkeypatch):
 
     def fake_get(url, **kwargs):
         captured.append((url, kwargs))
-        return type('R', (), {'text': '  deadbeef\n'})()
+        return type('R', (), {'text': '  deadbeef\n', 'status_code': 200, 'headers': {}})()
 
     monkeypatch.setattr(requests, 'get', fake_get)
     txid = 'ab' * 32
@@ -719,10 +732,433 @@ def test_esplora_raw_transaction_fetches_hex(monkeypatch):
 
     def fake_get(url, **kwargs):
         captured.append(url)
-        return type('R', (), {'text': '00ffaabb'})()
+        return type('R', (), {'text': '00ffaabb', 'status_code': 200, 'headers': {}})()
 
     monkeypatch.setattr(requests, 'get', fake_get)
     txid = 'cd' * 32
     raw = BlockstreamBackend().raw_transaction(txid)
     assert raw == '00ffaabb'
     assert captured[0] == 'https://blockstream.info/api/tx/{}/hex'.format(txid)
+
+
+# ---------------------------------------------------------------------------
+# v0.3 resilience: the retry layer (mirrors the Rust `send_with_retries`).
+#
+# Every test monkeypatches `time.sleep` so the backoff ladder is observed,
+# never awaited.
+# ---------------------------------------------------------------------------
+
+
+class _RetryStub:
+    """Fake `requests` response for the retry classifier."""
+
+    def __init__(self, status_code, headers=None):
+        self.status_code = status_code
+        self.headers = headers or {}
+
+
+def test_is_retryable_status_covers_5xx_408_429_only():
+    from yubtc.net import _is_retryable_status
+    for status in (500, 502, 503, 599, 408, 429):
+        assert _is_retryable_status(status), status
+    for status in (400, 402, 403, 404, 409, 418, 422, 200, 301):
+        assert not _is_retryable_status(status), status
+
+
+def test_backoff_delay_is_capped_exponential():
+    from yubtc.net import _backoff_delay
+    assert _backoff_delay(0) == 0.5
+    assert _backoff_delay(1) == 1.0
+    assert _backoff_delay(2) == 2.0
+    # Beyond the doubling range the cap holds.
+    assert _backoff_delay(3) == 2.0
+    assert _backoff_delay(100) == 2.0
+
+
+def test_retry_after_is_honoured_only_when_sane():
+    from yubtc.net import _retry_after_sane
+    assert _retry_after_sane(_RetryStub(429)) is None
+    assert _retry_after_sane(_RetryStub(429, {})) is None
+    assert _retry_after_sane(_RetryStub(429, {'Retry-After': '0'})) == 0.0
+    assert _retry_after_sane(_RetryStub(429, {'Retry-After': ' 5 '})) == 5.0
+    assert _retry_after_sane(_RetryStub(429, {'Retry-After': '30'})) == 30.0
+    # Over the cap, non-numeric (HTTP-date form), negative.
+    assert _retry_after_sane(_RetryStub(429, {'Retry-After': '31'})) is None
+    assert _retry_after_sane(
+        _RetryStub(429, {'Retry-After': 'Fri, 31 Dec 2027 23:59:59 GMT'})) is None
+    assert _retry_after_sane(_RetryStub(429, {'Retry-After': '-1'})) is None
+
+
+def _retry_runner(monkeypatch, responses, retries=2):
+    """Drive `_request_with_retries` against a scripted response/exception
+    list. Returns `(result, error, calls, sleeps)`: the return value or
+    raised error, the list of responses served, and the recorded
+    `time.sleep` arguments."""
+    import time as time_module
+    import yubtc.net as net
+
+    calls = []
+    scripted = list(responses)
+
+    def send():
+        calls.append(1)
+        item = scripted.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    sleeps = []
+    monkeypatch.setattr(time_module, 'sleep', sleeps.append)
+    error = None
+    result = None
+    try:
+        result = net._request_with_retries(send=send, retries=retries)
+    except Exception as exc:  # noqa: BLE001 -- the test asserts on it
+        error = exc
+    return result, error, calls, sleeps
+
+
+def test_request_with_retries_passthrough_on_non_retryable_status(monkeypatch):
+    """A 4xx refusal is terminal: returned immediately, no sleep."""
+    stub = _RetryStub(404)
+    result, error, calls, sleeps = _retry_runner(monkeypatch, [stub])
+    assert error is None
+    assert result is stub
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_request_with_retries_retries_5xx_and_returns_final_response(monkeypatch):
+    """Exhausted retries on 5xx return the LAST response -- the caller's
+    own error mapping stays in charge (v0.1 error text preserved)."""
+    stub1, stub2 = _RetryStub(500), _RetryStub(500)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch, [stub1, stub2], retries=1)
+    assert error is None
+    assert result is stub2
+    assert len(calls) == 2
+    assert sleeps == [0.5]
+
+
+def test_request_with_retries_succeeds_after_transient_500(monkeypatch):
+    stub = _RetryStub(200)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch, [_RetryStub(500), stub])
+    assert error is None
+    assert result is stub
+    assert len(calls) == 2
+    assert sleeps == [0.5]
+
+
+def test_request_with_retries_408_is_retried(monkeypatch):
+    stub = _RetryStub(200)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch, [_RetryStub(408), stub])
+    assert error is None
+    assert result is stub
+    assert len(calls) == 2
+
+
+def test_request_with_retries_429_honours_sane_retry_after(monkeypatch):
+    stub = _RetryStub(200)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch,
+        [_RetryStub(429, {'Retry-After': '0'}), stub])
+    assert error is None
+    assert result is stub
+    assert len(calls) == 2
+    assert sleeps == [0.0], 'the server-mandated delay replaces the backoff'
+
+
+def test_request_with_retries_429_over_cap_falls_back_to_backoff(monkeypatch):
+    stub = _RetryStub(200)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch,
+        [_RetryStub(429, {'Retry-After': '999'}), stub])
+    assert error is None
+    assert result is stub
+    assert sleeps == [0.5]
+
+
+def test_request_with_retries_429_garbage_header_falls_back_to_backoff(monkeypatch):
+    stub = _RetryStub(200)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch,
+        [_RetryStub(429, {'Retry-After': 'soon'}), stub])
+    assert error is None
+    assert result is stub
+    assert sleeps == [0.5]
+
+
+def test_request_with_retries_5xx_ignores_retry_after_header(monkeypatch):
+    """`Retry-After` is only consulted on 429 -- a 500 cannot dictate
+    the wallet's sleeping schedule."""
+    stub = _RetryStub(200)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch,
+        [_RetryStub(500, {'Retry-After': '7'}), stub])
+    assert error is None
+    assert result is stub
+    assert sleeps == [0.5]
+
+
+def test_request_with_retries_recovers_after_connection_error(monkeypatch):
+    import requests
+    stub = _RetryStub(200)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch,
+        [requests.exceptions.ConnectionError('refused'), stub])
+    assert error is None
+    assert result is stub
+    assert len(calls) == 2
+    assert sleeps == [0.5]
+
+
+def test_request_with_retries_raises_connection_error_after_exhaustion(monkeypatch):
+    import requests
+    boom = requests.exceptions.ConnectionError('refused')
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch, [boom, boom], retries=1)
+    assert result is None
+    assert error is boom
+    assert len(calls) == 2
+    assert sleeps == [0.5]
+
+
+def test_request_with_retries_zero_is_a_passthrough_on_5xx(monkeypatch):
+    """`retries=0` is the v0.1 behaviour: one attempt, the response is
+    handed straight back to the caller's mapping."""
+    stub = _RetryStub(500)
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch, [stub], retries=0)
+    assert error is None
+    assert result is stub
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_request_with_retries_zero_raises_transport_error_immediately(monkeypatch):
+    import requests
+    boom = requests.exceptions.ConnectionError('refused')
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch, [boom], retries=0)
+    assert result is None
+    assert error is boom
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_request_with_retries_does_not_retry_other_request_exceptions(monkeypatch):
+    """Only connection/timeout faults are transport-retryable; e.g. a
+    malformed URL is a deterministic programming error."""
+    import requests
+    boom = requests.exceptions.InvalidURL('bad url')
+    result, error, calls, sleeps = _retry_runner(
+        monkeypatch, [boom, _RetryStub(200)])
+    assert result is None
+    assert error is boom
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_blockchain_info_backend_retries_are_wired_from_the_flag(monkeypatch):
+    """`BlockchainInfoBackend(retries=N)` threads N into every request."""
+    import time as time_module
+    import requests
+
+    scripted = [_RetryStub(500), _RetryStub(500),
+                {'unspent_outputs': []}]
+    calls = []
+
+    def fake_get(url, **kwargs):
+        item = scripted.pop(0)
+        calls.append(url)
+        if isinstance(item, _RetryStub):
+            return item
+        fake = MagicMock()
+        fake.status_code = 200
+        fake.headers = {}
+        fake.json.return_value = item
+        return fake
+
+    monkeypatch.setattr(requests, 'get', fake_get)
+    sleeps = []
+    monkeypatch.setattr(time_module, 'sleep', sleeps.append)
+
+    from yubtc.net import BlockchainInfoBackend
+    out = BlockchainInfoBackend(retries=2).get_unspent(b'1addr')
+    assert out == []
+    assert len(calls) == 3, 'two 500s survived, third attempt decoded'
+    assert sleeps == [0.5, 1.0], 'the backoff ladder doubles per attempt'
+
+
+# ---------------------------------------------------------------------------
+# v0.3 resilience: AutoBackend (`--provider auto`) and the registry.
+# ---------------------------------------------------------------------------
+
+
+class FakeFailBackend(NetworkBackend):
+    """Scripted fake for the failover tests: the first `failures` calls
+    per method error, later ones succeed; every call is logged."""
+
+    def __init__(self, name, failures=0):
+        self._name = name
+        self.left = {'unspent': failures, 'info': failures,
+                     'send': failures, 'raw': failures}
+        self.calls = []
+
+    def name(self):
+        return self._name
+
+    def _gate(self, method):
+        self.calls.append(method)
+        if self.left[method] > 0:
+            self.left[method] -= 1
+            raise RuntimeError('{name} down'.format(name=self._name))
+
+    def get_unspent(self, address, **kwargs):
+        self._gate('unspent')
+        return []
+
+    def get_info(self, address, **kwargs):
+        self._gate('info')
+        return {'total_received': 1}
+
+    def send_tx(self, rawtx, **kwargs):
+        self._gate('send')
+
+    def raw_transaction(self, txid, **kwargs):
+        self._gate('raw')
+        return 'deadbeef'
+
+
+def test_auto_backend_requires_kwargs():
+    from yubtc.net import AutoBackend
+    with pytest.raises(TypeError, match='only kwargs allowed'):
+        AutoBackend([FakeFailBackend('a')])
+    with pytest.raises(TypeError, match='backends not set'):
+        AutoBackend()
+    with pytest.raises(ValueError, match='backends is None'):
+        AutoBackend(backends=None)
+
+
+def test_auto_backend_first_success_wins_and_is_sticky():
+    from yubtc.net import AutoBackend
+    a = FakeFailBackend('a', failures=1)
+    b = FakeFailBackend('b')
+    auto = AutoBackend(backends=[a, b])
+    assert auto.get_info(b'1addr') == {'total_received': 1}
+    assert a.calls == ['info']
+    assert b.calls == ['info']
+    # Sticky: the second request starts at b; a is not retried.
+    auto.get_info(b'1addr')
+    assert a.calls == ['info']
+    assert b.calls == ['info', 'info']
+
+
+def test_auto_backend_demotes_a_preferred_backend_that_starts_failing():
+    from yubtc.net import AutoBackend
+    a = FakeFailBackend('a', failures=1)
+    b = FakeFailBackend('b')
+    auto = AutoBackend(backends=[a, b])
+    auto.get_info(b'1addr')  # a fails, b wins, b preferred.
+    auto.get_info(b'1addr')  # sticky at b.
+    assert a.calls == ['info']
+    assert b.calls == ['info', 'info']
+    b.left['info'] = 1  # b starts failing.
+    auto.get_info(b'1addr')  # walk wraps around to a and re-pins.
+    assert b.calls == ['info', 'info', 'info']
+    assert a.calls == ['info', 'info']
+    auto.get_info(b'1addr')  # a preferred now; b left alone.
+    assert b.calls == ['info', 'info', 'info']
+    assert a.calls == ['info', 'info', 'info']
+
+
+def test_auto_backend_exhaustion_lists_every_backend_and_last_error():
+    from yubtc.net import AllBackendsFailed, AutoBackend
+    a = FakeFailBackend('a', failures=10)
+    b = FakeFailBackend('b', failures=10)
+    auto = AutoBackend(backends=[a, b])
+    with pytest.raises(AllBackendsFailed) as ei:
+        auto.get_info(b'1addr')
+    assert str(ei.value) == ('all backends failed: '
+                             'a: a down; b: b down')
+    assert a.calls == ['info']
+    assert b.calls == ['info']
+
+
+def test_auto_backend_all_four_methods_delegate():
+    from yubtc.net import AutoBackend
+    # One AutoBackend per method: the sticky preference would
+    # otherwise pin to the first success and skip the later methods'
+    # failover branch on a.
+    auto = AutoBackend(backends=[FakeFailBackend('a', 1), FakeFailBackend('b')])
+    assert auto.get_unspent(b'1addr') == []
+    auto = AutoBackend(backends=[FakeFailBackend('a', 1), FakeFailBackend('b')])
+    assert auto.get_info(b'1addr') == {'total_received': 1}
+    auto = AutoBackend(backends=[FakeFailBackend('a', 1), FakeFailBackend('b')])
+    auto.send_tx(b'\x00')
+    auto = AutoBackend(backends=[FakeFailBackend('a', 1), FakeFailBackend('b')])
+    assert auto.raw_transaction('ab' * 32) == 'deadbeef'
+
+
+def test_auto_backend_name_is_auto():
+    from yubtc.net import AutoBackend
+    assert AutoBackend(backends=[FakeFailBackend('a')]).name() == 'auto'
+
+
+def test_backend_name_surface():
+    """Every backend reports its registry name (the failover trail and
+    the `--provider` grammar depend on it)."""
+    from yubtc.net import (
+        BlockchainInfoBackend, BlockstreamBackend, EsploraBackend,
+        MempoolSpaceBackend, NetworkBackend,
+    )
+    with pytest.raises(NotImplementedError):
+        NetworkBackend().name()
+    assert BlockchainInfoBackend().name() == 'blockchain.info'
+    assert EsploraBackend(base_url='https://example.com/api').name() == 'esplora'
+    assert BlockstreamBackend().name() == 'blockstream'
+    assert MempoolSpaceBackend().name() == 'mempool.space'
+
+
+def test_get_backend_auto_resolves_the_registry_order():
+    from yubtc.net import (
+        AutoBackend, BlockchainInfoBackend, BlockstreamBackend,
+        MempoolSpaceBackend, get_backend,
+    )
+    auto = get_backend(name='auto')
+    assert isinstance(auto, AutoBackend)
+    assert [type(b) for b in auto._backends] == [
+        BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend]
+    # Default retries are threaded into every member.
+    assert all(b._retries == DEFAULT_HTTP_RETRIES for b in auto._backends)
+    # Explicit retries reach the inner backends too.
+    auto5 = get_backend(name='auto', retries=5)
+    assert all(b._retries == 5 for b in auto5._backends)
+    # Fresh instance per call, like every registry entry.
+    assert get_backend(name='auto') is not auto
+
+
+def test_get_backends_for_auto_lists_registry_order_without_mock():
+    from yubtc.net import (
+        BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend,
+        get_backends_for_auto,
+    )
+    order = get_backends_for_auto()
+    assert [type(b) for b in order] == [
+        BlockchainInfoBackend, BlockstreamBackend, MempoolSpaceBackend]
+    assert [b.name() for b in order] == [
+        'blockchain.info', 'blockstream', 'mempool.space']
+    assert all(b._retries == DEFAULT_HTTP_RETRIES for b in order)
+    assert all(b._retries == 7 for b in get_backends_for_auto(retries=7))
+
+
+def test_get_backend_threads_retries_into_named_backends():
+    from yubtc.net import BlockchainInfoBackend, get_backend
+    assert isinstance(get_backend(retries=2), BlockchainInfoBackend)
+    assert get_backend(name='blockchain.info', retries=2)._retries == 2
+    assert get_backend(name='blockstream', retries=3)._retries == 3
+    assert get_backend(name='mempool.space', retries=4)._retries == 4
+    # Default unchanged.
+    assert get_backend()._retries == DEFAULT_HTTP_RETRIES

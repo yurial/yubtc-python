@@ -1288,3 +1288,126 @@ def test_validate_entered_seed_rejects_positional_and_missing_args():
         _validate_entered_seed(strict=False)
     with pytest.raises(TypeError, match='strict not set'):
         _validate_entered_seed(seed='qwe')
+
+
+# --retries / --provider auto (v0.3 resilience): every network-using
+# command threads the retry count into the resolved backend, and the
+# `auto` pseudo-provider resolves to the failover AutoBackend.
+# ---------------------------------------------------------------------------
+
+
+def test_address_threads_retries_into_the_backend(offline, monkeypatch):
+    """`address --retries N` hands the Wallet a backend whose retry
+    count is N."""
+    import yubtc.cli as cli_mod
+    seen = {}
+    real_init = cli_mod.Wallet.__init__
+
+    def spy_init(self, *args, **kwargs):
+        seen['retries'] = kwargs.get('backend')._retries
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
+    result = _invoke(['address', '--retries', '2'],
+                     stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code == 0, result.output
+    assert seen['retries'] == 2
+
+
+def test_address_default_retries_is_fwd_default(offline, monkeypatch):
+    """Without --retries the backend gets fwd.DEFAULT_HTTP_RETRIES."""
+    import yubtc.cli as cli_mod
+    from yubtc.fwd import DEFAULT_HTTP_RETRIES
+    seen = {}
+    real_init = cli_mod.Wallet.__init__
+
+    def spy_init(self, *args, **kwargs):
+        seen['retries'] = kwargs.get('backend')._retries
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
+    result = _invoke(['address'], stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code == 0, result.output
+    assert seen['retries'] == DEFAULT_HTTP_RETRIES
+
+
+def test_address_retries_zero_is_accepted(offline, monkeypatch):
+    """`--retries 0` is the v0.1 single-attempt behaviour."""
+    import yubtc.cli as cli_mod
+    seen = {}
+    real_init = cli_mod.Wallet.__init__
+
+    def spy_init(self, *args, **kwargs):
+        seen['retries'] = kwargs.get('backend')._retries
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
+    result = _invoke(['address', '--retries', '0'],
+                     stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code == 0, result.output
+    assert seen['retries'] == 0
+
+
+def test_address_negative_retries_rejected_by_click(offline):
+    """A negative retry count fails click's IntRange validation."""
+    result = _invoke(['address', '--retries', '-1'],
+                     stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code != 0
+
+
+def test_address_accepts_auto_provider(offline, monkeypatch):
+    """`--provider auto` resolves to the failover AutoBackend."""
+    import yubtc.cli as cli_mod
+    from yubtc.net import AutoBackend
+    seen = {}
+    real_init = cli_mod.Wallet.__init__
+
+    def spy_init(self, *args, **kwargs):
+        backend = kwargs.get('backend')
+        seen['type'] = type(backend).__name__
+        seen['retries'] = backend._backends[0]._retries
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
+    result = _invoke(['address', '--provider', 'auto', '--retries', '1'],
+                     stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code == 0, result.output
+    assert seen['type'] == AutoBackend.__name__
+    assert seen['retries'] == 1, 'auto members inherit --retries'
+
+
+def test_pushtx_accepts_retries(offline, monkeypatch):
+    """`pushtx --retries N` threads N into the resolved backend."""
+    seen = {}
+
+    def spy_broadcast(backend, rawtx):
+        seen['retries'] = backend._retries
+
+    monkeypatch.setattr('yubtc.net.broadcastTx', spy_broadcast)
+    result = _invoke(['pushtx', '--retries', '3', '--yes'],
+                     stdin='0102\n')
+    assert result.exit_code == 0, result.output
+    assert seen['retries'] == 3
+
+
+def test_balance_accepts_auto_provider(offline, monkeypatch):
+    """`balance --provider auto` resolves to the failover AutoBackend."""
+    import yubtc.cli as cli_mod
+    from yubtc.net import AutoBackend
+    seen = {}
+    real_init = cli_mod.Wallet.__init__
+
+    def spy_init(self, *args, **kwargs):
+        seen['type'] = type(kwargs.get('backend')).__name__
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(cli_mod, 'Wallet', type('Wallet', (cli_mod.Wallet,),
+                                                {'__init__': spy_init}))
+    result = _invoke(['balance', '--provider', 'auto'],
+                     stdin='\n' + SEED + '\n\n' + '')
+    assert result.exit_code == 0, result.output
+    assert seen['type'] == AutoBackend.__name__
