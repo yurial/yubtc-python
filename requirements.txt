@@ -1,5 +1,5 @@
 requests
-click>=8.2
+click
 coincurve
 base58
 pycryptodome
