@@ -1229,8 +1229,10 @@ def test_seed_warning_goes_to_stderr_stdout_stays_clean(monkeypatch):
     from yubtc.cli import cli
     import yubtc.cli as cli_mod
     monkeypatch.setattr(cli_mod, 'Wallet', _FakeWallet)
-    result = CliRunner(mix_stderr=False).invoke(cli, ['address'],
-                                                input='\n' + SEED + '\n')
+    # click >= 8.2 (pinned floor in requirements.txt) always separates
+    # the streams: result.stdout excludes stderr, which is exactly the
+    # layout this test asserts on.
+    result = CliRunner().invoke(cli, ['address'], input='\n' + SEED + '\n')
     assert result.exit_code == 0, result.output
     assert '1FakeAddressNotReal' in result.stdout
     assert 'warning:' in result.stderr
