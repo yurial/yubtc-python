@@ -1893,16 +1893,21 @@ def test_decode_witness_stack_rejects_oversized_count_and_trailing_bytes():
 
 def test_extract_refuses_inputs_without_a_recognizable_form():
     # The input has UTXO data and even a final field, but the
-    # scriptPubKey shape (P2WSH) is not a form the extractor can
-    # validate -- refuse rather than emit an unverifiable tx.
-    # (Phase 15 moved P2SH to the supported forms; P2WSH stays
-    # preserve-only -- mirrors the Rust oracle's test move.)
+    # scriptPubKey shape is a **bare** P2WSH (no witness script):
+    # v0.3 moved the P2WSH-multisig form to the supported set, so a
+    # FINAL_SCRIPTSIG on a witness input is now the specific
+    # IncompleteInput refusal (symmetry with the P2SH arm), and
+    # without any final field the input stays NotFinalized (mirrors
+    # the Rust oracle's test move).
     p2wsh = b'\x00\x20' + b'\xab' * 32
     psbt = create_psbt(unsigned_tx=one_input_tx(b'\x01' * 32),
                        inputs=[CreateInput(amount=1000,
                                            script_pubkey=p2wsh,
                                            prev_tx=None)])
     psbt.inputs[0].final_scriptsig = b'\x51'
+    with pytest.raises(IncompleteInput):
+        extract_transaction(psbt=psbt)
+    psbt.inputs[0].final_scriptsig = None
     with pytest.raises(NotFinalized):
         extract_transaction(psbt=psbt)
 

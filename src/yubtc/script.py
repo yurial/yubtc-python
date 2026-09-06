@@ -290,6 +290,41 @@ def extract_p2tr_output_key(script: bytes = NotNone) -> bytes:
     return script[2:]
 
 
+@require_kwargs_only
+def make_p2wsh_lock_script(sha256: bytes = NotNone) -> CScript:
+    """Build the canonical P2WSH witness lock script for a 32-byte
+    SHA-256 commitment (native SegWit, witness version 0; v0.3,
+    mirrors `script.rs::make_p2wsh_lock_script`).
+
+    Layout: `OP_0 OP_PUSHBYTES_32 <32 bytes>` -- exactly 34 bytes
+    (`00 20 <hash>`). This is the `scriptPubKey` of a `bc1q...` v0
+    address carrying a 32-byte program; for the v0.3 multisig surface
+    the commitment is `SHA256(redeem)` of the quorum's canonical
+    redeem script."""
+    sha256 = bytes(sha256)
+    if len(sha256) != 32:
+        raise ValueError(f'sha256 must be 32 bytes, got {len(sha256)}')
+    return CScript(bytes([OP_0, OP_PUSHBYTES_32]) + sha256)
+
+
+@require_kwargs_only
+def extract_p2wsh_program(script: bytes = NotNone) -> bytes:
+    """Extract the 32-byte SHA-256 commitment from a canonical P2WSH
+    witness script.
+
+    Strict shape check: the script must be exactly `00 20 <32 bytes>`
+    -- 34 bytes. Anything else (other lengths, other witness versions,
+    the 34-byte P2TR script `51 20 <32>`) is rejected with
+    `ValueError('invalid script: expected P2WSH layout, got N
+    bytes')`."""
+    script = bytes(script)
+    if (len(script) != 34
+            or script[0] != OP_0
+            or script[1] != OP_PUSHBYTES_32):
+        raise ValueError(f'invalid script: expected P2WSH layout, got {len(script)} bytes')
+    return script[2:]
+
+
 # --- Multi-sig (Phase 15, P2SH; mirrors core/src/script.rs) ------------
 
 
@@ -502,3 +537,53 @@ def redeem2p2sh_addr(redeem: bytes = NotNone) -> str:
     from yubtc.hash import hash160
     return base58CheckEncode(
         bytes([PREFIX_P2SH]) + hash160(bytes(redeem))).decode('ascii')
+
+
+@require_kwargs_only
+def make_multisig_witness(redeem: bytes = NotNone,
+                          sigs: list = NotNone) -> list:
+    """Assemble the finalized **P2WSH**-multisig witness stack (v0.3,
+    spec.md «P2WSH (v0.3)», BIP-141; mirrors
+    `script.rs::make_multisig_witness`):
+
+        [<empty string> (CHECKMULTISIG dummy),
+         push(sig_i || 0x01) x M (in redeem-script key order),
+         <redeem>]
+
+    `M + 2` items, signatures in the redeem script's key order. Unlike
+    the P2SH `scriptSig` (`make_multisig_script_sig`) there is **no**
+    separate `OP_0` byte: the BIP-141 dummy is a witness item of
+    length zero, which serializes as a bare CompactSize `0x00` and
+    *is* the empty push compensating the `OP_CHECKMULTISIG` off-by-one
+    stack error (R-MS-5 semantics; BIP-147 NULLDUMMY satisfied -- the
+    dummy is empty). The redeem script rides as the last witness
+    item, never pushed through a `scriptSig`.
+
+    `sigs` must already be ordered by the redeem script's key order
+    and each element must be the complete `DER || sighash` signature.
+    Returns the stack as a list of `bytes` items."""
+    redeem = bytes(redeem)
+    out = [b'']
+    for sig in sigs:
+        out.append(bytes(sig))
+    out.append(redeem)
+    return out
+
+
+@require_kwargs_only
+def redeem2p2wsh_addr(redeem: bytes = NotNone) -> str:
+    """Redeem script -> mainnet P2WSH address (`bc1q...`, bech32
+    witness version 0 with a 32-byte program; v0.3, mirrors
+    `address.rs::redeem_to_p2wsh_address`).
+
+    The commitment is `SHA256(redeem)` -- the same 32-byte value
+    `make_p2wsh_lock_script` embeds in the witness lock script, so an
+    output paid to the returned address is spendable exactly by
+    revealing and satisfying `redeem` in the witness stack (the
+    P2WSH counterpart of `redeem2p2sh_addr`: same redeem script,
+    witness form -- ОВ-13 applies unchanged)."""
+    from yubtc.bech32 import BECH32, bytes_to_5bit, encode
+    from yubtc.crypto import HRP_MAINNET
+    from yubtc.hash import sha256
+    data = bytes([0]) + bytes_to_5bit(data=sha256(bytes(redeem)))
+    return encode(hrp=HRP_MAINNET, encoding=BECH32, data=data)

@@ -57,12 +57,13 @@ def is_dust(amount: TSatoshi = NotNone, script: bytes = NotNone) -> bool:
 
     Returns True when `amount` satoshi paid to `script` falls below
     the protocol dust threshold for that script type: P2PKH (25 bytes)
-    546, P2SH (23) 540, P2WPKH (22) 294, P2TR (34) 330 -- Bitcoin Core
-    `GetDustThreshold` with dustRelayFee 3 sat/kvB. Any other script
-    shape is never flagged (the caller's UTXO validation rejects those
-    upstream)."""
+    546, P2SH (23) 540, P2WPKH (22) 294, P2WSH (34, `00 20 ...` -- v0.3)
+    330, P2TR (34) 330 -- Bitcoin Core `GetDustThreshold` with
+    dustRelayFee 3 sat/kvB. Any other script shape is never flagged
+    (the caller's UTXO validation rejects those upstream)."""
     from yubtc.fwd import (DUST_THRESHOLD_P2PKH, DUST_THRESHOLD_P2SH,
-                           DUST_THRESHOLD_P2TR, DUST_THRESHOLD_P2WPKH)
+                           DUST_THRESHOLD_P2TR, DUST_THRESHOLD_P2WPKH,
+                           DUST_THRESHOLD_P2WSH)
     size = len(script)
     if size == 25:
         return amount < DUST_THRESHOLD_P2PKH
@@ -71,5 +72,7 @@ def is_dust(amount: TSatoshi = NotNone, script: bytes = NotNone) -> bool:
     if size == 22:
         return amount < DUST_THRESHOLD_P2WPKH
     if size == 34:
+        if script[0] == 0x00:
+            return amount < DUST_THRESHOLD_P2WSH
         return amount < DUST_THRESHOLD_P2TR
     return False

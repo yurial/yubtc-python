@@ -307,12 +307,23 @@ def test_make_lock_script_builds_witness_scripts_for_bc1_addresses():
 
 
 def test_make_lock_script_propagates_segwit_errors():
-    from yubtc.crypto import make_lock_script
+    from yubtc.crypto import (decode_p2wsh_addr, make_lock_script)
+    from yubtc.script import extract_p2wsh_program
     with pytest.raises(SegWitInvalidChecksum):
         make_lock_script('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5')
-    with pytest.raises(SegWitUnsupportedProgram):
-        make_lock_script(
-            'bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3')
+    # P2WSH shape: out of scope at Phase 13, unlocked by the v0.3
+    # multisig surface -- the lock script is the canonical
+    # `00 20 || <32>` witness script whose program round-trips
+    # through the dedicated decoder (the BIP-173 P2WSH vector
+    # address).
+    p2wsh_addr = ('bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefv'
+                  'pysxf3qccfmv3')
+    lock = make_lock_script(p2wsh_addr)
+    assert len(lock) == 34
+    assert bytes(lock[:2]) == b'\x00\x20'
+    program = decode_p2wsh_addr(address=p2wsh_addr).program
+    assert bytes(lock[2:]) == program
+    assert extract_p2wsh_program(script=bytes(lock)) == program
 
 
 def test_witness_lock_script_makers_reject_wrong_lengths():

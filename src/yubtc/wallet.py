@@ -699,6 +699,14 @@ class Wallet(object):
 MS_SIG_SIZE_ESTIMATE = 73
 
 
+def _sha256_script(data: bytes) -> bytes:
+    """`SHA-256` of an arbitrary byte string -- the P2WSH commitment
+    over a redeem script (v0.3, mirrors
+    `address.rs::sha256_script`)."""
+    from yubtc.hash import sha256
+    return sha256(bytes(data))
+
+
 class MsError(Exception):
     """Everything that can go wrong in the multisig quorum surface
     (spec.md «Multi-sig (P2SH) (Phase 15, v0.2)» -- validation
@@ -766,25 +774,38 @@ class NotAParticipant(MsError):
 
 @require_kwargs_only
 def ms_create_address(n: int = NotNone, m: int = NotNone,
-                      keys: list = NotNone) -> tuple:
-    """Validate the quorum shape and derive the fixed P2SH address +
-    canonical redeem script (mirrors `wallet.rs::ms_create_address`).
+                      keys: list = NotNone,
+                      form: str = NotNone) -> tuple:
+    """Validate the quorum shape and derive the fixed quorum address +
+    canonical redeem script in the `form` encoding (mirrors
+    `wallet.rs::ms_create_address`; v0.3 adds the P2WSH form).
 
     `n` is the total key count, `m` the signature threshold, `keys`
     the full quorum key set (own key already included by the caller --
     derive it with `ms_own_pubkey` and append it before calling).
+    `form` selects the address encoding -- the redeem script is
+    **identical** in both forms, only the commitment/address differ:
+    `yubtc.fwd.MsForm.P2SH` = `base58check(0x05 ‖ hash160(redeem))`
+    (`3...`, Phase 15, ОВ-13), `MsForm.P2WSH` = bech32 v0 with the
+    32-byte `SHA256(redeem)` program (`bc1q...`, v0.3). A missing or
+    unknown form raises `ValueError` -- no default exists (R-MS-1
+    spirit; the CLI flag defaults to `p2sh` at the parser layer only).
 
-    Checks (in order): distinct-key count equals `n`
+    Checks (in order): `form` is a known `MsForm` value
+    (`ValueError`), distinct-key count equals `n`
     (`KeyCountMismatch`), `1 ≤ m ≤ n ≤ 15` (`QuorumBounds`), no
     duplicate keys (`DuplicateKey`) -- then the redeem script is
-    assembled with BIP-67 sorting (R-MS-4) and the address is
-    `base58check(0x05 ‖ hash160(redeem))` (ОВ-13: fixed by the
-    `(N, M, keys)` tuple, no scan/gap walk). Returns
-    `(address, redeem_script_bytes)`."""
-    from yubtc.fwd import MS_MAX_PUBKEYS
+    assembled with BIP-67 sorting (R-MS-4). The address is fixed by
+    the `(N, M, keys)` tuple in either form (ОВ-13: no scan/gap
+    walk). Returns `(address, redeem_script_bytes)`."""
+    from yubtc.fwd import MS_MAX_PUBKEYS, MS_FORMS
     from yubtc.script import (InvalidMultisigRedeem,
                               make_multisig_redeem_script,
-                              redeem2p2sh_addr)
+                              redeem2p2sh_addr, redeem2p2wsh_addr)
+    if form not in MS_FORMS:
+        raise ValueError(
+            'form must be one of {}, got {form!r}'.format(
+                MS_FORMS, form=form))
     if len(keys) != n:
         raise KeyCountMismatch(expected=n, got=len(keys))
     if m == 0 or m > n or n > MS_MAX_PUBKEYS:
@@ -798,7 +819,9 @@ def ms_create_address(n: int = NotNone, m: int = NotNone,
         # Bounds and duplicates validated above; 33-byte keys are the
         # caller's contract -- the builder cannot fail here.
         raise QuorumBounds()
-    return redeem2p2sh_addr(redeem=redeem), redeem
+    if form == 'p2sh':
+        return redeem2p2sh_addr(redeem=redeem), redeem
+    return redeem2p2wsh_addr(redeem=redeem), redeem
 
 
 @require_kwargs_only
@@ -890,10 +913,12 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
                    n: int = NotNone, m: int = NotNone,
                    keys: list = NotNone, own_nonce: TNonce = None,
                    confirmations: int = NotNone, feekb: TSatoshi = NotNone,
-                   fee: TSatoshi = NotNone) -> MsPsbtOutcome:
+                   fee: TSatoshi = NotNone,
+                   form: str = NotNone) -> MsPsbtOutcome:
     """Creator orchestration of `ms send` (ОВ-12): a thin composition
     of the existing library stages, no new cryptography or
-    serialization (mirrors `wallet.rs::ms_create_psbt`) --
+    serialization (mirrors `wallet.rs::ms_create_psbt`; v0.3 adds the
+    `form` parameter) --
 
     1. derive the own legacy-form key at `own_nonce` (R-MS-6) and
        validate the quorum (`n`, `m`, cosigner `keys` + own key);
@@ -903,24 +928,31 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
     3. greedily select the smallest UTXO prefix covering
        `amount + fee` (`ms_select_utxos`);
     4. run the vsize-keyed fee loop (`_pick_best_fee_loop_candidate`)
-       with the final `scriptSig` *sized* (never signed): each input
-       carries `1 + m·(1 + MS_SIG_SIZE_ESTIMATE) + pushlen(redeem)`
-       bytes of script;
-    5. build the PSBT via `psbt.create_psbt` -- every input gets
-       `NON_WITNESS_UTXO` (fetched with one `raw_transaction` per
-       selected UTXO) plus `REDEEM_SCRIPT`;
+       with the final spend *sized* (never signed), per `form`:
+       `p2sh` -- each input carries
+       `1 + m·(1 + MS_SIG_SIZE_ESTIMATE) + pushlen(redeem)` bytes of
+       scriptSig; `p2wsh` -- empty scriptSig and a sized witness
+       stack (`[b'', sig x M, redeem]`, MS_SIG_SIZE_ESTIMATE per
+       signature);
+    5. build the PSBT via `psbt.create_psbt` -- `p2sh`: every input
+       gets `NON_WITNESS_UTXO` (fetched with one `raw_transaction`
+       per selected UTXO) plus `REDEEM_SCRIPT`; `p2wsh`: every input
+       gets `WITNESS_UTXO` + `WITNESS_SCRIPT` (no prev-tx fetch --
+       BIP-143 commits the amount);
     6. add the own partial signatures (`own_nonce=None` is
        `NotAParticipant` -- yubtc spends only quorums it
        participates in);
     7. emit base64. Cashback goes to the **quorum address** (shared
-       funds must not drift into single-key control)."""
+       funds must not drift into single-key control) -- in the
+       form's encoding (`3...` vs `bc1q...`)."""
     from yubtc.crypto import make_vout, privkey2pubkey
     from yubtc.hash import hash160
     from yubtc.net import get_address_unspent
     from yubtc.psbt import (CreateInput, PsbtTransaction, PsbtTxIn,
                             PsbtTxOut, _parse_tx, create_psbt,
                             sign_psbt_input, to_base64)
-    from yubtc.script import (make_p2sh_lock_script, push_data_len)
+    from yubtc.script import (make_p2sh_lock_script, make_p2wsh_lock_script,
+                              push_data_len)
 
     nonce = own_nonce
     if nonce is None:
@@ -929,8 +961,14 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
                                  passphrase=passphrase)
     own_pubkey = privkey2pubkey(own_privkey)
     all_keys = [bytes(k) for k in keys] + [own_pubkey]
-    quorum_addr, redeem = ms_create_address(n=n, m=m, keys=all_keys)
-    quorum_script = bytes(make_p2sh_lock_script(hash160=hash160(redeem)))
+    quorum_addr, redeem = ms_create_address(n=n, m=m, keys=all_keys,
+                                            form=form)
+    if form == 'p2sh':
+        quorum_script = bytes(make_p2sh_lock_script(
+            hash160=hash160(redeem)))
+    else:
+        quorum_script = bytes(make_p2wsh_lock_script(
+            sha256=_sha256_script(redeem)))
 
     # One UTXO query for the fixed quorum address (ОВ-13).
     unspent = get_address_unspent(backend, quorum_addr)
@@ -940,18 +978,31 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
     selected = ms_select_utxos(utxos=affordable, target=target)
     in_amount = sum(u['value'] for u in selected)
 
-    # Final scriptSig size per input (R-MS-4/5 layout, worst-case
-    # signature lengths): dummy byte + M pushes + pushed redeem.
+    # p2sh form: the final scriptSig size per input (R-MS-4/5
+    # layout, worst-case signature lengths): dummy byte + M pushes +
+    # pushed redeem.
     script_sig_len = (1 + m * (1 + MS_SIG_SIZE_ESTIMATE)
                       + push_data_len(length=len(redeem)))
+    # p2wsh form: the final witness stack per input (BIP-141 layout):
+    # empty dummy, M worst-case signatures, the redeem script.
+
+    def sized_witness(sized: bool) -> tuple:
+        if not sized:
+            return ()
+        stack = [b'']
+        stack += [b'\x00' * MS_SIG_SIZE_ESTIMATE for _ in range(m)]
+        stack.append(redeem)
+        return tuple(stack)
 
     txhashes = [(bytes.fromhex(u['tx_hash']), u['tx_output_n'])
                 for u in selected]
 
     def build_vin(sized: bool) -> list:
         return [PsbtTxIn(txhash=txhash, n=out_n,
-                         script=b'\x00' * script_sig_len if sized else b'',
-                         sequence=0xfffffffe, witness=())
+                         script=b'\x00' * script_sig_len
+                         if sized and form == 'p2sh' else b'',
+                         sequence=0xfffffffe,
+                         witness=sized_witness(sized and form == 'p2wsh'))
                 for txhash, out_n in txhashes]
 
     if fee > 0:
@@ -990,21 +1041,30 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
         _, (best_fee, best_vout, _) = _pick_best_fee_loop_candidate(
             by_size=by_size, feekb=feekb)
 
-    # Creator: unsigned tx + NON_WITNESS_UTXO (one raw_transaction
-    # per selected UTXO) + REDEEM_SCRIPT per input.
+    # Creator: unsigned tx + per-form UTXO fields. p2sh:
+    # NON_WITNESS_UTXO (one raw_transaction per selected UTXO) +
+    # REDEEM_SCRIPT per input. p2wsh: WITNESS_UTXO + WITNESS_SCRIPT
+    # per input (no prev-tx fetch -- BIP-143 commits the amount, and
+    # the network cost of `ms send --form p2wsh` is the single UTXO
+    # query ОВ-13 already paid).
     create_inputs = []
     for u, (txhash, _out_n) in zip(selected, txhashes):
-        txid_hex = u['tx_hash']
-        raw_hex = backend.raw_transaction(txid_hex)
-        try:
-            prev_tx = _parse_tx(bytes.fromhex(raw_hex.strip()),
-                                segwit_allowed=True)
-        except Exception as e:
-            raise ValueError('raw tx {txid}: {e}'.format(txid=txid_hex,
-                                                         e=e))
-        create_inputs.append(CreateInput(
-            amount=u['value'], script_pubkey=quorum_script,
-            prev_tx=prev_tx, redeem_script=redeem))
+        if form == 'p2sh':
+            txid_hex = u['tx_hash']
+            raw_hex = backend.raw_transaction(txid_hex)
+            try:
+                prev_tx = _parse_tx(bytes.fromhex(raw_hex.strip()),
+                                    segwit_allowed=True)
+            except Exception as e:
+                raise ValueError('raw tx {txid}: {e}'.format(
+                    txid=txid_hex, e=e))
+            create_inputs.append(CreateInput(
+                amount=u['value'], script_pubkey=quorum_script,
+                prev_tx=prev_tx, redeem_script=redeem))
+        else:
+            create_inputs.append(CreateInput(
+                amount=u['value'], script_pubkey=quorum_script,
+                prev_tx=None, witness_script=redeem))
     unsigned = PsbtTransaction(
         version=2, vin=tuple(build_vin(sized=False)),
         vout=tuple(PsbtTxOut(amount=o.amount, script=o.script)

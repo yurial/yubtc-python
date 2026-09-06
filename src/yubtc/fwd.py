@@ -125,6 +125,11 @@ DUST_THRESHOLD_P2PKH: int = 546
 DUST_THRESHOLD_P2SH: int = 540
 DUST_THRESHOLD_P2WPKH: int = 294
 DUST_THRESHOLD_P2TR: int = 330
+# v0.3 (mirrors `fwd.rs::DUST_THRESHOLD_P2WSH`): the 34-byte P2WSH
+# output plus the ~67 vB witness input cost -- the same formula as
+# P2TR, kept a distinct constant (a dust-policy change for one form
+# must not silently move the other).
+DUST_THRESHOLD_P2WSH: int = 330
 
 # --- PSBT (BIP-174, Phase 14) -----------------------------------------
 # Frozen snapshot of the Phase 14 spec values (mirrors `fwd.rs`); see
@@ -153,5 +158,25 @@ PSBT_SIGHASH_DEFAULT: int = 0x0000_0000
 # Maximum keys in a CHECKMULTISIG quorum (R-MS-2): `1 ≤ M ≤ N ≤ 15`.
 # 15, not the consensus 20-key cap: an N = 16 redeem script is
 # 34·16 + 4 = 548 bytes > the 520-byte MAX_SCRIPT_ELEMENT_SIZE push
-# limit, so such a P2SH output is fundamentally unspendable.
+# limit, so such a P2SH output is fundamentally unspendable. v0.3
+# keeps the bound for both quorum forms: the same `(N, M, keys)`
+# tuple must produce consistent quorums across forms (spec.md
+# «P2WSH (v0.3)» -- cross-form parity decision).
 MS_MAX_PUBKEYS: int = 15
+
+
+class MsForm(object):
+    """The quorum address form (v0.3, mirrors
+    `wallet.rs::MsForm`): the same canonical redeem script addressed
+    either as P2SH (`3...`, hash160 commitment, legacy spend) or as
+    native P2WSH (`bc1q...`, SHA-256 commitment, witness spend).
+
+    No default exists at the library level -- every call passes the
+    choice explicitly (the CLI flag defaults to `p2sh` at the parser
+    layer only; documented spec decision)."""
+
+    P2SH = 'p2sh'
+    P2WSH = 'p2wsh'
+
+
+MS_FORMS = (MsForm.P2SH, MsForm.P2WSH)

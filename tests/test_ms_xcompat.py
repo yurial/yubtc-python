@@ -45,12 +45,14 @@ from urllib.parse import urlparse
 import pytest
 
 from yubtc.crypto import privkey2privwif, privkey2pubkey, seed2privkey
-from yubtc.hash import hash160
+from yubtc.fwd import MsForm
+from yubtc.hash import hash160, sha256
 from yubtc.net import BlockchainInfoBackend
 from yubtc.psbt import (PsbtTransaction, PsbtTxIn, PsbtTxOut,
                         extract_transaction, finalize_psbt, from_base64,
                         psbt_summary, sign_psbt_input, to_base64)
-from yubtc.script import extract_multisig_quorum, make_p2sh_lock_script
+from yubtc.script import (extract_multisig_quorum, make_p2sh_lock_script,
+                          make_p2wsh_lock_script)
 from yubtc.wallet import ms_create_address, ms_create_psbt
 
 # ---------------------------------------------------------------------------
@@ -197,7 +199,8 @@ def test_ms_cli_create_matches_python(ms_cli):
     assert rc == 0, f'ms create failed: rc={rc} err={err!r}'
     cli = _parse_create_output(out)
     addr, redeem = ms_create_address(
-        n=3, m=2, keys=[_xc_pub(1), _xc_pub(2), _xc_pub(0)])
+        n=3, m=2, keys=[_xc_pub(1), _xc_pub(2), _xc_pub(0)],
+        form=MsForm.P2SH)
     assert cli['m_of_n'] == '2-of-3'
     assert cli['address'] == addr
     assert cli['redeem_hex'] == redeem.hex()
@@ -213,7 +216,8 @@ def test_ms_cli_create_is_invariant_under_argument_order(ms_cli):
     assert rc == 0, f'ms create failed: rc={rc} err={err!r}'
     cli = _parse_create_output(out)
     addr, redeem = ms_create_address(
-        n=3, m=2, keys=[_xc_pub(1), _xc_pub(2), _xc_pub(0)])
+        n=3, m=2, keys=[_xc_pub(1), _xc_pub(2), _xc_pub(0)],
+        form=MsForm.P2SH)
     assert cli['address'] == addr
     assert cli['redeem_hex'] == redeem.hex()
     assert list(extract_multisig_quorum(script=redeem)[1]) \
@@ -229,7 +233,8 @@ def test_ms_cli_create_watch_only_needs_no_stdin(ms_cli):
     assert rc == 0, f'ms create failed: rc={rc} err={err!r}'
     cli = _parse_create_output(out)
     addr, redeem = ms_create_address(n=2, m=2,
-                                     keys=[_xc_pub(1), _xc_pub(2)])
+                                     keys=[_xc_pub(1), _xc_pub(2)],
+                                     form=MsForm.P2SH)
     assert cli['address'] == addr
     assert cli['redeem_hex'] == redeem.hex()
 
@@ -246,7 +251,8 @@ def test_ms_cli_create_own_wif_sugar_and_foreign_refusal(ms_cli):
     assert rc == 0, f'ms create failed: rc={rc} err={err!r}'
     cli = _parse_create_output(out)
     addr, _redeem = ms_create_address(
-        n=3, m=2, keys=[_xc_pub(1), _xc_pub(2), _xc_pub(0)])
+        n=3, m=2, keys=[_xc_pub(1), _xc_pub(2), _xc_pub(0)],
+        form=MsForm.P2SH)
     assert cli['address'] == addr
 
     foreign_wif = privkey2privwif(privkey=_xc_key(9))
@@ -267,10 +273,13 @@ def test_ms_cli_create_own_wif_sugar_and_foreign_refusal(ms_cli):
 _MOCK_VALUE = 60_000
 
 
-def _mock_prev_tx(redeem: bytes):
-    """Prev tx paying 60_000 sat to the fixture quorum's P2SH
-    script; returned as (PsbtTransaction, wire hex, txid hex)."""
-    spk = bytes(make_p2sh_lock_script(hash160=hash160(redeem)))
+def _mock_prev_tx(redeem: bytes, form: str = MsForm.P2SH):
+    """Prev tx paying 60_000 sat to the fixture quorum's lock
+    script (per `form`); (PsbtTransaction, wire hex, txid hex)."""
+    if form == MsForm.P2WSH:
+        spk = bytes(make_p2wsh_lock_script(sha256=sha256(redeem)))
+    else:
+        spk = bytes(make_p2sh_lock_script(hash160=hash160(redeem)))
     prev = PsbtTransaction(
         version=2,
         vin=(PsbtTxIn(txhash=b'\x77' * 32, n=0, script=b'',
@@ -316,16 +325,22 @@ class _MockMsHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def mock_ms_server(redeem: bytes):
+def mock_ms_server(redeem: bytes, form: str = MsForm.P2SH):
     """Serve the fixture UTXO while yielding the base URL. The handler
     state is class-level: `HTTPServer` spawns a fresh handler per
     request, so the class attributes carry the fixture."""
-    addr, _redeem = ms_create_address(n=3, m=2, keys=_xc_quorum_pubkeys())
-    prev, raw_hex, txid_hex = _mock_prev_tx(redeem)
+    addr, _redeem = ms_create_address(n=3, m=2,
+                                      keys=_xc_quorum_pubkeys(),
+                                      form=form)
+    prev, raw_hex, txid_hex = _mock_prev_tx(redeem, form)
     _MockMsHandler.unspent_address = addr
     _MockMsHandler.utxo_txid = txid_hex
-    _MockMsHandler.utxo_script_hex = bytes(
-        make_p2sh_lock_script(hash160=hash160(redeem))).hex()
+    if form == MsForm.P2WSH:
+        _MockMsHandler.utxo_script_hex = bytes(
+            make_p2wsh_lock_script(sha256=sha256(redeem))).hex()
+    else:
+        _MockMsHandler.utxo_script_hex = bytes(
+            make_p2sh_lock_script(hash160=hash160(redeem))).hex()
     _MockMsHandler.raw_hex = raw_hex
     server = HTTPServer(('127.0.0.1', 0), _MockMsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -355,9 +370,11 @@ def test_ms_cli_send_matches_python_creator(ms_cli):
     """`ms send` (mock) must emit byte-for-byte the PSBT the Python
     `ms_create_psbt` builds over the same mock data: same fee loop,
     same REDEEM_SCRIPT fields, same own partial signatures."""
-    _addr, redeem = ms_create_address(n=3, m=2, keys=_xc_quorum_pubkeys())
+    _addr, redeem = ms_create_address(n=3, m=2,
+                                      keys=_xc_quorum_pubkeys(),
+                                      form=MsForm.P2SH)
     dst = _dst_address()
-    with mock_ms_server(redeem) as mock_url:
+    with mock_ms_server(redeem, MsForm.P2SH) as mock_url:
         rc, out, err = _run_ms(ms_cli, _ms_send_args(dst),
                                stdin=_seed_stdin(), mock_url=mock_url)
         assert rc == 0, f'ms send failed: rc={rc} err={err!r}'
@@ -369,7 +386,7 @@ def test_ms_cli_send_matches_python_creator(ms_cli):
                                  keys=[_xc_pub(0, XC_SEED_B),
                                        _xc_pub(1, XC_SEED_B)],
                                  own_nonce=0, confirmations=6, feekb=1000,
-                                 fee=0)
+                                 fee=0, form=MsForm.P2SH)
     assert cli_b64 == outcome.psbt_b64
     # And it decodes to the quorum input with the own signature
     # (psbt decode parity, the Python side of the `psbt decode` dump).
@@ -388,9 +405,11 @@ def test_ms_cli_chain_sign_combine_finalize_extract_matches_python(ms_cli):
     membership signing) -> `combine` -> `finalize` -> `extract`; the
     Python mirror replays the same stages on the same PSBT and every
     stage must agree byte-for-byte."""
-    _addr, redeem = ms_create_address(n=3, m=2, keys=_xc_quorum_pubkeys())
+    _addr, redeem = ms_create_address(n=3, m=2,
+                                      keys=_xc_quorum_pubkeys(),
+                                      form=MsForm.P2SH)
     dst = _dst_address()
-    with mock_ms_server(redeem) as mock_url:
+    with mock_ms_server(redeem, MsForm.P2SH) as mock_url:
         rc, out, err = _run_ms(ms_cli, _ms_send_args(dst),
                                stdin=_seed_stdin(), mock_url=mock_url)
         assert rc == 0, f'ms send failed: rc={rc} err={err!r}'
@@ -429,3 +448,107 @@ def _run_psbt(bin_path: str, args: list, stdin: str):
                           input=stdin.encode(), capture_output=True,
                           timeout=60)
     return proc.returncode, proc.stdout.decode(), proc.stderr.decode()
+
+
+# ---------------------------------------------------------------------------
+# v0.3: the P2WSH witness form of the quorum through the same harness
+# (`ms create --form p2wsh` / `ms send --form p2wsh` + the Phase 14
+# chain). The redeem script is identical in both forms; the address,
+# the UTXO source and the spend layout are the witness form's.
+# ---------------------------------------------------------------------------
+
+
+def test_ms_cli_create_p2wsh_matches_python(ms_cli):
+    """`ms create 3 2 --form p2wsh --key ... -n 0` must print exactly
+    the `bc1q...` address + redeem the Python `ms_create_address`
+    derives for the same key set and form."""
+    args = ['create', '3', '2', '--form', 'p2wsh',
+            '--key', _xc_pub(1).hex(), '--key', _xc_pub(2).hex(),
+            '-n', '0']
+    rc, out, err = _run_ms(ms_cli, args, stdin=_seed_stdin())
+    assert rc == 0, f'ms create failed: rc={rc} err={err!r}'
+    cli = _parse_create_output(out)
+    addr, redeem = ms_create_address(
+        n=3, m=2, keys=[_xc_pub(1), _xc_pub(2), _xc_pub(0)],
+        form=MsForm.P2WSH)
+    assert cli['address'] == addr
+    assert cli['address'].startswith('bc1q')
+    assert cli['redeem_hex'] == redeem.hex()
+    # The P2SH form of the same tuple shares the redeem script but
+    # not the address.
+    p2sh_addr, p2sh_redeem = ms_create_address(
+        n=3, m=2, keys=[_xc_pub(0), _xc_pub(1), _xc_pub(2)],
+        form=MsForm.P2SH)
+    assert p2sh_redeem == redeem
+    assert p2sh_addr != addr
+
+
+def _ms_send_args_p2wsh(dst: str) -> list:
+    return ['send', dst, '0.0005', '3', '2', '--form', 'p2wsh',
+            '--key', _xc_pub(0, XC_SEED_B).hex(),
+            '--key', _xc_pub(1, XC_SEED_B).hex(),
+            '-n', '0', '-c', '6', '-f', '0', '-k', '1000',
+            '--provider', 'mock']
+
+
+def test_ms_cli_send_p2wsh_and_chain_match_python(ms_cli):
+    """`ms send --form p2wsh` (mock) must emit byte-for-byte the PSBT
+    the Python `ms_create_psbt` builds in the witness form: same fee
+    loop (witness-sized vsize), same WITNESS_UTXO/WITNESS_SCRIPT
+    fields, same own partial signature -- and the full chain (CLI
+    `psbt sign` cosigner -> combine -> finalize -> extract) must
+    agree stage-by-stage down to the witness wire hex."""
+    _addr, redeem = ms_create_address(n=3, m=2, keys=_xc_quorum_pubkeys(),
+                                      form=MsForm.P2WSH)
+    dst = _dst_address()
+    with mock_ms_server(redeem, MsForm.P2WSH) as mock_url:
+        rc, out, err = _run_ms(ms_cli, _ms_send_args_p2wsh(dst),
+                               stdin=_seed_stdin(), mock_url=mock_url)
+        assert rc == 0, f'ms send failed: rc={rc} err={err!r}'
+        cli_b64 = out.strip().splitlines()[-1]
+
+        backend = BlockchainInfoBackend(base_url=mock_url)
+        outcome = ms_create_psbt(seed=XC_SEED, passphrase='',
+                                 backend=backend, dst=dst, amount=50_000,
+                                 n=3, m=2,
+                                 keys=[_xc_pub(0, XC_SEED_B),
+                                       _xc_pub(1, XC_SEED_B)],
+                                 own_nonce=0, confirmations=6, feekb=1000,
+                                 fee=0, form=MsForm.P2WSH)
+    assert cli_b64 == outcome.psbt_b64
+
+    # The Creator container carries the witness-form fields.
+    psbt = from_base64(s=cli_b64)
+    assert psbt.inputs[0].redeem_script is None
+    assert psbt.inputs[0].witness_script == redeem
+    assert [k for k, _sig in psbt.inputs[0].partial_sigs] == [_xc_pub(0)]
+
+    # Full chain: the CLI cosigner signs (membership), then finalize +
+    # extract; the Python mirror replays the same stages.
+    rc, signed, err = _run_psbt(ms_cli, ['sign'],
+                                _seed_stdin(seed=XC_SEED_B) + cli_b64
+                                + '\n')
+    assert rc == 0, f'psbt sign failed: rc={rc} err={err!r}'
+    signed = signed.strip().splitlines()[-1]
+    rc, finalized, err = _run_psbt(ms_cli, ['finalize'], signed + '\n')
+    assert rc == 0, f'psbt finalize failed: rc={rc} err={err!r}'
+    finalized = finalized.strip()
+    rc, hexed, err = _run_psbt(ms_cli, ['extract'], finalized + '\n')
+    assert rc == 0, f'psbt extract failed: rc={rc} err={err!r}'
+    hexed = hexed.strip()
+
+    py = from_base64(s=cli_b64)
+    assert sign_psbt_input(psbt=py, index=0,
+                           privkey=_xc_key(0, XC_SEED_B)) is True
+    assert to_base64(psbt=py) == signed
+    finalize_psbt(psbt=py)
+    assert to_base64(psbt=py) == finalized
+    wire = extract_transaction(psbt=py).serialize_wire().hex()
+    assert wire == hexed
+    # The extracted spend is a witness spend: empty scriptSig and the
+    # BIP-141 stack [empty dummy, M sigs, redeem].
+    tx = extract_transaction(psbt=py)
+    assert tx.vin[0].script == b''
+    assert len(tx.vin[0].witness) == 4
+    assert tx.vin[0].witness[0] == b''
+    assert tx.vin[0].witness[-1] == redeem

@@ -646,6 +646,47 @@ def decode_segwit_addr(address: str = NotNone) -> WitnessProgram:
     return WitnessProgram(version=version, program=program)
 
 
+@require_kwargs_only
+def decode_p2wsh_addr(address: str = NotNone) -> WitnessProgram:
+    """Strictly decode a mainnet **P2WSH** address (`bc1q...` with a
+    32-byte program) into its witness program (v0.3, mirrors
+    `address.rs::decode_p2wsh_address`).
+
+    The dedicated P2WSH decoder of the v0.3 multisig surface: the
+    general `decode_segwit_addr` keeps its Phase-13 contract (v0/32
+    programs answered `SegWitUnsupportedProgram` there), while the
+    quorum surface needs to recognize its own `bc1q...` addresses.
+    Rejection rules mirror the general decoder: bech32 structure and
+    checksum, HRP `bc`, witness version 0, program exactly 32 bytes,
+    the bech32 (not bech32m) checksum constant for v0 (BIP-350 rule
+    2). Versions >= 1 and 20-byte v0 programs (P2WPKH) raise
+    `SegWitUnsupportedProgram` -- this decoder is P2WSH-only by
+    contract."""
+    from yubtc.bech32 import BECH32, Bech32Error, five_bit_to_bytes, decode
+    try:
+        hrp, encoding, data = decode(s=address)
+    except Bech32Error as e:
+        raise _map_bech32_error(e) from e
+    if hrp != HRP_MAINNET:
+        raise SegWitInvalidHrp(f'invalid bech32 human-readable part {hrp!r} '
+                               f'(mainnet "bc" only)')
+    if not data:
+        raise SegWitInvalidStructure('malformed bech32 address structure')
+    version = data[0]
+    program = five_bit_to_bytes(data=bytes(data[1:]))
+    if program is None:
+        raise SegWitInvalidStructure('malformed bech32 address structure')
+    if version != 0:
+        raise SegWitUnsupportedProgram('P2WSH addresses (witness v0, 32-byte '
+                                       'program) are out of scope')
+    if len(program) != 32:
+        raise SegWitUnsupportedProgram('P2WSH addresses (witness v0, 32-byte '
+                                       'program) are out of scope')
+    if encoding != BECH32:
+        raise SegWitInvalidChecksum('bech32 checksum mismatch')
+    return WitnessProgram(version=version, program=program)
+
+
 """
 >>> p = 115792089237316195423570985008687907853269984665640564039457584007908834671663
 >>> x = 55066263022277343669578718895168534326250603453777594175500187360389116729240
@@ -658,22 +699,36 @@ def make_lock_script(address: TAddress) -> 'CScript':
     """Build the lock script that pays to `address` (mirrors
     `wallet.rs::make_lock_script_for_address` after Phase 13).
 
-    Dispatch on the address form: a `bc1`/`BC1` prefix goes to the
-    bech32 path -- witness v0 builds a P2WPKH script, witness v1 a
-    P2TR script (typed decode errors propagate); anything else takes
-    the unchanged base58check path (P2PKH/P2SH, other version bytes
-    raise `ValueError('address not supported')`)."""
+    Dispatch on the address form (spec.md «Скрипты» + v0.3 «P2WSH»):
+    a `bc1`/`BC1` prefix goes to the bech32 path -- witness v0/32
+    builds a P2WSH script (v0.3), witness v0/20 a P2WPKH script,
+    witness v1 a P2TR script (typed decode errors propagate);
+    anything else takes the unchanged base58check path (P2PKH/P2SH,
+    other version bytes raise `ValueError('address not
+    supported')`)."""
     from yubtc.script import (CScript, OP_DUP, OP_HASH160, OP_EQUALVERIFY,
-                              OP_CHECKSIG, OP_EQUAL, make_p2wpkh_lock_script,
-                              make_p2tr_lock_script)
-    from yubtc.crypto import PREFIX_P2PKH, PREFIX_P2SH
+                              OP_CHECKSIG, OP_EQUAL, make_p2tr_lock_script,
+                              make_p2wpkh_lock_script,
+                              make_p2wsh_lock_script)
+    from yubtc.crypto import PREFIX_P2PKH, PREFIX_P2SH, decode_p2wsh_addr
     from yubtc.misc import unpack_address
     # Legacy call sites pass base58 addresses as `bytes` (the
     # `privkey2addr`/`pubkey2addr` return type); SegWit addresses are
     # strings. Normalise the dispatch to `str`.
     addr_str = address.decode('ascii') if isinstance(address, bytes) else address
     if addr_str.startswith(('bc1', 'BC1')):
-        wp = decode_segwit_addr(address=addr_str)
+        # P2WSH first: the general decode_segwit_addr keeps its
+        # Phase-13 contract (it answers SegWitUnsupportedProgram for
+        # v0/32), so the P2WSH program is recognized by its dedicated
+        # decoder before falling through to the P2WPKH/P2TR dispatch
+        # (v0.3: the multisig quorum's cashback address is a `bc1q...`
+        # P2WSH output).
+        try:
+            wp = decode_p2wsh_addr(address=addr_str)
+        except SegWitUnsupportedProgram:
+            wp = decode_segwit_addr(address=addr_str)
+        else:
+            return make_p2wsh_lock_script(sha256=wp.program)
         if wp.version == 0:
             return make_p2wpkh_lock_script(hash160=wp.program)
         return make_p2tr_lock_script(output_key=wp.program)

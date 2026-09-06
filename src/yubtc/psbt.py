@@ -43,12 +43,15 @@ Contract highlights (all tested, spec.md «Сериализация»):
 Signing is restricted to P2PKH / P2WPKH / P2TR key-path /
 P2SH-multisig (Phase 15 -- via a canonical `REDEEM_SCRIPT`:
 membership signing with `scriptCode = redeem`, the
-`OP_0 ‖ sigs ‖ redeem` finalize layout) and reuses the Phase 13
+`OP_0 ‖ sigs ‖ redeem` finalize layout) / P2WSH-multisig (v0.3 --
+via a canonical `WITNESS_SCRIPT` membership, BIP-143 with
+`scriptCode = redeem`, the `[dummy, sigs..., redeem]` witness
+layout) and reuses the Phase 13
 primitives (`bip143_sighash`, `taproot_keypath_sighash`,
 `taproot_sign_sighash`, RFC6979 ECDSA, Schnorr with
 ``aux_rand = 0x00 * 32``); signatures match the direct `sign_segwit`
-path byte-for-byte. P2WSH and redeem-less P2SH inputs answer
-`UnsupportedInputScript`.
+path byte-for-byte. P2WSH without a witness script and redeem-less
+P2SH inputs answer `UnsupportedInputScript`.
 """
 from struct import pack, unpack
 from typing import NamedTuple, Optional
@@ -689,11 +692,19 @@ class CreateInput(NamedTuple):
     redeem script of a P2SH-multisig input: it is validated against
     the `scriptPubKey` commitment and written as `REDEEM_SCRIPT
     (0x04)` -- the field becomes W/R on that path (preserve-only for
-    every other form)."""
+    every other form).
+
+    `witness_script` (v0.3) is the canonical bare CHECKMULTISIG
+    witness script of a P2WSH-multisig input: validated against the
+    SHA-256 `scriptPubKey` commitment and written as `WITNESS_SCRIPT
+    (0x05)` (W/R on that path; preserve-only otherwise) -- no
+    `NON_WITNESS_UTXO`, no prev-tx fetch (BIP-143 commits the
+    amount)."""
     amount: int
     script_pubkey: bytes
     prev_tx: Optional[PsbtTransaction]
     redeem_script: Optional[bytes] = None
+    witness_script: Optional[bytes] = None
 
 
 class Psbt(NamedTuple):
@@ -1168,6 +1179,32 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
                 partial_sigs=[], sighash_type=None,
                 redeem_script=redeem, witness_script=None,
                 final_scriptsig=None, final_scriptwitness=None, unknown=[]))
+        elif (_is_p2wsh_script(create.script_pubkey)
+                and create.witness_script is not None):
+            # v0.3 Creator branch (spec «P2WSH (v0.3)»): the input
+            # spends the P2WSH of a known witness script -- the
+            # witness form of the multisig quorum. The witness script
+            # must be canonical (R-MS-3) and SHA-256-commit to the
+            # `scriptPubKey` program; the UTXO rides as
+            # `WITNESS_UTXO` (BIP-143 commits the amount -- no
+            # `NON_WITNESS_UTXO`, no prev-tx fetch), and
+            # `WITNESS_SCRIPT (0x05)` becomes W/R on this path.
+            from yubtc.hash import sha256
+            redeem = create.witness_script
+            try:
+                extract_multisig_quorum(script=redeem)
+            except ValueError:
+                raise UnsupportedInputScript()
+            committed = create.script_pubkey[2:34]
+            if sha256(redeem) != committed:
+                raise UtxoMismatch()
+            psbt_inputs.append(PsbtIn(
+                non_witness_utxo=None,
+                witness_utxo=PsbtTxOut(amount=create.amount,
+                                       script=create.script_pubkey),
+                partial_sigs=[], sighash_type=None, redeem_script=None,
+                witness_script=redeem, final_scriptsig=None,
+                final_scriptwitness=None, unknown=[]))
         else:
             psbt_inputs.append(PsbtIn(
                 non_witness_utxo=None,
@@ -1219,7 +1256,9 @@ def sign_psbt_input(psbt: Psbt = NotNone, index: int = NotNone,
         return False
     script_pubkey, amount = data
     if _is_p2wsh_script(script_pubkey):
-        raise UnsupportedInputScript()
+        return _sign_psbt_input_p2wsh_multisig(psbt=psbt, index=index,
+                                               privkey=privkey,
+                                               amount=amount)
     if _is_p2sh_script(script_pubkey):
         return _sign_psbt_input_p2sh_multisig(psbt=psbt, index=index,
                                               privkey=privkey)
@@ -1318,6 +1357,65 @@ def _sign_psbt_input_p2sh_multisig(psbt: Psbt, index: int, privkey) -> bool:
     return True
 
 
+def _sign_psbt_input_p2wsh_multisig(psbt: Psbt, index: int, privkey,
+                                    amount: int) -> bool:
+    """Signer, P2WSH-multisig branch (v0.3, spec «P2WSH (v0.3)»): sign
+    the BIP-143 SIGHASH_ALL digest with `scriptCode = redeem` when the
+    key's compressed pubkey is a member of the witness script's
+    quorum. See `sign_psbt_input` for the full contract; `index` must
+    reference a canonical-P2WSH input and `amount` is the
+    `WITNESS_UTXO` value the BIP-143 digest commits to."""
+    from yubtc.crypto import privkey2pubkey, sign_hash
+    from yubtc.hash import sha256
+    from yubtc.script import (InvalidMultisigRedeem,
+                              extract_multisig_quorum)
+    pubkey = privkey2pubkey(privkey=privkey)
+    redeem = psbt.inputs[index].witness_script
+    if redeem is None:
+        # P2WSH without a witness script: pre-v0.3 refusal (yubtc
+        # cannot know what the SHA-256 commitment is).
+        raise UnsupportedInputScript()
+    # R-MS-3: only canonical bare CHECKMULTISIG witness scripts are
+    # signed; anything else (including duplicate keys) is refused.
+    try:
+        _, keys = extract_multisig_quorum(script=redeem)
+    except InvalidMultisigRedeem:
+        raise UnsupportedInputScript()
+    # BIP-174 "Data Signers Check For": the witness script must
+    # SHA-256-commit to the program in the UTXO's P2WSH scriptPubKey.
+    script_pubkey = input_utxo_data(psbt=psbt, index=index)[0]
+    if sha256(redeem) != script_pubkey[2:34]:
+        raise UtxoMismatch()
+    # Membership, not scriptPubKey shape (R-MS-4).
+    if not any(k == pubkey for k in keys):
+        return False
+    input_ = psbt.inputs[index]
+    # ОВ-8: the pinned sighash for the BIP-143 ECDSA forms.
+    if input_.sighash_type is not None \
+            and input_.sighash_type != PSBT_SIGHASH_ALL:
+        raise UnsupportedSighashType(sighash_type=input_.sighash_type)
+    # BIP-174 "Data Signers Check For": a *present*
+    # NON_WITNESS_UTXO must still hash to the outpoint being spent
+    # (the field is optional for witness forms).
+    prev = input_.non_witness_utxo
+    if prev is not None and prev.id() != psbt.unsigned_tx.vin[index].txhash:
+        raise UtxoMismatch()
+    # Idempotent: our signature is already in place.
+    if any(k == pubkey for k, _ in input_.partial_sigs):
+        return True
+    # BIP-143 digest with scriptCode = the serialized witness script
+    # (`CompactSize(|redeem|) || redeem` -- the BIP-143 scriptCode
+    # serialization, not an OP_PUSHDATA push), the amount committed
+    # from the WITNESS_UTXO.
+    script_code = compact_size(len(redeem)) + redeem
+    sighash = bip143_sighash(tx=psbt.unsigned_tx, input_index=index,
+                             script_code=script_code, amount=amount)
+    sig = sign_hash(privkey=privkey, datahash=sighash) \
+        + bytes([PSBT_SIGHASH_ALL])
+    _insert_partial_sig(input_, pubkey, sig)
+    return True
+
+
 @require_kwargs_only
 def combine_psbt(psbt: Psbt = NotNone, other: Psbt = NotNone) -> Psbt:
     """Combiner: merge `other` into a copy of `psbt`.
@@ -1386,6 +1484,10 @@ def finalize_psbt_input(psbt: Psbt = NotNone, index: int = NotNone) -> None:
     if _is_p2sh_script(script_pubkey):
         _finalize_psbt_input_p2sh_multisig(psbt=psbt, index=index,
                                            script_pubkey=script_pubkey)
+        return
+    if _is_p2wsh_script(script_pubkey):
+        _finalize_psbt_input_p2wsh_multisig(psbt=psbt, index=index,
+                                            script_pubkey=script_pubkey)
         return
     form = _form_of_script(script_pubkey)
     if form is None:
@@ -1481,6 +1583,59 @@ def _finalize_psbt_input_p2sh_multisig(psbt: Psbt, index: int,
     input_.witness_script = None
 
 
+def _finalize_psbt_input_p2wsh_multisig(psbt: Psbt, index: int,
+                                        script_pubkey: bytes) -> None:
+    """Finalizer, P2WSH-multisig branch (v0.3, spec «P2WSH (v0.3)»).
+    See `finalize_psbt_input` for the full contract; `index` must
+    reference a canonical-P2WSH input. The final
+    `FINAL_SCRIPTWITNESS` is the BIP-141 stack -- empty-string dummy,
+    the M signatures in script-key order, the witness script -- never
+    a `scriptSig`."""
+    from yubtc.hash import sha256
+    from yubtc.script import (InvalidMultisigRedeem,
+                              extract_multisig_quorum,
+                              make_multisig_witness)
+    input_ = psbt.inputs[index]
+    # A P2WSH input is finalizable only with a known witness script.
+    redeem = input_.witness_script
+    if redeem is None:
+        raise IncompleteInput(index=index)
+    # R-MS-3: foreign (non-canonical) witness scripts are refused,
+    # not merely left incomplete.
+    try:
+        m, keys = extract_multisig_quorum(script=redeem)
+    except InvalidMultisigRedeem:
+        raise UnsupportedInputScript()
+    # The witness script must commit to the scriptPubKey program.
+    if sha256(redeem) != script_pubkey[2:34]:
+        raise UtxoMismatch()
+    # ОВ-8: SIGHASH_ALL is pinned; anything else blocks the input.
+    if input_.sighash_type is not None \
+            and input_.sighash_type != PSBT_SIGHASH_ALL:
+        raise IncompleteInput(index=index)
+    # One valid-sighash signature per participating script key
+    # (greedy CHECKMULTISIG semantics -- any M distinct members can
+    # carry the spend; collected in script-key order, extras
+    # truncated from the tail -- the Phase 15 rule, carried over).
+    member_sigs = []
+    for key in keys:
+        sig = next((s for pk, s in input_.partial_sigs if pk == key),
+                   None)
+        if sig is not None:
+            if not sig or sig[-1] != PSBT_SIGHASH_ALL:
+                raise IncompleteInput(index=index)
+            member_sigs.append(sig)
+    if len(member_sigs) < m:
+        raise IncompleteInput(index=index)
+    input_.final_scriptwitness = _encode_witness_stack(
+        make_multisig_witness(redeem=redeem, sigs=member_sigs[:m]))
+    # Intermediates out, UTXOs and unknowns stay.
+    input_.partial_sigs = []
+    input_.sighash_type = None
+    input_.redeem_script = None
+    input_.witness_script = None
+
+
 def finalize_psbt(psbt: Psbt = NotNone) -> None:
     """Finalizer: finalize every input that is complete, leave the
     rest untouched (per-input operation; completeness of the whole
@@ -1528,6 +1683,24 @@ def extract_transaction(psbt: Psbt = NotNone) -> PsbtTransaction:
                     raise NotFinalized()
                 vin.append(psbt.unsigned_tx.vin[i]._replace(
                     script=input_.final_scriptsig))
+                continue
+            if data is not None and _is_p2wsh_script(script_pubkey):
+                # P2WSH-multisig (v0.3): witness spend, no scriptSig
+                # (a pushed scriptSig on a witness v0 output is not a
+                # form yubtc builds -- the symmetrical refusal of the
+                # P2SH arm's witness check). Requires
+                # FINAL_SCRIPTWITNESS.
+                if input_.final_scriptsig is not None:
+                    raise IncompleteInput(index=i)
+                if input_.final_scriptwitness is None:
+                    raise NotFinalized()
+                try:
+                    stack = _decode_witness_stack(
+                        input_.final_scriptwitness)
+                except PsbtError:
+                    raise IncompleteInput(index=i)
+                vin.append(psbt.unsigned_tx.vin[i]._replace(
+                    script=b'', witness=tuple(stack)))
                 continue
             # Without a recognizable UTXO form the Extractor cannot
             # validate completeness -- refuse (BIP-174 Extractor MUST

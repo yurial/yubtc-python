@@ -37,9 +37,9 @@ from struct import pack
 import pytest
 
 from yubtc.crypto import (privkey2privwif, privkey2pubkey, pubkey2segwit_addr,
-                          seed2privkey)
-from yubtc.fwd import MS_MAX_PUBKEYS, PSBT_SIGHASH_ALL
-from yubtc.hash import hash160
+                          pubkey2taproot_addr, seed2privkey)
+from yubtc.fwd import MS_MAX_PUBKEYS, PSBT_SIGHASH_ALL, MsForm
+from yubtc.hash import hash160, sha256
 from yubtc.misc import is_dust
 from yubtc.psbt import (CreateInput, IncompleteInput, NotFinalized,
                         PsbtTransaction, PsbtTxIn, PsbtTxOut,
@@ -48,11 +48,14 @@ from yubtc.psbt import (CreateInput, IncompleteInput, NotFinalized,
                         extract_transaction, finalize_psbt,
                         finalize_psbt_input, parse_psbt, serialize_psbt,
                         sign_psbt, sign_psbt_input, to_base64)
+from yubtc.psbt import _decode_witness_stack
 from yubtc.script import (InvalidMultisigRedeem, OP_0, OP_CHECKMULTISIG,
                           OP_PUSHDATA1, OP_PUSHDATA2, extract_multisig_quorum,
-                          make_multisig_redeem_script,
+                          extract_p2wsh_program, make_multisig_redeem_script,
                           make_multisig_script_sig, make_p2sh_lock_script,
-                          push_data, push_data_len, redeem2p2sh_addr)
+                          make_multisig_witness, make_p2tr_lock_script,
+                          make_p2wsh_lock_script, push_data, push_data_len,
+                          redeem2p2sh_addr, redeem2p2wsh_addr)
 from yubtc.transaction import CIn, compact_size, toVarInt
 from yubtc.wallet import (DuplicateKey, ForeignWif, KeyCountMismatch,
                           MsError, NotAParticipant, QuorumBounds,
@@ -1183,7 +1186,7 @@ def wallet_fixture_quorum():
     `ms_fixture_quorum`)."""
     keys = [wallet_pubkey(1), wallet_pubkey(2)]
     addr, redeem = ms_create_address(n=3, m=2,
-                                     keys=[wallet_pubkey(0)] + keys)
+                                     keys=[wallet_pubkey(0)] + keys, form=MsForm.P2SH)
     script = bytes(make_p2sh_lock_script(hash160=hash160(redeem)))
     return keys, addr, redeem, script
 
@@ -1257,7 +1260,7 @@ def wallet_dst() -> str:
 
 def test_ms_create_address_builds_sorted_redeem_and_p2sh_address():
     keys = [wallet_pubkey(2), wallet_pubkey(0), wallet_pubkey(1)]
-    addr, redeem = ms_create_address(n=3, m=2, keys=keys)
+    addr, redeem = ms_create_address(n=3, m=2, keys=keys, form=MsForm.P2SH)
     # The redeem is canonical, sorted, and hashes to the address.
     m, script_keys = extract_multisig_quorum(script=redeem)
     assert m == 2
@@ -1277,27 +1280,27 @@ def test_ms_create_address_validation_errors():
     keys = [wallet_pubkey(0), wallet_pubkey(1)]
     # Count mismatch.
     with pytest.raises(KeyCountMismatch) as ei:
-        ms_create_address(n=3, m=2, keys=keys)
+        ms_create_address(n=3, m=2, keys=keys, form=MsForm.P2SH)
     assert (ei.value.expected, ei.value.got) == (3, 2)
     with pytest.raises(KeyCountMismatch):
-        ms_create_address(n=1, m=1, keys=keys)
+        ms_create_address(n=1, m=1, keys=keys, form=MsForm.P2SH)
     # Bounds: m = 0, m > n, n > 15.
     for n, m, ks in ((2, 0, keys), (2, 3, keys)):
         with pytest.raises(QuorumBounds):
-            ms_create_address(n=n, m=m, keys=ks)
+            ms_create_address(n=n, m=m, keys=ks, form=MsForm.P2SH)
     sixteen = [bytes([0x02]) + bytes(31) + bytes([i + 1])
                for i in range(16)]
     with pytest.raises(QuorumBounds):
-        ms_create_address(n=16, m=16, keys=sixteen)
+        ms_create_address(n=16, m=16, keys=sixteen, form=MsForm.P2SH)
     # Duplicates.
     with pytest.raises(DuplicateKey):
         ms_create_address(n=2, m=1, keys=[wallet_pubkey(0),
-                                          wallet_pubkey(0)])
+                                          wallet_pubkey(0)], form=MsForm.P2SH)
     # A key outside the 33-byte canonical shape cannot build a redeem
     # script: the wallet maps the builder failure onto QuorumBounds
     # (the quorum is outside the spendable envelope).
     with pytest.raises(QuorumBounds):
-        ms_create_address(n=2, m=1, keys=[b'\x02' * 32, b'\x03' * 32])
+        ms_create_address(n=2, m=1, keys=[b'\x02' * 32, b'\x03' * 32], form=MsForm.P2SH)
 
 
 def test_ms_create_address_invariant_under_key_permutation_many_orders():
@@ -1306,9 +1309,9 @@ def test_ms_create_address_invariant_under_key_permutation_many_orders():
     # (24 permutations) plus 97 deterministic LCG shuffles (the Rust
     # test's sweep).
     keys = [wallet_pubkey(i) for i in range(4)]
-    canon_addr, canon_redeem = ms_create_address(n=4, m=3, keys=keys)
+    canon_addr, canon_redeem = ms_create_address(n=4, m=3, keys=keys, form=MsForm.P2SH)
     for perm in itertools.permutations(keys):
-        addr, redeem = ms_create_address(n=4, m=3, keys=list(perm))
+        addr, redeem = ms_create_address(n=4, m=3, keys=list(perm), form=MsForm.P2SH)
         assert (addr, redeem) == (canon_addr, canon_redeem)
     order = list(keys)
     state = 0x9e3779b97f4a7c15
@@ -1318,7 +1321,7 @@ def test_ms_create_address_invariant_under_key_permutation_many_orders():
                      + 1442695040888963407) % (1 << 64)
             j = (state >> 33) % (i + 1)
             order[i], order[j] = order[j], order[i]
-        addr, redeem = ms_create_address(n=4, m=3, keys=order)
+        addr, redeem = ms_create_address(n=4, m=3, keys=order, form=MsForm.P2SH)
         assert (addr, redeem) == (canon_addr, canon_redeem)
 
 
@@ -1417,7 +1420,7 @@ def test_ms_create_psbt_builds_and_signs_over_a_mock_backend():
                              n=3, m=2,
                              keys=[wallet_pubkey(1), wallet_pubkey(2)],
                              own_nonce=0, confirmations=6, feekb=1000,
-                             fee=0)
+                             fee=0, form=MsForm.P2SH)
     from yubtc.psbt import from_base64
     psbt = from_base64(s=outcome.psbt_b64)
     # The PSBT carries the quorum input, its redeem script and exactly
@@ -1454,7 +1457,7 @@ def test_ms_create_psbt_requires_participation_and_valid_quorum():
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, n=3, m=2, keys=cosigners,
                        own_nonce=None, confirmations=6, feekb=1000,
-                       fee=0)
+                       fee=0, form=MsForm.P2SH)
 
     # R-MS-1 pins: N, M and the own nonce are entered explicitly —
     # the signature carries no value default for n/m (`NotNone`
@@ -1470,11 +1473,11 @@ def test_ms_create_psbt_requires_participation_and_valid_quorum():
     with pytest.raises(TypeError, match='n not set'):
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, m=2, keys=cosigners,
-                       own_nonce=0, confirmations=6, feekb=1000, fee=0)
+                       own_nonce=0, confirmations=6, feekb=1000, fee=0, form=MsForm.P2SH)
     with pytest.raises(TypeError, match='m not set'):
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, n=3, keys=cosigners,
-                       own_nonce=0, confirmations=6, feekb=1000, fee=0)
+                       own_nonce=0, confirmations=6, feekb=1000, fee=0, form=MsForm.P2SH)
 
     # n = 16 (15 cosigners + own) -> QuorumBounds.
     fifteen = [bytes([0x02]) + bytes(31) + bytes([i + 1])
@@ -1482,14 +1485,14 @@ def test_ms_create_psbt_requires_participation_and_valid_quorum():
     with pytest.raises(QuorumBounds):
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, n=16, m=16, keys=fifteen,
-                       own_nonce=0, confirmations=6, feekb=1000, fee=0)
+                       own_nonce=0, confirmations=6, feekb=1000, fee=0, form=MsForm.P2SH)
 
     # Confirmations filter: the only UTXO has 10 confs, asking for 50
     # leaves no funds -> make_vout refuses (AmountExceedsInput).
     with pytest.raises(ValueError, match=r'amount \+ fee exceeds input'):
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, n=3, m=2, keys=cosigners,
-                       own_nonce=0, confirmations=50, feekb=1000, fee=0)
+                       own_nonce=0, confirmations=50, feekb=1000, fee=0, form=MsForm.P2SH)
 
 
 def test_ms_create_psbt_surfaces_network_and_raw_tx_failures():
@@ -1502,7 +1505,7 @@ def test_ms_create_psbt_surfaces_network_and_raw_tx_failures():
     with pytest.raises(RuntimeError, match='mock failure'):
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, n=3, m=2, keys=cosigners,
-                       own_nonce=0, confirmations=6, feekb=1000, fee=0)
+                       own_nonce=0, confirmations=6, feekb=1000, fee=0, form=MsForm.P2SH)
 
     # A UTXO whose raw prev tx is missing -> the backend's error
     # propagates (explicit fee: the loop is skipped, the Creator's raw
@@ -1513,7 +1516,7 @@ def test_ms_create_psbt_surfaces_network_and_raw_tx_failures():
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, n=3, m=2, keys=cosigners,
                        own_nonce=0, confirmations=6, feekb=1000,
-                       fee=1000)
+                       fee=1000, form=MsForm.P2SH)
 
     # Garbage raw prev tx -> ValueError naming the tx.
     backend = MsMockBackend(
@@ -1525,7 +1528,7 @@ def test_ms_create_psbt_surfaces_network_and_raw_tx_failures():
         ms_create_psbt(seed=WALLET_SEED, passphrase='', backend=backend,
                        dst=dst, amount=50_000, n=3, m=2, keys=cosigners,
                        own_nonce=0, confirmations=6, feekb=1000,
-                       fee=1000)
+                       fee=1000, form=MsForm.P2SH)
 
 
 def test_ms_create_psbt_explicit_fee_and_quorum_cashback_dust():
@@ -1539,7 +1542,7 @@ def test_ms_create_psbt_explicit_fee_and_quorum_cashback_dust():
     outcome = ms_create_psbt(seed=WALLET_SEED, passphrase='',
                              backend=backend, dst=dst, amount=50_000,
                              n=3, m=2, keys=cosigners, own_nonce=0,
-                             confirmations=6, feekb=1000, fee=1000)
+                             confirmations=6, feekb=1000, fee=1000, form=MsForm.P2SH)
     assert outcome.fee == 1000
     assert outcome.amount == 50_000
     assert outcome.cashback == 9_000
@@ -1551,7 +1554,7 @@ def test_ms_create_psbt_explicit_fee_and_quorum_cashback_dust():
     outcome = ms_create_psbt(seed=WALLET_SEED, passphrase='',
                              backend=backend, dst=dst, amount=59_600,
                              n=3, m=2, keys=cosigners, own_nonce=0,
-                             confirmations=6, feekb=1000, fee=350)
+                             confirmations=6, feekb=1000, fee=350, form=MsForm.P2SH)
     assert outcome.cashback == 50
     assert is_dust(amount=outcome.cashback, script=script)
 
@@ -1704,3 +1707,702 @@ def test_ms_rows_first_bytes_table():
     psbt = ms_fixture_psbt()
     assert base64.b64decode(to_base64(psbt=psbt))[:8].hex() \
         == FIRST_BYTES['unsigned']
+
+
+# --- 6. P2WSH (v0.3): the witness form of the quorum ---------------------
+#
+# Mirrors the Rust oracle's v0.3 surface: the same canonical redeem
+# script addressed as native P2WSH (`00 20 || SHA256(redeem)`), the
+# BIP-141 witness stack (`[empty dummy, M sigs, redeem]` -- no
+# separate OP_0 byte), the BIP-143 digest with
+# `scriptCode = CompactSize(|redeem|) || redeem`, and the four PSBT
+# role branches over `WITNESS_SCRIPT (0x05)`.
+
+
+def ms_p2wsh_spk() -> bytes:
+    return bytes(make_p2wsh_lock_script(sha256=sha256(ms_redeem())))
+
+
+def ms_p2wsh_prev_tx() -> PsbtTransaction:
+    """Prev tx paying 60_000 sat to the fixture P2WSH address."""
+    return PsbtTransaction(
+        version=2,
+        vin=(PsbtTxIn(txhash=b'\x44' * 32, n=0, script=b'',
+                      sequence=0xffffffff, witness=()),),
+        vout=(PsbtTxOut(amount=60000, script=ms_p2wsh_spk()),), locktime=0)
+
+
+def ms_p2wsh_unsigned_tx() -> PsbtTransaction:
+    """Unsigned tx spending the fixture P2WSH output to the dst."""
+    return PsbtTransaction(
+        version=2,
+        vin=(PsbtTxIn(txhash=ms_p2wsh_prev_tx().id(), n=0, script=b'',
+                      sequence=0xfffffffe, witness=()),),
+        vout=(PsbtTxOut(amount=50000, script=ms_dst_spk()),), locktime=0)
+
+
+def ms_p2wsh_fixture_psbt():
+    """Creator output for the P2WSH happy-path fixture (no prev tx --
+    BIP-143 commits the amount via WITNESS_UTXO)."""
+    return create_psbt(unsigned_tx=ms_p2wsh_unsigned_tx(),
+                       inputs=[CreateInput(amount=60000,
+                                           script_pubkey=ms_p2wsh_spk(),
+                                           prev_tx=None,
+                                           witness_script=ms_redeem())])
+
+
+def test_make_p2wsh_lock_script_layout():
+    spk = make_p2wsh_lock_script(sha256=b'\x77' * 32)
+    assert bytes(spk) == b'\x00\x20' + b'\x77' * 32
+    assert len(spk) == 34
+    # Distinct from the 34-byte P2TR script (OP_1 head).
+    with pytest.raises(ValueError):
+        make_p2wsh_lock_script(sha256=b'\x77' * 31)
+
+
+def test_extract_p2wsh_program_round_trip_and_rejections():
+    commitment = b'\x33' * 32
+    spk = make_p2wsh_lock_script(sha256=commitment)
+    assert extract_p2wsh_program(script=bytes(spk)) == commitment
+    # The 34-byte P2TR script must not decode as P2WSH.
+    with pytest.raises(ValueError):
+        extract_p2wsh_program(script=bytes(make_p2tr_lock_script(
+            output_key=b'\x33' * 32)))
+    # Wrong lengths and opcodes fail closed.
+    with pytest.raises(ValueError):
+        extract_p2wsh_program(script=b'\x00\x20' + b'\x33' * 31)
+    with pytest.raises(ValueError):
+        extract_p2wsh_program(script=b'\x00\x20' + b'\x33' * 33)
+    with pytest.raises(ValueError):
+        extract_p2wsh_program(script=b'\x01\x20' + b'\x33' * 32)
+    with pytest.raises(ValueError):
+        extract_p2wsh_program(script=b'\x00\x1f' + b'\x33' * 32)
+
+
+def test_make_multisig_witness_pins_bip141_layout():
+    redeem = ms_redeem()
+    sig_a = b'\x30' + b'\x01' * 71
+    sig_b = b'\x31' + b'\x01' * 70
+    stack = make_multisig_witness(redeem=redeem, sigs=[sig_a, sig_b])
+    # M + 2 items: empty dummy, the M signatures, the redeem.
+    assert stack == [b'', sig_a, sig_b, redeem]
+    assert not stack[0]
+    # 3-of-3: five items.
+    sigs = [bytes([0x40 + i]) * 72 for i in range(3)]
+    assert make_multisig_witness(redeem=redeem, sigs=sigs) \
+        == [b''] + sigs + [redeem]
+
+
+def test_redeem2p2wsh_addr_kat_and_round_trip():
+    from yubtc.crypto import decode_p2wsh_addr
+    addr = redeem2p2wsh_addr(redeem=ms_redeem())
+    assert addr.startswith('bc1q')
+    # The decoded program is exactly SHA256(redeem).
+    wp = decode_p2wsh_addr(address=addr)
+    assert wp.version == 0
+    assert wp.program == sha256(ms_redeem())
+    # Deterministic; different redeem -> different address.
+    assert redeem2p2wsh_addr(redeem=ms_redeem()) == addr
+    other = make_multisig_redeem_script(m=2, keys=[ms_pub(0), ms_pub(5)])
+    assert redeem2p2wsh_addr(redeem=other) != addr
+    # Same quorum, different form: P2SH and P2WSH addresses differ,
+    # the redeem script does not.
+    p2sh_addr = redeem2p2sh_addr(redeem=ms_redeem())
+    assert p2sh_addr.startswith('3')
+    assert p2sh_addr != addr
+
+
+def test_decode_p2wsh_addr_rejections():
+    from yubtc.crypto import (SegWitInvalidChecksum, SegWitInvalidHrp,
+                              SegWitInvalidStructure,
+                              SegWitUnsupportedProgram, decode_p2wsh_addr)
+    good = redeem2p2wsh_addr(redeem=ms_redeem())
+    assert decode_p2wsh_addr(address=good).program == sha256(ms_redeem())
+    # A P2WPKH address (v0/20) is not a P2WSH program.
+    with pytest.raises(SegWitUnsupportedProgram):
+        decode_p2wsh_addr(address=pubkey2segwit_addr(pubkey=ms_pub(9)))
+    # A P2TR address (v1) is out of this decoder's contract.
+    with pytest.raises(SegWitUnsupportedProgram):
+        decode_p2wsh_addr(address=pubkey2taproot_addr(pubkey=ms_pub(9)))
+    # bech32m checksum (v1 spelling) on a v0 payload: BIP-350 rule 2.
+    from yubtc.bech32 import BECH32M, bytes_to_5bit, encode
+    m_encoded = encode(hrp='bc', encoding=BECH32M,
+                       data=bytes([0]) + bytes_to_5bit(
+                           data=sha256(ms_redeem())))
+    with pytest.raises(SegWitInvalidChecksum):
+        decode_p2wsh_addr(address=m_encoded)
+    # Wrong HRP: the checksum is computed over the HRP, so swapping
+    # bc->tb breaks the checksum before the HRP rule fires.
+    with pytest.raises(SegWitInvalidChecksum):
+        decode_p2wsh_addr(address=good.replace('bc1', 'tb1', 1))
+    with pytest.raises(SegWitInvalidHrp):
+        decode_p2wsh_addr(address='tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx')
+    with pytest.raises(SegWitInvalidStructure):
+        decode_p2wsh_addr(address='notabech32')
+
+
+def test_is_dust_p2wsh_threshold():
+    from yubtc.fwd import DUST_THRESHOLD_P2WSH
+    from yubtc.misc import is_dust
+    spk = bytes(make_p2wsh_lock_script(sha256=b'\xab' * 32))
+    assert is_dust(amount=DUST_THRESHOLD_P2WSH - 1, script=spk)
+    assert not is_dust(amount=DUST_THRESHOLD_P2WSH, script=spk)
+    # The 34-byte P2TR arm keeps its own (numerically equal) constant.
+    p2tr = bytes(make_p2tr_lock_script(output_key=b'\xab' * 32))
+    assert is_dust(amount=DUST_THRESHOLD_P2WSH - 1, script=p2tr)
+    assert not is_dust(amount=DUST_THRESHOLD_P2WSH, script=p2tr)
+
+
+def test_fwd_pins_the_p2wsh_constants():
+    from yubtc.fwd import DUST_THRESHOLD_P2WSH, MS_FORMS, MsForm
+    assert DUST_THRESHOLD_P2WSH == 330
+    assert MS_FORMS == (MsForm.P2SH, MsForm.P2WSH)
+    assert MsForm.P2SH == 'p2sh'
+    assert MsForm.P2WSH == 'p2wsh'
+
+
+def test_creator_p2wsh_branch_writes_witness_utxo_and_witness_script():
+    psbt = ms_p2wsh_fixture_psbt()
+    input_ = psbt.inputs[0]
+    # Witness form: WITNESS_UTXO carries (amount, scriptPubKey); no
+    # NON_WITNESS_UTXO, no prev-tx fetch.
+    assert input_.witness_utxo is not None
+    assert input_.witness_utxo.amount == 60000
+    assert input_.witness_utxo.script == ms_p2wsh_spk()
+    assert input_.non_witness_utxo is None
+    # WITNESS_SCRIPT (0x05) is W/R on the P2WSH-multisig path.
+    assert input_.witness_script == ms_redeem()
+    # The typed fields survive the wire round trip byte-for-byte.
+    parsed = parse_psbt(data=serialize_psbt(psbt=psbt))
+    assert parsed == psbt
+
+
+def test_creator_p2wsh_branch_rejections():
+    # Non-canonical witness script (R-MS-3).
+    with pytest.raises(UnsupportedInputScript):
+        create_psbt(unsigned_tx=ms_p2wsh_unsigned_tx(),
+                    inputs=[CreateInput(amount=60000,
+                                        script_pubkey=ms_p2wsh_spk(),
+                                        prev_tx=None,
+                                        witness_script=b'\x51')])
+    # Witness script that commits elsewhere.
+    other = make_multisig_redeem_script(m=2, keys=[ms_pub(3), ms_pub(4),
+                                                   ms_pub(5)])
+    with pytest.raises(UtxoMismatch):
+        create_psbt(unsigned_tx=ms_p2wsh_unsigned_tx(),
+                    inputs=[CreateInput(amount=60000,
+                                        script_pubkey=ms_p2wsh_spk(),
+                                        prev_tx=None,
+                                        witness_script=other)])
+
+
+def test_signer_p2wsh_membership_signs_and_rejects_foreign():
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert len(psbt.inputs[0].partial_sigs) == 1
+    # Idempotent: signing twice is True without a second sig.
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert len(psbt.inputs[0].partial_sigs) == 1
+    # The second member signs a fresh copy; the foreign key is
+    # silently skipped (False).
+    psbt2 = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt2, index=0, privkey=ms_key(1))
+    psbt3 = ms_p2wsh_fixture_psbt()
+    assert not sign_psbt_input(psbt=psbt3, index=0, privkey=ms_key(7))
+    assert not psbt3.inputs[0].partial_sigs
+
+
+def test_signer_p2wsh_rejections():
+    # Absent WITNESS_SCRIPT (the pre-v0.3 refusal, preserved).
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].witness_script = None
+    with pytest.raises(UnsupportedInputScript):
+        sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    # Non-canonical witness script.
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].witness_script = b'\x51'
+    with pytest.raises(UnsupportedInputScript):
+        sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    # SHA-256 commitment mismatch.
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].witness_script = make_multisig_redeem_script(
+        m=2, keys=[ms_pub(3), ms_pub(4), ms_pub(5)])
+    with pytest.raises(UtxoMismatch):
+        sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    # A pinned sighash other than SIGHASH_ALL.
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].sighash_type = 0x02
+    with pytest.raises(UnsupportedSighashType):
+        sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    # A *present* NON_WITNESS_UTXO must still hash to the outpoint.
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].non_witness_utxo = ms_prev_tx()
+    with pytest.raises(UtxoMismatch):
+        sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    # Explicit pinned SIGHASH_ALL falls through and signs.
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].sighash_type = PSBT_SIGHASH_ALL
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+
+
+def test_finalizer_p2wsh_builds_the_bip141_witness_stack():
+    # Only one of two signatures: IncompleteInput, input untouched.
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    with pytest.raises(IncompleteInput):
+        finalize_psbt_input(psbt=psbt, index=0)
+    assert psbt.inputs[0].final_scriptwitness is None
+    assert len(psbt.inputs[0].partial_sigs) == 1
+    # Both signatures in reverse arrival order plus a third member
+    # beyond the M=2 threshold (deterministically dropped).
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(1))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(2))
+    finalize_psbt_input(psbt=psbt, index=0)
+    stack = _decode_witness_stack(psbt.inputs[0].final_scriptwitness)
+    assert len(stack) == 4
+    assert stack[0] == b''
+    assert stack[3] == ms_redeem()
+    assert stack[1][-1] == 0x01
+    assert stack[2][-1] == 0x01
+    # Intermediates stripped, UTXO fields preserved.
+    assert not psbt.inputs[0].partial_sigs
+    assert psbt.inputs[0].witness_script is None
+    assert psbt.inputs[0].witness_utxo is not None
+    # Wrong sighash byte on a member signature blocks the input.
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(1))
+    pk, sig = psbt.inputs[0].partial_sigs[0]
+    psbt.inputs[0].partial_sigs[0] = (pk, sig[:-1] + b'\x02')
+    with pytest.raises(IncompleteInput):
+        finalize_psbt_input(psbt=psbt, index=0)
+    # A pinned sighash other than SIGHASH_ALL blocks the input.
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(1))
+    psbt.inputs[0].sighash_type = 0x02
+    with pytest.raises(IncompleteInput):
+        finalize_psbt_input(psbt=psbt, index=0)
+
+
+def test_finalizer_p2wsh_structural_rejections():
+    # A bare P2WSH input (no witness script) is Incomplete.
+    psbt = create_psbt(unsigned_tx=ms_p2wsh_unsigned_tx(),
+                       inputs=[CreateInput(amount=60000,
+                                           script_pubkey=ms_p2wsh_spk(),
+                                           prev_tx=None)])
+    with pytest.raises(IncompleteInput):
+        finalize_psbt_input(psbt=psbt, index=0)
+    # A non-canonical witness script is UnsupportedInputScript.
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].witness_script = b'\x51'
+    with pytest.raises(UnsupportedInputScript):
+        finalize_psbt_input(psbt=psbt, index=0)
+    # A SHA-256 commitment mismatch is UtxoMismatch.
+    psbt = ms_p2wsh_fixture_psbt()
+    psbt.inputs[0].witness_script = make_multisig_redeem_script(
+        m=2, keys=[ms_pub(3), ms_pub(4), ms_pub(5)])
+    with pytest.raises(UtxoMismatch):
+        finalize_psbt_input(psbt=psbt, index=0)
+
+
+def test_extractor_p2wsh_rules():
+    # Not finalized -> NotFinalized.
+    psbt = ms_p2wsh_fixture_psbt()
+    with pytest.raises(NotFinalized):
+        extract_transaction(psbt=psbt)
+    # FINAL_SCRIPTSIG on a P2WSH input -> IncompleteInput (the
+    # symmetrical refusal of the P2SH arm's witness check).
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(1))
+    psbt.inputs[0].final_scriptsig = b'\x51'
+    with pytest.raises(IncompleteInput):
+        extract_transaction(psbt=psbt)
+    # Finalized -> the wire tx carries the witness stack, an empty
+    # scriptSig, and the txid ignores the witness (BIP-141).
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(1))
+    finalize_psbt(psbt=psbt)
+    tx = extract_transaction(psbt=psbt)
+    assert tx.vin[0].script == b''
+    assert len(tx.vin[0].witness) == 4
+    assert tx.vin[0].witness[0] == b''
+    assert tx.serialize_wire() != tx.serialize_stripped()
+
+
+def test_walk_signs_p2wsh_member_input_and_skips_foreign():
+    # The ОВ-9 walk signs the fixture member input by membership.
+    psbt = ms_p2wsh_fixture_psbt()
+    unsigned = sign_psbt(seed=SEED, passphrase='', kdf='yubtc', psbt=psbt)
+    assert unsigned == []
+    assert len(psbt.inputs[0].partial_sigs) == 1
+    # A P2WSH input whose witness script contains none of our keys is
+    # skipped (reported), not an error.
+    foreign_keys = [privkey2pubkey(seed2privkey(
+        seed='foreign p2wsh {}'.format(i), nonce=0, passphrase='',
+        kdf='yubtc')) for i in range(3)]
+    redeem = make_multisig_redeem_script(m=2, keys=foreign_keys)
+    spk = bytes(make_p2wsh_lock_script(sha256=sha256(redeem)))
+    prev = PsbtTransaction(
+        version=2,
+        vin=(PsbtTxIn(txhash=b'\x55' * 32, n=0, script=b'',
+                      sequence=0xffffffff, witness=()),),
+        vout=(PsbtTxOut(amount=60000, script=spk),), locktime=0)
+    unsigned_tx = PsbtTransaction(
+        version=2,
+        vin=(PsbtTxIn(txhash=prev.id(), n=0, script=b'',
+                      sequence=0xfffffffe, witness=()),),
+        vout=(PsbtTxOut(amount=50000, script=ms_dst_spk()),), locktime=0)
+    psbt = create_psbt(unsigned_tx=unsigned_tx,
+                       inputs=[CreateInput(amount=60000,
+                                           script_pubkey=spk,
+                                           prev_tx=None,
+                                           witness_script=redeem)])
+    unsigned = sign_psbt(seed=SEED, passphrase='', kdf='yubtc', psbt=psbt)
+    assert unsigned == [0]
+    assert not psbt.inputs[0].partial_sigs
+
+
+# --- 6b. P2WSH e2e: independent BIP-143 + witness CHECKMULTISIG ------
+#
+# Same policy as the P2SH e2e: the verifier shares no code with yubtc.
+# The wire tx is parsed with a local (witness-aware) CompactSize
+# reader, the BIP-143 preimage is re-encoded field-by-field, and the
+# CHECKMULTISIG greedy match runs over the *witness* stack.
+
+
+def _local_parse_tx_witness(wire: bytes):
+    pos = 0
+    version = int.from_bytes(wire[pos:pos + 4], 'little')
+    pos += 4
+    segwit = wire[pos] == 0x00 and wire[pos + 1] == 0x01
+    if not segwit:
+        raise ValueError('fixture expects a witness layout')
+    pos += 2
+    n_vin, pos = _read_cs(wire, pos)
+    vin = []
+    for _ in range(n_vin):
+        txid = wire[pos:pos + 32]
+        pos += 32
+        vout = int.from_bytes(wire[pos:pos + 4], 'little')
+        pos += 4
+        slen, pos = _read_cs(wire, pos)
+        script = wire[pos:pos + slen]
+        pos += slen
+        seq = int.from_bytes(wire[pos:pos + 4], 'little')
+        pos += 4
+        vin.append((txid, vout, script, seq))
+    n_vout, pos = _read_cs(wire, pos)
+    vouts = []
+    for _ in range(n_vout):
+        amount = int.from_bytes(wire[pos:pos + 8], 'little')
+        pos += 8
+        slen, pos = _read_cs(wire, pos)
+        vouts.append((amount, wire[pos:pos + slen]))
+        pos += slen
+    witnesses = []
+    for _ in range(n_vin):
+        n_items, pos = _read_cs(wire, pos)
+        stack = []
+        for _ in range(n_items):
+            item_len, pos = _read_cs(wire, pos)
+            stack.append(wire[pos:pos + item_len])
+            pos += item_len
+        witnesses.append(stack)
+    locktime = int.from_bytes(wire[pos:pos + 4], 'little')
+    pos += 4
+    if pos != len(wire):
+        raise ValueError('trailing bytes')
+    return version, vin, vouts, locktime, witnesses
+
+
+def _independent_p2wsh_digest(wire: bytes, redeem: bytes,
+                              amount: int) -> bytes:
+    """The BIP-143 SIGHASH_ALL digest of input 0 with
+    scriptCode = the serialized witness script, re-encoded
+    independently of yubtc."""
+    version, vin, vouts, locktime, _witnesses = \
+        _local_parse_tx_witness(wire)
+    txid, vout, _script, seq = vin[0]
+    hash_prevouts = hashlib.sha256(hashlib.sha256(
+        b''.join(txid + n.to_bytes(4, 'little') for txid, n, _s, _q in vin)
+    ).digest()).digest()
+    hash_sequence = hashlib.sha256(hashlib.sha256(
+        b''.join(q.to_bytes(4, 'little') for _t, _n, _s, q in vin)
+    ).digest()).digest()
+    hash_outputs = hashlib.sha256(hashlib.sha256(
+        b''.join(a.to_bytes(8, 'little') + _write_cs(len(spk)) + spk
+                 for a, spk in vouts)
+    ).digest()).digest()
+    pre = (version.to_bytes(4, 'little')
+           + hash_prevouts
+           + hash_sequence
+           + txid + vout.to_bytes(4, 'little')
+           + _write_cs(len(redeem)) + redeem
+           + amount.to_bytes(8, 'little')
+           + seq.to_bytes(4, 'little')
+           + hash_outputs
+           + locktime.to_bytes(4, 'little')
+           + (1).to_bytes(4, 'little'))
+    return hashlib.sha256(hashlib.sha256(pre).digest()).digest()
+
+
+def _independent_p2wsh_verify(wire: bytes, amount: int, expected_keys):
+    """Evaluate a completed P2WSH-multisig spend the way the consensus
+    interpreter would: witness stack, empty dummy (BIP-141), witness
+    script parse, greedy signature matching in script-key order,
+    ECDSA over the independently recomputed BIP-143 digest."""
+    import coincurve
+    try:
+        _version, vin, _vouts, _locktime, witnesses = \
+            _local_parse_tx_witness(wire)
+    except ValueError as e:
+        return 'wire parse: {}'.format(e)
+    if len(witnesses) != len(vin) or not witnesses[0]:
+        return 'the witness stack is empty on the wire'
+    stack = witnesses[0]
+    if len(stack) < 3:
+        return ('witness needs a dummy, at least one signature, and '
+                'the script')
+    if stack[0]:
+        return ('the dummy item must be empty (BIP-141), got {} '
+                'bytes'.format(len(stack[0])))
+    redeem = stack[-1]
+    sigs = stack[1:-1]
+    # Witness script: OP_m || (0x21||key) x N || OP_n || 0xae.
+    if len(redeem) < 3 + 34 or redeem[-1] != 0xae:
+        return 'witness script is not a CHECKMULTISIG script'
+    if redeem[0] < 0x51 or redeem[-2] < 0x51:
+        return 'quorum counters must be OP_1..=OP_16'
+    m = redeem[0] - 0x50
+    n = redeem[-2] - 0x50
+    if m > n:
+        return 'm must not exceed n'
+    if len(redeem) != 3 + 34 * n:
+        return 'witness script body does not match N pushes'
+    keys = []
+    for i in range(n):
+        s = 1 + i * 34
+        if redeem[s] != 0x21:
+            return 'non-canonical key push'
+        keys.append(redeem[s + 1:s + 34])
+    if keys != list(expected_keys):
+        return 'witness-script keys do not match the expected quorum'
+    if len(sigs) != m:
+        return 'expected {} signatures, got {}'.format(m, len(sigs))
+    digest = _independent_p2wsh_digest(wire, redeem, amount)
+    key_idx = 0
+    for j, sig in enumerate(sigs):
+        if not sig or sig[-1] != 0x01:
+            return 'signature {} lacks the SIGHASH_ALL suffix'.format(j)
+        der = sig[:-1]
+        matched = False
+        while key_idx < len(keys):
+            vk = coincurve.PublicKey(keys[key_idx])
+            key_idx += 1
+            if vk.verify(der, digest, hasher=None):
+                matched = True
+                break
+        if not matched:
+            return ('signature {} matches no remaining script key'
+                    .format(j))
+    return None
+
+
+def test_p2wsh_e2e_two_signers_combine_finalize_extract_independent_verify():
+    # Creator + wallet walk (membership) + a second signer via the
+    # primitive, Combiner, Finalizer, Extractor -- then the wire tx
+    # must verify under the independent BIP-143 / CHECKMULTISIG
+    # evaluator.
+    psbt_a = ms_p2wsh_fixture_psbt()
+    unsigned = sign_psbt(seed=SEED, passphrase='', kdf='yubtc', psbt=psbt_a)
+    assert unsigned == []
+    assert len(psbt_a.inputs[0].partial_sigs) == 1
+    psbt_b = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt_b, index=0, privkey=ms_key(1))
+    combined = combine_psbt(psbt=psbt_a, other=psbt_b)
+    assert len(combined.inputs[0].partial_sigs) == 2
+    finalize_psbt(psbt=combined)
+    tx = extract_transaction(psbt=combined)
+    wire = tx.serialize_wire()
+    err = _independent_p2wsh_verify(wire, 60000, ms_redeem_keys())
+    assert err is None, err
+    # Bit-for-bit pin: the signer order does not change the wire
+    # (R-MS-4).
+    flip = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=flip, index=0, privkey=ms_key(1))
+    assert sign_psbt_input(psbt=flip, index=0, privkey=ms_key(0))
+    finalize_psbt(psbt=flip)
+    assert extract_transaction(psbt=flip).serialize_wire() == wire
+
+
+def test_p2wsh_witness_mutations_fail_independent_verification():
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(1))
+    finalize_psbt(psbt=psbt)
+    base_tx = extract_transaction(psbt=psbt)
+    good_stack = list(base_tx.vin[0].witness)
+
+    def wire_with(stack):
+        mutated = PsbtTransaction(
+            version=base_tx.version,
+            vin=(base_tx.vin[0]._replace(witness=tuple(stack)),),
+            vout=base_tx.vout, locktime=base_tx.locktime)
+        return mutated.serialize_wire()
+
+    # Mutation 1: non-empty dummy item (BIP-141 NULLDUMMY).
+    bad = [b'\x00'] + good_stack[1:]
+    err = _independent_p2wsh_verify(wire_with(bad), 60000,
+                                    ms_redeem_keys())
+    assert 'dummy' in err, err
+    # Mutation 2: signatures swapped -- the greedy match runs out of
+    # script keys.
+    bad = [good_stack[0], good_stack[2], good_stack[1], good_stack[3]]
+    err = _independent_p2wsh_verify(wire_with(bad), 60000,
+                                    ms_redeem_keys())
+    assert 'matches no remaining script key' in err, err
+    # Mutation 3: a signature by a foreign key over the same digest.
+    import coincurve
+    digest = _independent_p2wsh_digest(wire_with(good_stack),
+                                       ms_redeem(), 60000)
+    foreign = coincurve.PrivateKey(
+        ms_key(7).secret).sign(digest, hasher=None)
+    bad = good_stack[:2] + [foreign + b'\x01', good_stack[3]]
+    err = _independent_p2wsh_verify(wire_with(bad), 60000,
+                                    ms_redeem_keys())
+    assert 'matches no remaining script key' in err, err
+    # Mutation 4: the redeem script corrupted -- the stack commits to
+    # a different quorum than the output.
+    bad = good_stack[:3] + [good_stack[3] + b'\x00']
+    err = _independent_p2wsh_verify(wire_with(bad), 60000,
+                                    ms_redeem_keys())
+    assert err is not None
+
+
+# --- 6c. P2WSH wallet surface ------------------------------------------
+
+
+def wallet_p2wsh_fixture_quorum():
+    """The 2-of-3 fixture quorum addressed in the P2WSH form (mirrors
+    the Rust `ms_fixture_quorum` + the v0.3 form dispatch)."""
+    keys = [wallet_pubkey(1), wallet_pubkey(2)]
+    addr, redeem = ms_create_address(
+        n=3, m=2, keys=[wallet_pubkey(0)] + keys, form=MsForm.P2WSH)
+    script = bytes(make_p2wsh_lock_script(sha256=sha256(redeem)))
+    return keys, addr, redeem, script
+
+
+def test_ms_create_address_form_p2wsh_matches_redeem_and_address():
+    keys = [wallet_pubkey(0), wallet_pubkey(1), wallet_pubkey(2)]
+    p2sh_addr, p2sh_redeem = ms_create_address(n=3, m=2, keys=keys,
+                                               form=MsForm.P2SH)
+    p2wsh_addr, p2wsh_redeem = ms_create_address(n=3, m=2, keys=keys,
+                                                 form=MsForm.P2WSH)
+    # The redeem script is identical in both forms.
+    assert p2sh_redeem == p2wsh_redeem
+    assert p2wsh_addr.startswith('bc1q')
+    from yubtc.crypto import decode_p2wsh_addr
+    wp = decode_p2wsh_addr(address=p2wsh_addr)
+    assert wp.program == sha256(p2wsh_redeem)
+    assert p2sh_addr.startswith('3')
+    # Lock-script round trip through the shared make_lock_script.
+    from yubtc.crypto import make_lock_script
+    assert bytes(make_lock_script(p2wsh_addr)) \
+        == bytes(make_p2wsh_lock_script(sha256=wp.program))
+    # An unknown form is a ValueError -- no default exists.
+    with pytest.raises(ValueError):
+        ms_create_address(n=3, m=2, keys=keys, form='segwit')
+    with pytest.raises(TypeError):
+        ms_create_address(n=3, m=2, keys=keys)
+
+
+def test_ms_create_psbt_p2wsh_builds_and_signs_over_a_mock_backend():
+    # The witness form needs NO raw prev-tx fetch: the raw map is
+    # deliberately empty, so any raw_transaction call would fail the
+    # test through the mock's error arm.
+    _keys, _addr, redeem, script = wallet_p2wsh_fixture_quorum()
+    prev = wire_prev_tx(script, b'\x77' * 32)
+    backend = backend_for(prev, script, raw={})
+    dst = wallet_dst()
+
+    outcome = ms_create_psbt(seed=WALLET_SEED, passphrase='',
+                             backend=backend, dst=dst, amount=50_000,
+                             n=3, m=2,
+                             keys=[wallet_pubkey(1), wallet_pubkey(2)],
+                             own_nonce=0, confirmations=6, feekb=1000,
+                             fee=0, form=MsForm.P2WSH)
+    from yubtc.psbt import from_base64
+    psbt = from_base64(s=outcome.psbt_b64)
+    # Witness-form fields and exactly one own partial signature.
+    assert len(psbt.inputs) == 1
+    assert psbt.inputs[0].non_witness_utxo is None
+    assert psbt.inputs[0].witness_utxo is not None
+    assert psbt.inputs[0].witness_utxo.script == script
+    assert psbt.inputs[0].witness_script == redeem
+    assert len(psbt.inputs[0].partial_sigs) == 1
+    assert psbt.inputs[0].partial_sigs[0][0] == wallet_pubkey(0)
+    # Fee arithmetic and the cashback to the P2WSH quorum script.
+    assert outcome.fee + outcome.amount + outcome.cashback == 60_000
+    assert psbt.unsigned_tx.vout[0].script == script
+    assert outcome.fee > 0
+    # Completion: the second cosigner signs, the quorum finalizes and
+    # extracts a witness spend (empty scriptSig, M + 2 items with the
+    # empty dummy first); vsize reflects the witness discount.
+    assert sign_psbt_input(psbt=psbt, index=0,
+                           privkey=ms_key(1, WALLET_SEED))
+    finalize_psbt(psbt=psbt)
+    tx = extract_transaction(psbt=psbt)
+    assert tx.vin[0].script == b''
+    assert len(tx.vin[0].witness) == 4
+    assert tx.vin[0].witness[0] == b''
+    assert tx.vin[0].witness[-1] == redeem
+    assert len(tx.serialize_stripped()) * 3 \
+        + len(tx.serialize_wire()) < len(tx.serialize_wire()) * 4
+
+
+def test_finalizer_and_extractor_refuse_unrecognizable_forms():
+    # A UTXO script shape the wallet can never own (neither P2PKH/
+    # P2SH/P2WPKH/P2TR nor a P2SH/P2WSH form with known scripts):
+    # the Finalizer refuses with IncompleteInput and the Extractor
+    # with NotFinalized (BIP-174 Extractor MUST check).
+    blob = b'\x6a' + b'\x07' * 9  # OP_RETURN-shaped garbage
+    psbt = create_psbt(unsigned_tx=ms_unsigned_tx(),
+                       inputs=[CreateInput(amount=60000,
+                                           script_pubkey=blob,
+                                           prev_tx=None)])
+    with pytest.raises(IncompleteInput):
+        finalize_psbt_input(psbt=psbt, index=0)
+    with pytest.raises(NotFinalized):
+        extract_transaction(psbt=psbt)
+
+
+def test_extractor_p2wsh_refuses_a_malformed_final_stack():
+    # A finalized P2WSH input whose FINAL_SCRIPTWITNESS does not parse
+    # is IncompleteInput, not a crash.
+    psbt = ms_p2wsh_fixture_psbt()
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(0))
+    assert sign_psbt_input(psbt=psbt, index=0, privkey=ms_key(1))
+    finalize_psbt(psbt=psbt)
+    psbt.inputs[0].final_scriptwitness = b'\xff garbage'
+    with pytest.raises(IncompleteInput):
+        extract_transaction(psbt=psbt)
+
+
+def test_decode_p2wsh_addr_malformed_structures():
+    from yubtc.bech32 import BECH32, encode
+    from yubtc.crypto import (SegWitInvalidStructure, decode_p2wsh_addr)
+    # A bech32 string with an EMPTY payload decodes structurally but
+    # carries no witness version -> InvalidStructure.
+    empty = encode(hrp='bc', encoding=BECH32, data=b'')
+    with pytest.raises(SegWitInvalidStructure):
+        decode_p2wsh_addr(address=empty)
+    # A one-character 5-bit payload with a nonzero padding bit cannot
+    # regroup into bytes -> InvalidStructure (not a crash).
+    padded = encode(hrp='bc', encoding=BECH32, data=bytes([0, 1]))
+    with pytest.raises(SegWitInvalidStructure):
+        decode_p2wsh_addr(address=padded)
