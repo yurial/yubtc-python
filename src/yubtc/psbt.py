@@ -46,12 +46,21 @@ membership signing with `scriptCode = redeem`, the
 `OP_0 ‖ sigs ‖ redeem` finalize layout) / P2WSH-multisig (v0.3 --
 via a canonical `WITNESS_SCRIPT` membership, BIP-143 with
 `scriptCode = redeem`, the `[dummy, sigs..., redeem]` witness
-layout) and reuses the Phase 13
-primitives (`bip143_sighash`, `taproot_keypath_sighash`,
+layout) / P2TR-multisig script path (v0.3 -- via a canonical
+`TAP_LEAF_SCRIPT` membership, the BIP-341 script-path digest with
+untweaked BIP-340 Schnorr, the R-MS-11 reverse-slot witness) and
+reuses the Phase 13 primitives (`bip143_sighash`,
+`taproot_keypath_sighash`, `taproot_scriptpath_sighash`,
 `taproot_sign_sighash`, RFC6979 ECDSA, Schnorr with
 ``aux_rand = 0x00 * 32``); signatures match the direct `sign_segwit`
 path byte-for-byte. P2WSH without a witness script and redeem-less
 P2SH inputs answer `UnsupportedInputScript`.
+
+BIP-371 typed fields: `TAP_SCRIPT_SIG (0x14)`, `TAP_LEAF_SCRIPT
+(0x15)`, `TAP_INTERNAL_KEY (0x17)` and `TAP_MERKLE_ROOT (0x18,
+read-only)` are parsed, carried, merged and (on the p2tr path)
+written by the roles; `TAP_BIP32_DERIVATION (0x16)` stays opaque
+passthrough (ОВ-18) -- the Signer ignores paths and leaf hashes.
 """
 from struct import pack, unpack
 from typing import NamedTuple, Optional
@@ -263,6 +272,15 @@ T_WITNESS_SCRIPT = 0x05
 T_IN_BIP32_DERIVATION = 0x06
 T_FINAL_SCRIPTSIG = 0x07
 T_FINAL_SCRIPTWITNESS = 0x08
+# BIP-371 taproot fields (v0.3): W/R on the p2tr-multisig path,
+# preserve-typed elsewhere. `TAP_BIP32_DERIVATION` (0x16) is
+# deliberately absent from the typed registry: per ОВ-18 it is
+# preserve-only and the Signer ignores the field entirely -- it flows
+# through the opaque passthrough untouched.
+T_IN_TAP_SCRIPT_SIG = 0x14
+T_IN_TAP_LEAF_SCRIPT = 0x15
+T_IN_TAP_INTERNAL_KEY = 0x17
+T_IN_TAP_MERKLE_ROOT = 0x18
 T_VERSION = 0xFB
 
 MAGIC = b'\x70\x73\x62\x74\xff'
@@ -611,6 +629,26 @@ class UnknownKv(NamedTuple):
     value: bytes
 
 
+class TapScriptSig(NamedTuple):
+    """One `TAP_SCRIPT_SIG` (0x14) entry: the 64-byte Schnorr
+    signature (`sig`) by the x-only key `x_only` over the leaf
+    `leaf_hash` (BIP-371 key = `x_only ‖ leaf_hash`; ОВ-17 -- the
+    signature carries no sighash suffix; mirrors the Rust
+    `psbt.rs::TapScriptSig`). Field order matches the Rust derive(Ord)
+    so merge/sort parity holds."""
+    x_only: bytes
+    leaf_hash: bytes
+    sig: bytes
+
+
+class TapLeafScript(NamedTuple):
+    """One `TAP_LEAF_SCRIPT` (0x15) entry: a tapscript with its leaf
+    version (`script ‖ 0xc0`) keyed by the control block that reveals
+    it (BIP-371; mirrors the Rust `psbt.rs::TapLeafScript`)."""
+    control_block: bytes
+    script_with_version: bytes
+
+
 class PsbtIn(object):
     """Per-input PSBT map (the in-scope typed fields + opaque
     passthrough; mirrors the Rust `PsbtInput`). Every field must be
@@ -620,7 +658,9 @@ class PsbtIn(object):
     def __init__(self, non_witness_utxo=None, witness_utxo=None,
                  partial_sigs=None, sighash_type=None, redeem_script=None,
                  witness_script=None, final_scriptsig=None,
-                 final_scriptwitness=None, unknown=None):
+                 final_scriptwitness=None, tap_script_sigs=None,
+                 tap_leaf_scripts=None, tap_internal_key=None,
+                 tap_merkle_root=None, unknown=None):
         self.non_witness_utxo = non_witness_utxo
         self.witness_utxo = witness_utxo
         self.partial_sigs = partial_sigs
@@ -629,6 +669,17 @@ class PsbtIn(object):
         self.witness_script = witness_script
         self.final_scriptsig = final_scriptsig
         self.final_scriptwitness = final_scriptwitness
+        # BIP-371 taproot fields (v0.3, mirrors the Rust `PsbtInput`):
+        # the two lists default to empty; the two single values to
+        # absent. yubtc builds exactly one `TAP_LEAF_SCRIPT` entry
+        # (single-leaf trees, R-MS-8); the Signer/Finalizer take the
+        # first entry deterministically.
+        self.tap_script_sigs = tap_script_sigs \
+            if tap_script_sigs is not None else []
+        self.tap_leaf_scripts = tap_leaf_scripts \
+            if tap_leaf_scripts is not None else []
+        self.tap_internal_key = tap_internal_key
+        self.tap_merkle_root = tap_merkle_root
         self.unknown = unknown
 
     def __eq__(self, other):
@@ -640,7 +691,9 @@ def _empty_input() -> PsbtIn:
     return PsbtIn(non_witness_utxo=None, witness_utxo=None,
                   partial_sigs=[], sighash_type=None, redeem_script=None,
                   witness_script=None, final_scriptsig=None,
-                  final_scriptwitness=None, unknown=[])
+                  final_scriptwitness=None, tap_script_sigs=[],
+                  tap_leaf_scripts=[], tap_internal_key=None,
+                  tap_merkle_root=None, unknown=[])
 
 
 class PsbtOut(object):
@@ -699,12 +752,24 @@ class CreateInput(NamedTuple):
     SHA-256 `scriptPubKey` commitment and written as `WITNESS_SCRIPT
     (0x05)` (W/R on that path; preserve-only otherwise) -- no
     `NON_WITNESS_UTXO`, no prev-tx fetch (BIP-143 commits the
-    amount)."""
+    amount).
+
+    `tap_leaf_script` (v0.3, spec «Tapscript (P2TR script-path)
+    (v0.3)») is the `TAP_LEAF_SCRIPT (0x15)` **value** of a
+    p2tr-multisig input -- the tapscript with the trailing 0xc0 leaf
+    version (`script ‖ 0xc0`); the control-block key the Creator
+    derives offline (the NUMS key, the script and the parity of `Q`
+    are computable without any network data). Written only when the
+    `scriptPubKey` is the canonical P2TR shape and its program
+    commits to the leaf's tweaked NUMS output key; on any other form
+    the field is dropped (preserve-only semantics for foreign
+    forms)."""
     amount: int
     script_pubkey: bytes
     prev_tx: Optional[PsbtTransaction]
     redeem_script: Optional[bytes] = None
     witness_script: Optional[bytes] = None
+    tap_leaf_script: Optional[bytes] = None
 
 
 class Psbt(NamedTuple):
@@ -764,6 +829,11 @@ def _is_p2sh_script(script: bytes) -> bool:
 def _is_p2wsh_script(script: bytes) -> bool:
     """True when the script is a canonical P2WSH (``00 20 <32>``)."""
     return len(script) == 34 and script[0] == 0x00 and script[1] == 0x20
+
+
+def _is_p2tr_script(script: bytes) -> bool:
+    """True when the script is a canonical P2TR (``51 20 <32>``)."""
+    return len(script) == 34 and script[0] == 0x51 and script[1] == 0x20
 
 
 def _own_form(script_pubkey: bytes, pubkey: bytes):
@@ -906,6 +976,41 @@ def _parse_input_map(pairs: list) -> PsbtIn:
             if keydata:
                 raise InvalidKeyLength(field_type=T_FINAL_SCRIPTWITNESS)
             input_.final_scriptwitness = value
+        elif ty == T_IN_TAP_SCRIPT_SIG:
+            # BIP-371 key: x-only pubkey (32) ‖ leaf_hash (32). The
+            # 64-byte signature length is the Signer's/Finalizer's
+            # pin (ОВ-17), not the parser's (a foreign value rides
+            # opaque until a role consumes it).
+            if len(keydata) != 64:
+                raise InvalidKeyLength(field_type=T_IN_TAP_SCRIPT_SIG)
+            input_.tap_script_sigs.append(
+                TapScriptSig(x_only=keydata[:32], leaf_hash=keydata[32:],
+                             sig=value))
+        elif ty == T_IN_TAP_LEAF_SCRIPT:
+            # BIP-371 key: the control block -- 33 bytes for a
+            # single-leaf tree (`33 + 32·depth`, depth = 0).
+            if len(keydata) != 33:
+                raise InvalidKeyLength(field_type=T_IN_TAP_LEAF_SCRIPT)
+            if not value:
+                raise InvalidFieldValue()
+            input_.tap_leaf_scripts.append(
+                TapLeafScript(control_block=keydata,
+                              script_with_version=value))
+        elif ty == T_IN_TAP_INTERNAL_KEY:
+            if keydata:
+                raise InvalidKeyLength(field_type=T_IN_TAP_INTERNAL_KEY)
+            if len(value) != 32:
+                raise InvalidFieldValue()
+            input_.tap_internal_key = value
+        elif ty == T_IN_TAP_MERKLE_ROOT:
+            # Read-only: never written by yubtc (the root equals the
+            # leaf hash, computable from `0x15`); a present value is
+            # verified against the computed leaf hash.
+            if keydata:
+                raise InvalidKeyLength(field_type=T_IN_TAP_MERKLE_ROOT)
+            if len(value) != 32:
+                raise InvalidFieldValue()
+            input_.tap_merkle_root = value
         else:
             input_.unknown.append(UnknownKv(key=key, value=value))
     return input_
@@ -1038,6 +1143,21 @@ def _input_pairs(psbt: Psbt, input_: PsbtIn) -> list:
         pairs.append((bytes([T_REDEEM_SCRIPT]), input_.redeem_script))
     if input_.witness_script is not None:
         pairs.append((bytes([T_WITNESS_SCRIPT]), input_.witness_script))
+    # BIP-371 taproot fields: W/R on the p2tr-multisig path,
+    # preserve-typed elsewhere. `TAP_BIP32_DERIVATION` (0x16) stays in
+    # the opaque passthrough entirely (ОВ-18).
+    for s in input_.tap_script_sigs:
+        pairs.append((bytes([T_IN_TAP_SCRIPT_SIG]) + s.x_only + s.leaf_hash,
+                      s.sig))
+    for leaf in input_.tap_leaf_scripts:
+        pairs.append((bytes([T_IN_TAP_LEAF_SCRIPT]) + leaf.control_block,
+                      leaf.script_with_version))
+    if input_.tap_internal_key is not None:
+        pairs.append((bytes([T_IN_TAP_INTERNAL_KEY]),
+                      input_.tap_internal_key))
+    if input_.tap_merkle_root is not None:
+        pairs.append((bytes([T_IN_TAP_MERKLE_ROOT]),
+                      input_.tap_merkle_root))
     # BIP-174: an empty final scriptSig is serialized as "unset",
     # never as an empty value.
     if input_.final_scriptsig is not None and input_.final_scriptsig:
@@ -1139,8 +1259,12 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
         raise InvalidUnsignedTx()
     psbt_inputs = []
     for i, (vin, create) in enumerate(zip(unsigned_tx.vin, inputs)):
+        from yubtc.crypto import tapscript_control_block, tapscript_output_key
         from yubtc.hash import hash160
-        from yubtc.script import extract_multisig_quorum
+        from yubtc.script import (InvalidMultisigTapscript,
+                                  extract_multisig_quorum,
+                                  extract_multisig_tapscript,
+                                  tapscript_leaf_hash)
         form = _form_of_script(create.script_pubkey)
         if form is not None and form[0] == 'legacy':
             prev = create.prev_tx
@@ -1151,7 +1275,9 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
             psbt_inputs.append(PsbtIn(
                 non_witness_utxo=prev, witness_utxo=None, partial_sigs=[],
                 sighash_type=None, redeem_script=None, witness_script=None,
-                final_scriptsig=None, final_scriptwitness=None, unknown=[]))
+                final_scriptsig=None, final_scriptwitness=None,
+                tap_script_sigs=[], tap_leaf_scripts=[],
+                tap_internal_key=None, tap_merkle_root=None, unknown=[]))
         elif (_is_p2sh_script(create.script_pubkey)
                 and create.redeem_script is not None):
             # Phase 15 Creator branch (spec «PSBT: Creator, Signer и
@@ -1178,7 +1304,9 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
                 non_witness_utxo=prev, witness_utxo=None,
                 partial_sigs=[], sighash_type=None,
                 redeem_script=redeem, witness_script=None,
-                final_scriptsig=None, final_scriptwitness=None, unknown=[]))
+                final_scriptsig=None, final_scriptwitness=None,
+                tap_script_sigs=[], tap_leaf_scripts=[],
+                tap_internal_key=None, tap_merkle_root=None, unknown=[]))
         elif (_is_p2wsh_script(create.script_pubkey)
                 and create.witness_script is not None):
             # v0.3 Creator branch (spec «P2WSH (v0.3)»): the input
@@ -1204,7 +1332,74 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
                                        script=create.script_pubkey),
                 partial_sigs=[], sighash_type=None, redeem_script=None,
                 witness_script=redeem, final_scriptsig=None,
-                final_scriptwitness=None, unknown=[]))
+                final_scriptwitness=None, tap_script_sigs=[],
+                tap_leaf_scripts=[], tap_internal_key=None,
+                tap_merkle_root=None, unknown=[]))
+        elif create.tap_leaf_script is not None:
+            from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+            from yubtc.script import TAPSCRIPT_LEAF_VERSION
+            if not _is_p2tr_script(create.script_pubkey):
+                # A tap leaf on a non-P2TR input is not a Creator
+                # surface yubtc builds -- fall through to the default
+                # `WITNESS_UTXO` arm below (the field is dropped:
+                # preserve-only semantics for foreign forms).
+                psbt_inputs.append(PsbtIn(
+                    non_witness_utxo=None,
+                    witness_utxo=PsbtTxOut(amount=create.amount,
+                                           script=create.script_pubkey),
+                    partial_sigs=[], sighash_type=None, redeem_script=None,
+                    witness_script=None, final_scriptsig=None,
+                    final_scriptwitness=None, tap_script_sigs=[],
+                    tap_leaf_scripts=[], tap_internal_key=None,
+                    tap_merkle_root=None, unknown=[]))
+            else:
+                # v0.3 Creator branch (spec «Tapscript (P2TR
+                # script-path) (v0.3)»): the input spends the P2TR
+                # output of a known tapscript leaf -- the script path
+                # of the multisig quorum. The leaf value must carry
+                # the canonical leaf version byte over a canonical
+                # R-MS-7 script, and the tweaked NUMS output key must
+                # commit to the `scriptPubKey` program; the UTXO
+                # rides as `WITNESS_UTXO` (BIP-341 commits the amount
+                # -- no prev-tx fetch), `TAP_LEAF_SCRIPT (0x15)` is
+                # keyed by the control block the Creator derives
+                # offline, and `TAP_INTERNAL_KEY (0x17)` pins the
+                # NUMS key.
+                leaf_value = bytes(create.tap_leaf_script)
+                if not leaf_value \
+                        or leaf_value[-1] != TAPSCRIPT_LEAF_VERSION:
+                    raise UnsupportedInputScript()
+                script = leaf_value[:-1]
+                try:
+                    extract_multisig_tapscript(script=script)
+                except InvalidMultisigTapscript:
+                    raise UnsupportedInputScript()
+                leaf_hash = tapscript_leaf_hash(script=script)
+                committed = create.script_pubkey[2:34]
+                # NUMS lift and tweak are total for the canonical
+                # internal key (the internal key is a documented
+                # constant curve point; the ~2^-128 tweak failure has
+                # no reachable input here).
+                output_key = tapscript_output_key(
+                    internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY,
+                    leaf_hash=leaf_hash)
+                if output_key != committed:
+                    raise UtxoMismatch()
+                control_block = tapscript_control_block(
+                    internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY,
+                    leaf_hash=leaf_hash)
+                psbt_inputs.append(PsbtIn(
+                    non_witness_utxo=None,
+                    witness_utxo=PsbtTxOut(amount=create.amount,
+                                           script=create.script_pubkey),
+                    partial_sigs=[], sighash_type=None, redeem_script=None,
+                    witness_script=None, final_scriptsig=None,
+                    final_scriptwitness=None, tap_script_sigs=[],
+                    tap_leaf_scripts=[TapLeafScript(
+                        control_block=control_block,
+                        script_with_version=leaf_value)],
+                    tap_internal_key=MS_TAPSCRIPT_INTERNAL_KEY,
+                    tap_merkle_root=None, unknown=[]))
         else:
             psbt_inputs.append(PsbtIn(
                 non_witness_utxo=None,
@@ -1212,7 +1407,9 @@ def create_psbt(unsigned_tx: PsbtTransaction = NotNone,
                                        script=create.script_pubkey),
                 partial_sigs=[], sighash_type=None, redeem_script=None,
                 witness_script=None, final_scriptsig=None,
-                final_scriptwitness=None, unknown=[]))
+                final_scriptwitness=None, tap_script_sigs=[],
+                tap_leaf_scripts=[], tap_internal_key=None,
+                tap_merkle_root=None, unknown=[]))
     outputs = [PsbtOut(unknown=[]) for _ in unsigned_tx.vout]
     return Psbt(version=0, unsigned_tx=unsigned_tx, inputs=psbt_inputs,
                 outputs=outputs, unknown_global=[])
@@ -1262,6 +1459,13 @@ def sign_psbt_input(psbt: Psbt = NotNone, index: int = NotNone,
     if _is_p2sh_script(script_pubkey):
         return _sign_psbt_input_p2sh_multisig(psbt=psbt, index=index,
                                               privkey=privkey)
+    if _is_p2tr_script(script_pubkey) \
+            and psbt.inputs[index].tap_leaf_scripts:
+        # v0.3: a P2TR input is no longer exhausted by the key path --
+        # a present `TAP_LEAF_SCRIPT` selects the Tapscript-multisig
+        # script-path branch (spec «PSBT: ветки Tapscript-multisig»).
+        return _sign_psbt_input_p2tr_scriptpath(psbt=psbt, index=index,
+                                                privkey=privkey)
     pubkey = privkey2pubkey(privkey=privkey)
     form = _own_form(script_pubkey, pubkey)
     if form is None:
@@ -1416,6 +1620,114 @@ def _sign_psbt_input_p2wsh_multisig(psbt: Psbt, index: int, privkey,
     return True
 
 
+def _sign_psbt_input_p2tr_scriptpath(psbt: Psbt, index: int, privkey) -> bool:
+    """Signer, P2TR **script-path** branch (v0.3, spec «Tapscript
+    (P2TR script-path) (v0.3)»; mirrors
+    `psbt.rs::sign_input_p2tr_scriptpath`): sign the BIP-341
+    script-path digest (SigMsg with `spend_type = 0x02`, extended by
+    the leaf hash, key version 0 and no `OP_CODESEPARATOR`) with
+    untweaked BIP-340 Schnorr (R-MS-10/ОВ-10) when the key's x-only
+    pubkey is a member of the `TAP_LEAF_SCRIPT` tapscript. See
+    `sign_psbt_input` for the full contract; `index` must reference a
+    canonical-P2TR input with a `TAP_LEAF_SCRIPT`."""
+    from yubtc.crypto import privkey2pubkey
+    from yubtc.crypto import tapscript_output_key
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+    from yubtc.script import (InvalidMultisigTapscript, TAPSCRIPT_LEAF_VERSION,
+                              extract_multisig_tapscript,
+                              tapscript_leaf_hash)
+    from yubtc.transaction import (taproot_scriptpath_sighash,
+                                   taproot_sign_sighash_untweaked)
+    pubkey = privkey2pubkey(privkey=privkey)
+    x_only = pubkey[1:33]
+    # The first entry deterministically (yubtc writes exactly one --
+    # single-leaf trees, R-MS-8; BIP-371 allows several).
+    leaf = psbt.inputs[index].tap_leaf_scripts[0]
+    control_block = leaf.control_block
+    leaf_value = leaf.script_with_version
+    # Control block: 33 bytes (`33 + 32·depth`, depth = 0), the
+    # canonical 0xc0 leaf version in `c[0] & 0xfe`, and the NUMS
+    # internal key (R-MS-8 -- yubtc signs only its own single-leaf
+    # NUMS trees).
+    if len(control_block) != 33 \
+            or control_block[0] & 0xfe != TAPSCRIPT_LEAF_VERSION \
+            or control_block[1:33] != MS_TAPSCRIPT_INTERNAL_KEY:
+        raise UnsupportedInputScript()
+    # Leaf value: tapscript ‖ leaf_version with the version byte
+    # exactly 0xc0 (leaf versions ≠ 0xc0 are out of scope).
+    if not leaf_value or leaf_value[-1] != TAPSCRIPT_LEAF_VERSION:
+        raise UnsupportedInputScript()
+    script = leaf_value[:-1]
+    # R-MS-7: only the canonical CHECKSIGADD idiom is signed.
+    try:
+        _m, keys = extract_multisig_tapscript(script=script)
+    except InvalidMultisigTapscript:
+        raise UnsupportedInputScript()
+    leaf_hash = tapscript_leaf_hash(script=script)
+    # BIP-174 "Data Signers Check For": the tweaked NUMS output key
+    # must commit to the program in the UTXO's P2TR scriptPubKey...
+    script_pubkey = input_utxo_data(psbt=psbt, index=index)[0]
+    committed = script_pubkey[2:34]
+    # NUMS lift and tweak are total for the canonical internal key.
+    output_key = tapscript_output_key(
+        internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY, leaf_hash=leaf_hash)
+    if output_key != committed:
+        raise UtxoMismatch()
+    # ...and any present `TAP_MERKLE_ROOT` must equal the computed
+    # leaf hash (the tree is exactly one leaf -- the root IS the leaf
+    # hash).
+    root = psbt.inputs[index].tap_merkle_root
+    if root is not None and root != leaf_hash:
+        raise UtxoMismatch()
+    # Membership, not scriptPubKey shape (R-MS-4): the x-only key
+    # must be one of the tapscript's keys.
+    if not any(k == x_only for k in keys):
+        return False
+    input_ = psbt.inputs[index]
+    # ОВ-17: SIGHASH_DEFAULT is pinned; absent or explicit 0x00.
+    if input_.sighash_type is not None \
+            and input_.sighash_type != PSBT_SIGHASH_DEFAULT:
+        raise UnsupportedSighashType(sighash_type=input_.sighash_type)
+    # BIP-174 "Data Signers Check For": a *present*
+    # NON_WITNESS_UTXO must still hash to the outpoint being spent
+    # (the field is optional for witness forms).
+    prev = input_.non_witness_utxo
+    if prev is not None and prev.id() != psbt.unsigned_tx.vin[index].txhash:
+        raise UtxoMismatch()
+    # Idempotent: our signature for this leaf is already in place.
+    if any(s.x_only == x_only and s.leaf_hash == leaf_hash
+           for s in input_.tap_script_sigs):
+        return True
+    # BIP-341 script-path digest commits to all inputs; without
+    # complete UTXO data the digest is not computable -- skip.
+    spend = _spend_context(psbt)
+    if spend is None:
+        return False
+    sighash = taproot_scriptpath_sighash(tx=psbt.unsigned_tx,
+                                         input_index=index, spend=spend,
+                                         leaf_hash=leaf_hash)
+    sig = taproot_sign_sighash_untweaked(privkey=privkey, sighash=sighash)
+    _insert_tap_script_sig(input_,
+                           TapScriptSig(x_only=x_only, leaf_hash=leaf_hash,
+                                        sig=sig))
+    return True
+
+
+def _insert_tap_script_sig(input_: PsbtIn, entry: TapScriptSig) -> None:
+    """Insert a `TAP_SCRIPT_SIG` entry keeping the list sorted by
+    `(x_only, leaf_hash)` (mirrors the Rust `partition_point`
+    insertion -- deterministic serialization and KAT
+    reproducibility)."""
+    pos = 0
+    for existing in input_.tap_script_sigs:
+        if (existing.x_only, existing.leaf_hash) \
+                <= (entry.x_only, entry.leaf_hash):
+            pos += 1
+        else:
+            break
+    input_.tap_script_sigs.insert(pos, entry)
+
+
 @require_kwargs_only
 def combine_psbt(psbt: Psbt = NotNone, other: Psbt = NotNone) -> Psbt:
     """Combiner: merge `other` into a copy of `psbt`.
@@ -1488,6 +1800,14 @@ def finalize_psbt_input(psbt: Psbt = NotNone, index: int = NotNone) -> None:
     if _is_p2wsh_script(script_pubkey):
         _finalize_psbt_input_p2wsh_multisig(psbt=psbt, index=index,
                                             script_pubkey=script_pubkey)
+        return
+    if _is_p2tr_script(script_pubkey) \
+            and psbt.inputs[index].tap_leaf_scripts:
+        # v0.3: a P2TR input with a revealed tapscript finalizes
+        # through the script-path branch (the R-MS-11 witness), never
+        # the key path.
+        _finalize_psbt_input_p2tr_scriptpath(psbt=psbt, index=index,
+                                             script_pubkey=script_pubkey)
         return
     form = _form_of_script(script_pubkey)
     if form is None:
@@ -1636,6 +1956,94 @@ def _finalize_psbt_input_p2wsh_multisig(psbt: Psbt, index: int,
     input_.witness_script = None
 
 
+def _finalize_psbt_input_p2tr_scriptpath(psbt: Psbt, index: int,
+                                         script_pubkey: bytes) -> None:
+    """Finalizer, P2TR-script-path branch (v0.3, spec «Tapscript
+    (P2TR script-path) (v0.3)»; mirrors
+    `psbt.rs::finalize_input_p2tr_scriptpath`). See
+    `finalize_psbt_input` for the full contract; `index` must
+    reference a canonical-P2TR input with a `TAP_LEAF_SCRIPT`. The
+    final `FINAL_SCRIPTWITNESS` is the R-MS-11 reverse-slot stack --
+    `[w_N … w_1]` (empty slots for non-signers) ‖ script ‖ control
+    block (from the `0x15` keydata) -- never a `scriptSig`."""
+    from yubtc.crypto import tapscript_output_key
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+    from yubtc.script import (InvalidMultisigTapscript, TAPSCRIPT_LEAF_VERSION,
+                              extract_multisig_tapscript,
+                              make_multisig_tapscript_witness,
+                              tapscript_leaf_hash)
+    input_ = psbt.inputs[index]
+    # The first entry deterministically (yubtc writes exactly one).
+    control_block = input_.tap_leaf_scripts[0].control_block
+    leaf_value = input_.tap_leaf_scripts[0].script_with_version
+    # The same structural/commitment ladder the Signer runs: a
+    # foreign control block or leaf is refused, not merely left
+    # incomplete.
+    if len(control_block) != 33 \
+            or control_block[0] & 0xfe != TAPSCRIPT_LEAF_VERSION \
+            or control_block[1:33] != MS_TAPSCRIPT_INTERNAL_KEY:
+        raise UnsupportedInputScript()
+    if not leaf_value or leaf_value[-1] != TAPSCRIPT_LEAF_VERSION:
+        raise UnsupportedInputScript()
+    script = leaf_value[:-1]
+    try:
+        m, keys = extract_multisig_tapscript(script=script)
+    except InvalidMultisigTapscript:
+        raise UnsupportedInputScript()
+    leaf_hash = tapscript_leaf_hash(script=script)
+    committed = script_pubkey[2:34]
+    # NUMS lift and tweak are total for the canonical internal key.
+    output_key = tapscript_output_key(
+        internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY, leaf_hash=leaf_hash)
+    if output_key != committed:
+        raise UtxoMismatch()
+    root = input_.tap_merkle_root
+    if root is not None and root != leaf_hash:
+        raise UtxoMismatch()
+    # ОВ-17: SIGHASH_DEFAULT is pinned; anything else blocks the
+    # input.
+    if input_.sighash_type is not None \
+            and input_.sighash_type != PSBT_SIGHASH_DEFAULT:
+        raise IncompleteInput(index=index)
+    # Per-key slots in script order: exactly one 64-byte signature
+    # per participating member key; member keys beyond the threshold
+    # are deterministically dropped from the tail (the Phase 15
+    # greedy rule -- CHECKSIGADD would otherwise count them and
+    # invalidate the spend); keys outside the script are ignored.
+    sig_slots = []
+    taken = 0
+    for key in keys:
+        sig = next((s.sig for s in input_.tap_script_sigs
+                    if s.x_only == key and s.leaf_hash == leaf_hash), None)
+        if sig is not None and taken < m:
+            if len(sig) != 64:
+                raise IncompleteInput(index=index)
+            sig_slots.append(sig)
+            taken += 1
+        else:
+            # A member key beyond the threshold keeps its slot --
+            # empty (the R-MS-11 stack is exactly N slots long;
+            # CHECKSIGADD would count an extra non-empty slot and
+            # invalidate the spend). Same for non-signers.
+            sig_slots.append(None)
+    if taken < m:
+        raise IncompleteInput(index=index)
+    input_.final_scriptwitness = _encode_witness_stack(
+        make_multisig_tapscript_witness(script=script,
+                                        control_block=control_block,
+                                        sig_slots=sig_slots))
+    # Intermediates out (BIP-371: the finalizer removes the taproot
+    # fields after FINAL_SCRIPTWITNESS), UTXOs and unknowns stay.
+    input_.partial_sigs = []
+    input_.sighash_type = None
+    input_.redeem_script = None
+    input_.witness_script = None
+    input_.tap_script_sigs = []
+    input_.tap_leaf_scripts = []
+    input_.tap_internal_key = None
+    input_.tap_merkle_root = None
+
+
 def finalize_psbt(psbt: Psbt = NotNone) -> None:
     """Finalizer: finalize every input that is complete, leave the
     rest untouched (per-input operation; completeness of the whole
@@ -1713,6 +2121,13 @@ def extract_transaction(psbt: Psbt = NotNone) -> PsbtTransaction:
                 raise NotFinalized()
             vin.append(psbt.unsigned_tx.vin[i]._replace(script=script))
         else:
+            # v0.3: a P2TR input carrying a `TAP_LEAF_SCRIPT` is a
+            # script-path spend -- `FINAL_SCRIPTSIG` on it is the
+            # symmetrical refusal of the P2WSH arm (a witness form
+            # never finalizes through a `scriptSig`).
+            if input_.final_scriptsig is not None \
+                    and input_.tap_leaf_scripts:
+                raise IncompleteInput(index=i)
             stack_bytes = input_.final_scriptwitness
             if stack_bytes is None:
                 raise NotFinalized()
@@ -1792,6 +2207,25 @@ def _merge_field(a, b):
     raise ConflictingField()
 
 
+def _merge_typed_list(a: list, b: list, key_of) -> list:
+    """Merge two typed BIP-371 lists (`TAP_SCRIPT_SIG` keyed by
+    `x_only ‖ leaf_hash`, `TAP_LEAF_SCRIPT` keyed by the control
+    block): identical keys must carry identical values
+    (`ConflictingField` otherwise), new keys are appended, the result
+    is sorted (mirrors the Rust `merge_typed_list` -- the derived
+    field-order `Ord`)."""
+    out = list(a)
+    for item in b:
+        existing = next((x for x in out if key_of(x) == key_of(item)), None)
+        if existing is not None:
+            if existing != item:
+                raise ConflictingField()
+        else:
+            out.append(item)
+    out.sort()
+    return out
+
+
 def _merge_input(a: PsbtIn, b: PsbtIn) -> PsbtIn:
     """Merge two input maps (see `combine_psbt`)."""
     partial_sigs = list(a.partial_sigs)
@@ -1803,6 +2237,12 @@ def _merge_input(a: PsbtIn, b: PsbtIn) -> PsbtIn:
         else:
             partial_sigs.append((pubkey, sig))
     partial_sigs.sort(key=lambda item: item[0])
+    tap_script_sigs = _merge_typed_list(
+        a.tap_script_sigs, b.tap_script_sigs,
+        key_of=lambda s: s.x_only + s.leaf_hash)
+    tap_leaf_scripts = _merge_typed_list(
+        a.tap_leaf_scripts, b.tap_leaf_scripts,
+        key_of=lambda leaf: leaf.control_block)
     return PsbtIn(
         non_witness_utxo=_merge_field(a.non_witness_utxo,
                                       b.non_witness_utxo),
@@ -1814,6 +2254,12 @@ def _merge_input(a: PsbtIn, b: PsbtIn) -> PsbtIn:
         final_scriptsig=_merge_field(a.final_scriptsig, b.final_scriptsig),
         final_scriptwitness=_merge_field(a.final_scriptwitness,
                                          b.final_scriptwitness),
+        tap_script_sigs=tap_script_sigs,
+        tap_leaf_scripts=tap_leaf_scripts,
+        tap_internal_key=_merge_field(a.tap_internal_key,
+                                      b.tap_internal_key),
+        tap_merkle_root=_merge_field(a.tap_merkle_root,
+                                     b.tap_merkle_root),
         unknown=_merge_unknown(a.unknown, b.unknown))
 
 

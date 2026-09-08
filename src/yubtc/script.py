@@ -20,6 +20,14 @@ What the wallet actually uses:
   sorted), `extract_multisig_quorum` (the strict shape-check
   counterpart), `make_multisig_script_sig` (the R-MS-5 finalize
   layout) and `redeem2p2sh_addr` (the quorum `3...` address).
+- v0.3 (multi-sig P2WSH + P2TR script-path, mirrors the same
+  `script.rs`): `make_p2wsh_lock_script`/`extract_p2wsh_program`,
+  `make_multisig_witness` (BIP-141), `redeem2p2wsh_addr`; and the
+  Tapscript half -- `make_multisig_tapscript` (the R-MS-7
+  CHECKSIGADD idiom), `extract_multisig_tapscript` (strict
+  shape-check), `tapscript_leaf_hash` (BIP-341 hashTapLeaf),
+  `make_multisig_tapscript_witness` (R-MS-11 reverse slots) and
+  `redeem2taproot_addr` (the quorum `bc1p...` address).
 """
 
 from yubtc.util import NotNone, require_kwargs_only
@@ -38,6 +46,21 @@ class InvalidMultisigRedeem(ScriptError):
     OP_CHECKMULTISIG` (R-MS-2/3 bounds, shapes, duplicates)."""
 
     default_message = 'invalid multisig redeem script'
+
+    def __init__(self):
+        super().__init__(self.default_message)
+
+
+class InvalidMultisigTapscript(ScriptError):
+    """A leaf script (or key set) did not pass the canonical
+    tapscript CHECKSIGADD shape check (v0.3, R-MS-7; mirrors
+    `script.rs::ScriptError::InvalidMultisigTapscript`): quorum
+    bounds violated, non-x-only or duplicate key, a compressed-key
+    push, an `OP_PUSHDATA` wrapper, a CHECKMULTISIG byte, or any byte
+    layout other than `0x20‖pk_1 OP_CHECKSIG … 0x20‖pk_N
+    OP_CHECKSIGADD OP_M ‖ terminator`."""
+
+    default_message = 'invalid multisig tapscript'
 
     def __init__(self):
         super().__init__(self.default_message)
@@ -587,3 +610,221 @@ def redeem2p2wsh_addr(redeem: bytes = NotNone) -> str:
     from yubtc.hash import sha256
     data = bytes([0]) + bytes_to_5bit(data=sha256(bytes(redeem)))
     return encode(hrp=HRP_MAINNET, encoding=BECH32, data=data)
+
+
+# --- Multi-sig, P2TR script path (v0.3; mirrors core/src/script.rs) ----
+#
+# The Tapscript half of the quorum surface: the same M-of-N rule as the
+# CHECKMULTISIG forms, executed by BIP-342 consensus through the
+# CHECKSIGADD idiom (`OP_CHECKMULTISIG` is a disabled opcode under
+# tapscript, so no mixed form exists). The canonical leaf is built and
+# recognized in exactly one shape (R-MS-7); the finalized witness
+# stacks the signature slots in reverse key order (R-MS-11) and there
+# is no dummy element (no off-by-one to compensate -- R-MS-5 does not
+# apply).
+
+# `OP_CHECKSIGADD` (0xba, BIP-342). Pops a signature and a pubkey,
+# verifies against the script-path sighash and adds the boolean result
+# (1/0) to the numeric accumulator below -- the CHECKMULTISIG
+# replacement of the tapscript idiom (R-MS-7).
+OP_CHECKSIGADD = CScriptOp(0xba)
+
+# The tapscript idiom's terminal opcode byte (v0.3, R-MS-7). Mirrors
+# the Rust oracle's `script.rs::OP_NUMEQUAL` constant -- byte `0x9d`,
+# pinned by both the spec text (`OP_NUMEQUAL (0x9d)`) and the oracle
+# code (asserted in `script.rs` tests), so the mirror keeps it for
+# bit-for-bit parity of every script, leaf hash, address and signature
+# derived downstream. (Naming note: Bitcoin's consensus opcode table
+# calls `0x9d` OP_NUMEQUALVERIFY and `0x9c` OP_NUMEQUAL; the
+# accept/reject behaviour of the idiom is identical either way --
+# success iff the counter equals M -- so the oracle's byte is mirrored
+# as-is.)
+TAPSCRIPT_NUMEQUAL = CScriptOp(0x9d)
+
+# Leaf version byte of the canonical Tapscript quorum leaf (BIP-342):
+# 0xc0 = leaf version 192, the only defined tapscript version. Enters
+# the leaf hash (`0xc0 ‖ compact_size ‖ script`) and the control
+# block's first byte (`c[0] = 0xc0 | parity(y(Q))`).
+TAPSCRIPT_LEAF_VERSION = 0xc0
+
+
+@require_kwargs_only
+def make_multisig_tapscript(m: int = NotNone, keys: list = NotNone) -> bytes:
+    """Build the canonical M-of-N tapscript leaf (v0.3, spec.md R-MS-7
+    -- the BIP-342 «Alternatives to CHECKMULTISIG» idiom, Miniscript
+    `multi_a`; mirrors `script.rs::make_multisig_tapscript`):
+
+    ```
+    0x20‖pk_1 OP_CHECKSIG 0x20‖pk_2 OP_CHECKSIGADD … 0x20‖pk_N
+    OP_CHECKSIGADD OP_M ‖ terminator
+    ```
+
+    Every key push is exactly `0x20 ‖ <32 x-only bytes>` (33 bytes --
+    BIP-340/342 keys are x-only in tapscript pushes); the first key's
+    `OP_CHECKSIG (0xac)` result initializes the accumulator, keys
+    `2..N` use `OP_CHECKSIGADD (0xba)`, and the final `OP_M (0x50+M)`
+    compares the accumulated counter with the threshold (R-MS-7).
+    Total size `34N + 2` -- 512 bytes at the maximal quorum (15 keys),
+    inside the 520-byte MAX_SCRIPT_ELEMENT_SIZE limit the leaf
+    element is subject to as an initial-stack item (R-MS-9: N = 16
+    would produce 546 bytes -- consensus-invalid, refused here).
+
+    Validation and determinism mirror `make_multisig_redeem_script`:
+    `1 ≤ m ≤ n ≤ yubtc.fwd.MS_MAX_PUBKEYS`
+    (`InvalidMultisigTapscript` otherwise), no duplicate keys, and
+    **R-MS-4/R-MS-10 sorting**: the keys are sorted lexicographically
+    by their 32 x-only bytes (sorting the compressed encodings would
+    give a different order -- the same key set must always yield the
+    same script and therefore the same address). Every key must be
+    exactly 32 bytes -- the runtime equivalent of the Rust oracle's
+    `[[u8; 32]]` parameter type."""
+    from yubtc.fwd import MS_MAX_PUBKEYS
+    keys = [bytes(k) for k in keys]
+    n = len(keys)
+    if n == 0 or m == 0 or m > n or n > MS_MAX_PUBKEYS:
+        raise InvalidMultisigTapscript()
+    if any(len(k) != 32 for k in keys):
+        raise InvalidMultisigTapscript()
+    sorted_keys = sorted(keys)
+    if any(a == b for a, b in zip(sorted_keys, sorted_keys[1:])):
+        raise InvalidMultisigTapscript()
+    out = bytearray()
+    for i, key in enumerate(sorted_keys):
+        out.append(0x20)
+        out += key
+        out.append(OP_CHECKSIG if i == 0 else OP_CHECKSIGADD)
+    out.append(_op_n(m))
+    out.append(TAPSCRIPT_NUMEQUAL)
+    return bytes(out)
+
+
+@require_kwargs_only
+def extract_multisig_tapscript(script: bytes = NotNone) -> tuple:
+    """Extract the quorum `(m, keys)` from a canonical tapscript leaf
+    -- keys in **script order** (the order the witness slots of the
+    final spend follow, R-MS-11; mirrors
+    `script.rs::extract_multisig_tapscript`).
+
+    Strict shape check, symmetric with `extract_multisig_quorum` --
+    not a general script decoder: the script must be exactly the
+    R-MS-7 idiom with `1 ≤ m ≤ n ≤ yubtc.fwd.MS_MAX_PUBKEYS`,
+    single-opcode `0x20` pushes only (no `OP_PUSHDATA` wrappers, no
+    33-byte compressed keys), `OP_CHECKSIG` after the first key and
+    `OP_CHECKSIGADD` after every other, `OP_M ‖ terminator`
+    (R-MS-7's `TAPSCRIPT_NUMEQUAL` byte; `OP_CHECKMULTISIG` is a
+    rejection) terminus, no trailing bytes, and no duplicate keys.
+    Anything else raises `InvalidMultisigTapscript`."""
+    from yubtc.fwd import MS_MAX_PUBKEYS
+    script = bytes(script)
+    # The minimal canonical script is 1-of-1: 36 bytes.
+    if len(script) < 34 + 2:
+        raise InvalidMultisigTapscript()
+    # The fixed 2-byte tail: OP_M ‖ terminator.
+    m_op = script[len(script) - 2]
+    if script[len(script) - 1] != TAPSCRIPT_NUMEQUAL \
+            or not (0x51 <= m_op <= 0x5f):
+        raise InvalidMultisigTapscript()
+    m = m_op - 0x50
+    # The body must decompose into an exact number of 34-byte
+    # (0x20 ‖ 32) key slots -- a trailing fragment or an
+    # OP_PUSHDATA-wrapped key shifts the frame and fails here.
+    body = len(script) - 2
+    if body % 34 != 0:
+        raise InvalidMultisigTapscript()
+    n = body // 34
+    if m > n or n > MS_MAX_PUBKEYS:
+        raise InvalidMultisigTapscript()
+    keys = []
+    for i in range(n):
+        start = i * 34
+        if script[start] != 0x20:
+            raise InvalidMultisigTapscript()
+        keys.append(script[start + 1:start + 33])
+        opcode = script[start + 33]
+        expected = OP_CHECKSIG if i == 0 else OP_CHECKSIGADD
+        if opcode != expected:
+            raise InvalidMultisigTapscript()
+    # R-MS-3 carried over: duplicates make the quorum degenerate.
+    if len(set(keys)) != len(keys):
+        raise InvalidMultisigTapscript()
+    return m, keys
+
+
+@require_kwargs_only
+def tapscript_leaf_hash(script: bytes = NotNone) -> bytes:
+    """BIP-341 `hashTapLeaf` of a tapscript (the single-leaf Merkle
+    root): `tagged_hash("TapLeaf", 0xc0 ‖ compact_size(|script|) ‖
+    script)` (mirrors `script.rs::tapscript_leaf_hash`).
+
+    There is deliberately **no** `0x00` prefix before the leaf
+    version: the BIP-341 definition commits to `leaf_version ‖
+    compact_size ‖ script` directly, and the `compact_size` is the
+    minimal length encoding (512 → `fd 00 02`), never an
+    `OP_PUSHDATA` push."""
+    from yubtc.hash import tagged_hash
+    from yubtc.transaction import compact_size
+    script = bytes(script)
+    msg = (bytes([TAPSCRIPT_LEAF_VERSION])
+           + compact_size(len(script)) + script)
+    return tagged_hash(b'TapLeaf', msg)
+
+
+@require_kwargs_only
+def make_multisig_tapscript_witness(script: bytes = NotNone,
+                                    control_block: bytes = NotNone,
+                                    sig_slots: list = NotNone) -> list:
+    """Assemble the finalized **P2TR script-path** witness stack
+    (v0.3, spec.md R-MS-11; mirrors
+    `script.rs::make_multisig_tapscript_witness`):
+
+    ```
+    [w_N, …, w_1] ‖ tapscript ‖ control_block
+    ```
+
+    `sig_slots` is indexed in **script-key order** (`w_1` first):
+    each slot is a 64-byte Schnorr signature (`SIGHASH_DEFAULT`, no
+    sighash byte -- ОВ-17) for a signer or ``None`` for a
+    non-signer -- the assembler reverses the slots because BIP-342
+    fixes the witness as `<w_n> … <w_1>` (the stack must present
+    `pk_i` on top of its signature at execution time). There is **no**
+    dummy element: `OP_CHECKSIGADD` has no off-by-one stack error, so
+    the R-MS-5 dummy of the CHECKMULTISIG forms does not exist here.
+    The `N + 2`-item stack is valid as long as exactly `M` slots are
+    signatures; enforcing the count is the Finalizer's job, not the
+    assembler's. Returns the stack as a list of `bytes` items."""
+    script = bytes(script)
+    control_block = bytes(control_block)
+    out = [bytes(slot) if slot is not None else b''
+           for slot in reversed(sig_slots)]
+    out.append(script)
+    out.append(control_block)
+    return out
+
+
+@require_kwargs_only
+def redeem2taproot_addr(script: bytes = NotNone) -> str:
+    """Tapscript leaf -> mainnet P2TR quorum address (`bc1p...`,
+    bech32m witness version 1 with the 32-byte tweaked NUMS output
+    key; v0.3, mirrors `address.rs::redeem_to_tapscript_address`).
+
+    The commitment is `Q = lift_x(H) + t·G` over the NUMS internal
+    key `H` (`yubtc.fwd.MS_TAPSCRIPT_INTERNAL_KEY`) and the leaf's
+    `hashTapLeaf` -- the same 32-byte value
+    `make_p2tr_lock_script` embeds in the lock script, so an output
+    paid to the returned address is spendable exactly by revealing
+    the tapscript and the control block in the witness (the v0.3
+    quorum address of the `p2tr` form; ОВ-13 -- fixed by the
+    `(N, M, keys)` tuple, no scan/gap walk).
+
+    Errors: `TapTweakError` from the output-key derivation (only when
+    the internal key is not a curve point or the tweak scalar hits
+    the ~2^-128 `t ≥ n` case -- unreachable for the canonical NUMS
+    key)."""
+    from yubtc.bech32 import BECH32M, bytes_to_5bit, encode
+    from yubtc.crypto import HRP_MAINNET, tapscript_output_key
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+    leaf_hash = tapscript_leaf_hash(script=script)
+    output_key = tapscript_output_key(internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY,
+                                      leaf_hash=leaf_hash)
+    data = bytes([1]) + bytes_to_5bit(data=output_key)
+    return encode(hrp=HRP_MAINNET, encoding=BECH32M, data=data)

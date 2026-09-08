@@ -698,6 +698,13 @@ class Wallet(object):
 # so the fee never underpays because of a shorter DER).
 MS_SIG_SIZE_ESTIMATE = 73
 
+# Worst-case witness slot of the p2tr form (v0.3; mirrors
+# `fwd.rs::MS_SIG_SIZE_ESTIMATE_TAP`): CompactSize (1) + a 64-byte
+# Schnorr signature + a sighash byte (1) = 66. The canonical yubtc
+# final is 65 (SIGHASH_DEFAULT appends no byte, ОВ-17) -- the fee
+# loop must never underpay, so the estimate is the worst case.
+MS_SIG_SIZE_ESTIMATE_TAP = 66
+
 
 def _sha256_script(data: bytes) -> bytes:
     """`SHA-256` of an arbitrary byte string -- the P2WSH commitment
@@ -772,36 +779,59 @@ class NotAParticipant(MsError):
     default_message = 'own key is not a participant of this quorum'
 
 
+class InvalidKeyEncoding(MsError):
+    """A quorum key argument has the wrong hex encoding for the form
+    (v0.3, R-MS-10; mirrors `wallet.rs::MsError::InvalidKeyEncoding`):
+    p2sh/p2wsh take 66-hex compressed keys (`02…`/`03…`), p2tr takes
+    64-hex x-only keys -- mixing the encodings in one call is refused
+    (BIP-340 verification is x-only, and sorting the compressed
+    encodings would give a different script order than sorting the
+    x-only bytes)."""
+
+    default_message = ('key encoding does not match the form: p2sh/p2wsh '
+                       'need 66-hex compressed keys, p2tr needs 64-hex '
+                       'x-only keys')
+
+
 @require_kwargs_only
 def ms_create_address(n: int = NotNone, m: int = NotNone,
                       keys: list = NotNone,
                       form: str = NotNone) -> tuple:
     """Validate the quorum shape and derive the fixed quorum address +
     canonical redeem script in the `form` encoding (mirrors
-    `wallet.rs::ms_create_address`; v0.3 adds the P2WSH form).
+    `wallet.rs::ms_create_address`; v0.3 adds the P2WSH and
+    P2TR-script-path forms).
 
     `n` is the total key count, `m` the signature threshold, `keys`
     the full quorum key set (own key already included by the caller --
     derive it with `ms_own_pubkey` and append it before calling).
-    `form` selects the address encoding -- the redeem script is
-    **identical** in both forms, only the commitment/address differ:
-    `yubtc.fwd.MsForm.P2SH` = `base58check(0x05 ‖ hash160(redeem))`
-    (`3...`, Phase 15, ОВ-13), `MsForm.P2WSH` = bech32 v0 with the
-    32-byte `SHA256(redeem)` program (`bc1q...`, v0.3). A missing or
-    unknown form raises `ValueError` -- no default exists (R-MS-1
+    `form` selects the address encoding and -- for p2tr -- the script
+    itself: `yubtc.fwd.MsForm.P2SH` = `base58check(0x05 ‖
+    hash160(redeem))` (`3...`, Phase 15, ОВ-13), `MsForm.P2WSH` =
+    bech32 v0 with the 32-byte `SHA256(redeem)` program (`bc1q...`,
+    v0.3), `MsForm.P2TR` = bech32m v1 with the tweaked NUMS output key
+    of the canonical **tapscript** (`bc1p...`, v0.3) -- the returned
+    "redeem" is the R-MS-7 CHECKSIGADD idiom over the x-only
+    projections (bytes `1..33`) of the compressed keys, a *different*
+    script than the p2sh/p2wsh redeem for the same quorum. A missing
+    or unknown form raises `ValueError` -- no default exists (R-MS-1
     spirit; the CLI flag defaults to `p2sh` at the parser layer only).
 
     Checks (in order): `form` is a known `MsForm` value
     (`ValueError`), distinct-key count equals `n`
     (`KeyCountMismatch`), `1 ≤ m ≤ n ≤ 15` (`QuorumBounds`), no
-    duplicate keys (`DuplicateKey`) -- then the redeem script is
-    assembled with BIP-67 sorting (R-MS-4). The address is fixed by
-    the `(N, M, keys)` tuple in either form (ОВ-13: no scan/gap
+    duplicate keys (`DuplicateKey`) -- then the script is assembled
+    with the form's BIP-67 sort (R-MS-4: compressed bytes for
+    p2sh/p2wsh, x-only bytes for p2tr, R-MS-10). The address is fixed
+    by the `(N, M, keys)` tuple in every form (ОВ-13: no scan/gap
     walk). Returns `(address, redeem_script_bytes)`."""
     from yubtc.fwd import MS_MAX_PUBKEYS, MS_FORMS
     from yubtc.script import (InvalidMultisigRedeem,
+                              InvalidMultisigTapscript,
                               make_multisig_redeem_script,
-                              redeem2p2sh_addr, redeem2p2wsh_addr)
+                              make_multisig_tapscript,
+                              redeem2p2sh_addr, redeem2p2wsh_addr,
+                              redeem2taproot_addr)
     if form not in MS_FORMS:
         raise ValueError(
             'form must be one of {}, got {form!r}'.format(
@@ -813,6 +843,18 @@ def ms_create_address(n: int = NotNone, m: int = NotNone,
     sorted_keys = sorted(bytes(k) for k in keys)
     if any(a == b for a, b in zip(sorted_keys, sorted_keys[1:])):
         raise DuplicateKey()
+    if form == 'p2tr':
+        # The tapscript carries the x-only projections of the
+        # compressed keys, sorted by those 32 bytes (R-MS-10) -- the
+        # script bytes differ from the p2sh/p2wsh redeem.
+        xonly = [k[1:33] for k in sorted_keys]
+        try:
+            redeem = make_multisig_tapscript(m=m, keys=xonly)
+        except InvalidMultisigTapscript:
+            # Bounds and duplicates validated above; 33-byte keys are
+            # the caller's contract -- the builder cannot fail here.
+            raise QuorumBounds()
+        return redeem2taproot_addr(script=redeem), redeem
     try:
         redeem = make_multisig_redeem_script(m=m, keys=sorted_keys)
     except InvalidMultisigRedeem:
@@ -822,6 +864,60 @@ def ms_create_address(n: int = NotNone, m: int = NotNone,
     if form == 'p2sh':
         return redeem2p2sh_addr(redeem=redeem), redeem
     return redeem2p2wsh_addr(redeem=redeem), redeem
+
+
+@require_kwargs_only
+def ms_quorum_lock_script(redeem: bytes = NotNone, form: str = NotNone) -> bytes:
+    """The lock script paying to the quorum address of `redeem` in the
+    `form` encoding -- the shared Creator-side derivation of
+    `ms_create_psbt` (mirrors `wallet.rs::ms_quorum_lock_script`; one
+    code path, so the library and the FFI projection cannot drift).
+    For the p2tr form the "redeem" is a canonical tapscript and the
+    lock script commits to its tweaked NUMS output key."""
+    from yubtc.crypto import tapscript_output_key
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+    from yubtc.hash import hash160
+    from yubtc.script import (make_p2sh_lock_script, make_p2tr_lock_script,
+                              make_p2wsh_lock_script, tapscript_leaf_hash)
+    if form == 'p2sh':
+        return bytes(make_p2sh_lock_script(hash160=hash160(redeem)))
+    if form == 'p2wsh':
+        return bytes(make_p2wsh_lock_script(sha256=_sha256_script(redeem)))
+    leaf_hash = tapscript_leaf_hash(script=redeem)
+    # NUMS lift and tweak are total for the canonical internal key.
+    output_key = tapscript_output_key(
+        internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY, leaf_hash=leaf_hash)
+    return bytes(make_p2tr_lock_script(output_key=output_key))
+
+
+@require_kwargs_only
+def parse_ms_keys(keys: list = NotNone, form: str = NotNone) -> list:
+    """Parse cosigner key hex arguments per the form's encoding
+    (R-MS-10; mirrors `wallet.rs::parse_ms_keys`): p2sh/p2wsh take
+    66-hex compressed keys (`02…`/`03…` prefix), p2tr takes 64-hex
+    x-only keys (carried internally as a `0x02`-prefixed 33-byte key
+    -- only the x-only bytes ever enter the tapscript, and BIP-340
+    signing normalizes the parity). Anything else -- wrong length,
+    non-hex, wrong prefix -- is `InvalidKeyEncoding`. The CLI layer
+    calls this before `ms_create_address`; the library keeps byte
+    keys."""
+    out = []
+    for hex_key in keys:
+        if not isinstance(hex_key, str):
+            raise InvalidKeyEncoding()
+        try:
+            raw = bytes.fromhex(hex_key)
+        except ValueError:
+            raise InvalidKeyEncoding()
+        if form == 'p2tr':
+            if len(raw) != 32:
+                raise InvalidKeyEncoding()
+            out.append(b'\x02' + raw)
+        else:
+            if len(raw) != 33 or raw[0] not in (0x02, 0x03):
+                raise InvalidKeyEncoding()
+            out.append(raw)
+    return out
 
 
 @require_kwargs_only
@@ -933,26 +1029,34 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
        `1 + m·(1 + MS_SIG_SIZE_ESTIMATE) + pushlen(redeem)` bytes of
        scriptSig; `p2wsh` -- empty scriptSig and a sized witness
        stack (`[b'', sig x M, redeem]`, MS_SIG_SIZE_ESTIMATE per
-       signature);
+       signature); `p2tr` -- empty scriptSig and the R-MS-11 sized
+       stack (M worst-case 66-byte slots per `MS_SIG_SIZE_ESTIMATE_TAP`,
+       N-M empty non-signer slots, the tapscript, the 33-byte control
+       block);
     5. build the PSBT via `psbt.create_psbt` -- `p2sh`: every input
        gets `NON_WITNESS_UTXO` (fetched with one `raw_transaction`
        per selected UTXO) plus `REDEEM_SCRIPT`; `p2wsh`: every input
        gets `WITNESS_UTXO` + `WITNESS_SCRIPT` (no prev-tx fetch --
-       BIP-143 commits the amount);
+       BIP-143 commits the amount); `p2tr`: every input gets
+       `WITNESS_UTXO` + `TAP_LEAF_SCRIPT` (value = script ‖ 0xc0; the
+       Creator derives the control-block key offline from the NUMS
+       internal key) + `TAP_INTERNAL_KEY` -- no prev-tx fetch,
+       symmetric with p2wsh;
     6. add the own partial signatures (`own_nonce=None` is
        `NotAParticipant` -- yubtc spends only quorums it
        participates in);
     7. emit base64. Cashback goes to the **quorum address** (shared
        funds must not drift into single-key control) -- in the
-       form's encoding (`3...` vs `bc1q...`)."""
-    from yubtc.crypto import make_vout, privkey2pubkey
-    from yubtc.hash import hash160
+       form's encoding (`3...` vs `bc1q...` vs `bc1p...`)."""
+    from yubtc.crypto import (make_vout, privkey2pubkey,
+                              tapscript_control_block)
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
     from yubtc.net import get_address_unspent
     from yubtc.psbt import (CreateInput, PsbtTransaction, PsbtTxIn,
                             PsbtTxOut, _parse_tx, create_psbt,
                             sign_psbt_input, to_base64)
-    from yubtc.script import (make_p2sh_lock_script, make_p2wsh_lock_script,
-                              push_data_len)
+    from yubtc.script import (TAPSCRIPT_LEAF_VERSION, push_data_len,
+                              tapscript_leaf_hash)
 
     nonce = own_nonce
     if nonce is None:
@@ -963,12 +1067,7 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
     all_keys = [bytes(k) for k in keys] + [own_pubkey]
     quorum_addr, redeem = ms_create_address(n=n, m=m, keys=all_keys,
                                             form=form)
-    if form == 'p2sh':
-        quorum_script = bytes(make_p2sh_lock_script(
-            hash160=hash160(redeem)))
-    else:
-        quorum_script = bytes(make_p2wsh_lock_script(
-            sha256=_sha256_script(redeem)))
+    quorum_script = ms_quorum_lock_script(redeem=redeem, form=form)
 
     # One UTXO query for the fixed quorum address (ОВ-13).
     unspent = get_address_unspent(backend, quorum_addr)
@@ -985,10 +1084,30 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
                       + push_data_len(length=len(redeem)))
     # p2wsh form: the final witness stack per input (BIP-141 layout):
     # empty dummy, M worst-case signatures, the redeem script.
+    # p2tr form (R-MS-11 layout): N slots (M worst-case 66-byte
+    # Schnorr slots per MS_SIG_SIZE_ESTIMATE_TAP + N-M empty
+    # non-signer slots), the tapscript, the 33-byte control block. No
+    # dummy element (the estimate covers the CompactSize + signature
+    # + sighash-byte worst case; the canonical final is 65).
+    p2tr_control_block = None
+    n_keys = 0
+    if form == 'p2tr':
+        from yubtc.script import extract_multisig_tapscript
+        n_keys = len(extract_multisig_tapscript(script=redeem)[1])
+        # NUMS lift and tweak are total for the canonical internal key.
+        p2tr_control_block = tapscript_control_block(
+            internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY,
+            leaf_hash=tapscript_leaf_hash(script=redeem))
 
     def sized_witness(sized: bool) -> tuple:
         if not sized:
             return ()
+        if form == 'p2tr':
+            stack = [b'\x00' * MS_SIG_SIZE_ESTIMATE_TAP for _ in range(m)]
+            stack += [b''] * (n_keys - m)
+            stack.append(redeem)
+            stack.append(p2tr_control_block)
+            return tuple(stack)
         stack = [b'']
         stack += [b'\x00' * MS_SIG_SIZE_ESTIMATE for _ in range(m)]
         stack.append(redeem)
@@ -1002,7 +1121,7 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
                          script=b'\x00' * script_sig_len
                          if sized and form == 'p2sh' else b'',
                          sequence=0xfffffffe,
-                         witness=sized_witness(sized and form == 'p2wsh'))
+                         witness=sized_witness(sized and form != 'p2sh'))
                 for txhash, out_n in txhashes]
 
     if fee > 0:
@@ -1046,7 +1165,11 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
     # REDEEM_SCRIPT per input. p2wsh: WITNESS_UTXO + WITNESS_SCRIPT
     # per input (no prev-tx fetch -- BIP-143 commits the amount, and
     # the network cost of `ms send --form p2wsh` is the single UTXO
-    # query ОВ-13 already paid).
+    # query ОВ-13 already paid). p2tr: WITNESS_UTXO (BIP-341 commits
+    # the amount) + TAP_LEAF_SCRIPT (value = script ‖ 0xc0; the
+    # Creator derives the control-block key offline from the NUMS
+    # internal key) + TAP_INTERNAL_KEY -- no prev-tx fetch, symmetric
+    # with p2wsh.
     create_inputs = []
     for u, (txhash, _out_n) in zip(selected, txhashes):
         if form == 'p2sh':
@@ -1061,10 +1184,15 @@ def ms_create_psbt(seed: TSeed = NotNone, passphrase: TPassphrase = '',
             create_inputs.append(CreateInput(
                 amount=u['value'], script_pubkey=quorum_script,
                 prev_tx=prev_tx, redeem_script=redeem))
-        else:
+        elif form == 'p2wsh':
             create_inputs.append(CreateInput(
                 amount=u['value'], script_pubkey=quorum_script,
                 prev_tx=None, witness_script=redeem))
+        else:  # 'p2tr'
+            create_inputs.append(CreateInput(
+                amount=u['value'], script_pubkey=quorum_script,
+                prev_tx=None,
+                tap_leaf_script=redeem + bytes([TAPSCRIPT_LEAF_VERSION])))
     unsigned = PsbtTransaction(
         version=2, vin=tuple(build_vin(sized=False)),
         vout=tuple(PsbtTxOut(amount=o.amount, script=o.script)

@@ -1699,6 +1699,7 @@ def test_extract_before_finalize_is_refused_without_changes():
                                redeem_script=None, witness_script=None,
                                final_scriptsig=None,
                                final_scriptwitness=b'\x01\x01\x00',
+                               tap_script_sigs=[], tap_leaf_scripts=[], tap_internal_key=None, tap_merkle_root=None,
                                unknown=[])],
                 outputs=[PsbtOut(unknown=[])], unknown_global=[])
     with pytest.raises(NotFinalized):
@@ -1922,7 +1923,9 @@ def test_serialize_omits_empty_final_fields():
                                partial_sigs=[], sighash_type=None,
                                redeem_script=None, witness_script=None,
                                final_scriptsig=b'',
-                               final_scriptwitness=b'', unknown=[])],
+                               final_scriptwitness=b'', tap_script_sigs=[], tap_leaf_scripts=[],
+                               tap_internal_key=None,
+                               tap_merkle_root=None, unknown=[])],
                 outputs=[PsbtOut(unknown=[])], unknown_global=[])
     raw = serialize_psbt(psbt=psbt)
     assert kv(b'\x07', b'') not in raw
@@ -2180,7 +2183,9 @@ def test_summary_fee_bounds():
                                partial_sigs=[], sighash_type=None,
                                redeem_script=None, witness_script=None,
                                final_scriptsig=None,
-                               final_scriptwitness=None, unknown=[])],
+                               final_scriptwitness=None, tap_script_sigs=[], tap_leaf_scripts=[],
+                               tap_internal_key=None,
+                               tap_merkle_root=None, unknown=[])],
                 outputs=[PsbtOut(unknown=[])], unknown_global=[])
     # credit = 2*u64max, spend = u64max -> fee = u64max: still in range.
     assert psbt_summary(psbt=hand).fee_sat == big
@@ -2197,7 +2202,10 @@ def test_summary_fee_bounds():
                                 partial_sigs=[], sighash_type=None,
                                 redeem_script=None, witness_script=None,
                                 final_scriptsig=None,
-                                final_scriptwitness=None, unknown=[])],
+                                final_scriptwitness=None,
+                                tap_script_sigs=[], tap_leaf_scripts=[],
+                                tap_internal_key=None,
+                                tap_merkle_root=None, unknown=[])],
                  outputs=[PsbtOut(unknown=[])], unknown_global=[])
     assert psbt_summary(psbt=hand2).fee_sat is None
 
@@ -2227,7 +2235,9 @@ def test_input_utxo_data_bounds():
                                partial_sigs=[], sighash_type=None,
                                redeem_script=None, witness_script=None,
                                final_scriptsig=None,
-                               final_scriptwitness=None, unknown=[])],
+                               final_scriptwitness=None, tap_script_sigs=[], tap_leaf_scripts=[],
+                               tap_internal_key=None,
+                               tap_merkle_root=None, unknown=[])],
                 outputs=[], unknown_global=[])
     # Index beyond vin: the `vin.get(index)` arm.
     assert input_utxo_data(psbt=psbt, index=0) is None
@@ -2241,6 +2251,7 @@ def test_input_utxo_data_bounds():
                        witness_utxo=None, partial_sigs=[], sighash_type=None,
                        redeem_script=None, witness_script=None,
                        final_scriptsig=None, final_scriptwitness=None,
+                       tap_script_sigs=[], tap_leaf_scripts=[], tap_internal_key=None, tap_merkle_root=None,
                        unknown=[])],
         outputs=[], unknown_global=[])
     assert input_utxo_data(psbt=psbt_vinless, index=0) is None
@@ -2251,6 +2262,7 @@ def test_input_utxo_data_bounds():
                      witness_utxo=None, partial_sigs=[], sighash_type=None,
                      redeem_script=None, witness_script=None,
                      final_scriptsig=None, final_scriptwitness=None,
+                     tap_script_sigs=[], tap_leaf_scripts=[], tap_internal_key=None, tap_merkle_root=None,
                      unknown=[])],
                  outputs=[PsbtOut(unknown=[])], unknown_global=[])
     assert input_utxo_data(psbt=psbt2, index=0) is None
@@ -2260,17 +2272,21 @@ def test_psbt_in_out_equality_semantics():
     input_ = PsbtIn(non_witness_utxo=None, witness_utxo=None,
                     partial_sigs=[], sighash_type=None, redeem_script=None,
                     witness_script=None, final_scriptsig=None,
-                    final_scriptwitness=None, unknown=[])
+                    final_scriptwitness=None, tap_script_sigs=[],
+                    tap_leaf_scripts=[], tap_internal_key=None,
+                    tap_merkle_root=None, unknown=[])
     assert input_ == PsbtIn(non_witness_utxo=None, witness_utxo=None,
                             partial_sigs=[], sighash_type=None,
                             redeem_script=None, witness_script=None,
                             final_scriptsig=None, final_scriptwitness=None,
+                            tap_script_sigs=[], tap_leaf_scripts=[], tap_internal_key=None, tap_merkle_root=None,
                             unknown=[])
     assert input_ != PsbtOut(unknown=[])
     assert input_ != PsbtIn(non_witness_utxo=None, witness_utxo=None,
                             partial_sigs=[(b'\x02', b'\x03')], sighash_type=None,
                             redeem_script=None, witness_script=None,
                             final_scriptsig=None, final_scriptwitness=None,
+                            tap_script_sigs=[], tap_leaf_scripts=[], tap_internal_key=None, tap_merkle_root=None,
                             unknown=[])
     out = PsbtOut(unknown=[])
     assert out == PsbtOut(unknown=[])

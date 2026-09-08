@@ -1856,9 +1856,12 @@ def test_is_dust_p2wsh_threshold():
 def test_fwd_pins_the_p2wsh_constants():
     from yubtc.fwd import DUST_THRESHOLD_P2WSH, MS_FORMS, MsForm
     assert DUST_THRESHOLD_P2WSH == 330
-    assert MS_FORMS == (MsForm.P2SH, MsForm.P2WSH)
+    # v0.3: the tuple gains the p2tr script-path form (the same pin,
+    # extended -- see tests/test_tapscript_ms.py for the p2tr half).
+    assert MS_FORMS == (MsForm.P2SH, MsForm.P2WSH, MsForm.P2TR)
     assert MsForm.P2SH == 'p2sh'
     assert MsForm.P2WSH == 'p2wsh'
+    assert MsForm.P2TR == 'p2tr'
 
 
 def test_creator_p2wsh_branch_writes_witness_utxo_and_witness_script():

@@ -533,6 +533,99 @@ def taproot_output_key(internal_xonly: bytes = NotNone) -> bytes:
     return _tweak_output_key(p, t)
 
 
+def _tweak_script_scalar_from_digest(t_bytes: bytes) -> int:
+    """The canonical-scalar check over a ready script-path tweak
+    digest: `int(t_bytes)` below the curve order, `TapTweakError`
+    otherwise (mirrors `misc.rs::tweak_script_scalar_from_digest`).
+
+    Split out so the BIP-341 «If t ≥ n, the wallet MUST fail» branch
+    stays testable with a crafted digest -- a hash above the order
+    cannot be produced on demand for real inputs (probability
+    ~2^-128)."""
+    from yubtc.bip32 import SECP256K1_N
+    t = int.from_bytes(t_bytes, 'big')
+    if t >= SECP256K1_N:
+        raise TapTweakError(
+            'script-path tweak scalar ≥ curve order (p ≈ 2^-128)')
+    return t
+
+
+@require_kwargs_only
+def tapscript_output_key(internal_xonly: bytes = NotNone,
+                         leaf_hash: bytes = NotNone) -> bytes:
+    """BIP-341 **script-path** output key of a Tapscript quorum leaf
+    (v0.3, spec.md «Адрес и leaf-хеш»; mirrors
+    `address.rs::tapscript_output_key`):
+
+    ```
+    t = int(tagged_hash("TapTweak", internal_key ‖ leaf_hash))
+    Q = lift_x(internal_key) + t*G
+    ```
+
+    `internal_key` is the NUMS point
+    (`yubtc.fwd.MS_TAPSCRIPT_INTERNAL_KEY`) for every quorum yubtc
+    builds; `leaf_hash` comes from
+    `yubtc.script.tapscript_leaf_hash`. Unlike the BIP-86 key-path
+    tweak (whose reduce is total), the script-path rule **fails** on
+    `t ≥ n` (BIP-341 MUST, probability ~2^-128).
+
+    Errors: `TapTweakError` when the internal key is not a curve
+    point, when the tweak scalar is ≥ the curve order, or when `Q` is
+    the point at infinity (all reported, never a crash)."""
+    from coincurve import PublicKey
+    from yubtc.hash import tagged_hash
+    internal_xonly = bytes(internal_xonly)
+    leaf_hash = bytes(leaf_hash)
+    if len(internal_xonly) != 32:
+        raise ValueError(f'internal pubkey must be 32 bytes, got {len(internal_xonly)}')
+    if len(leaf_hash) != 32:
+        raise ValueError(f'leaf hash must be 32 bytes, got {len(leaf_hash)}')
+    # lift_x per BIP-340: an x-only key denotes the even-Y point; the
+    # on-curve check is delegated to libsecp256k1.
+    try:
+        p = PublicKey(b'\x02' + internal_xonly)
+    except ValueError:
+        raise TapTweakError('taproot tweak failed: internal pubkey is not a valid curve point')
+    t = _tweak_script_scalar_from_digest(
+        tagged_hash(b'TapTweak', internal_xonly + leaf_hash))
+    return _tweak_output_key(p, t)
+
+
+@require_kwargs_only
+def tapscript_control_block(internal_xonly: bytes = NotNone,
+                            leaf_hash: bytes = NotNone) -> bytes:
+    """The BIP-341 control block of a single-leaf tapscript tree
+    (v0.3; mirrors `address.rs::tapscript_control_block`):
+    `c[0] ‖ internal_key` -- **33** bytes (`33 + 32·depth`, depth = 0;
+    empty Merkle path), where `c[0] = 0xc0 | (y(Q) mod 2)` packs the
+    0xc0 leaf version and the output-key parity (`c[0] & 0xfe ==
+    0xc0`). Fails under the same conditions as `tapscript_output_key`
+    (the point arithmetic is shared)."""
+    from coincurve import PrivateKey, PublicKey
+    from yubtc.hash import tagged_hash
+    from yubtc.script import TAPSCRIPT_LEAF_VERSION
+    internal_xonly = bytes(internal_xonly)
+    leaf_hash = bytes(leaf_hash)
+    if len(internal_xonly) != 32:
+        raise ValueError(f'internal pubkey must be 32 bytes, got {len(internal_xonly)}')
+    if len(leaf_hash) != 32:
+        raise ValueError(f'leaf hash must be 32 bytes, got {len(leaf_hash)}')
+    try:
+        p = PublicKey(b'\x02' + internal_xonly)
+    except ValueError:
+        raise TapTweakError('taproot tweak failed: internal pubkey is not a valid curve point')
+    t = _tweak_script_scalar_from_digest(
+        tagged_hash(b'TapTweak', internal_xonly + leaf_hash))
+    try:
+        q = p.combine([PrivateKey(t.to_bytes(32, 'big')).public_key])
+    except ValueError:
+        raise TapTweakError('taproot tweak failed: output key Q is the point '
+                            'at infinity (p ~ 2^-128)')
+    # The SEC prefix byte (0x02/0x03) carries y(Q)'s parity.
+    parity = q.format(compressed=True)[0] & 1
+    return bytes([TAPSCRIPT_LEAF_VERSION | parity]) + internal_xonly
+
+
 @require_kwargs_only
 def pubkey2segwit_addr(pubkey: bytes = NotNone) -> str:
     """Compressed public key -> mainnet P2WPKH address (`bc1q...`,
@@ -683,6 +776,43 @@ def decode_p2wsh_addr(address: str = NotNone) -> WitnessProgram:
         raise SegWitUnsupportedProgram('P2WSH addresses (witness v0, 32-byte '
                                        'program) are out of scope')
     if encoding != BECH32:
+        raise SegWitInvalidChecksum('bech32 checksum mismatch')
+    return WitnessProgram(version=version, program=program)
+
+
+@require_kwargs_only
+def decode_taproot_addr(address: str = NotNone) -> WitnessProgram:
+    """Strictly decode a mainnet **P2TR** address (`bc1p...` with a
+    32-byte program) into its witness program (v0.3, mirrors
+    `address.rs::decode_taproot_address`).
+
+    The dedicated P2TR decoder of the v0.3 multisig surface (the
+    tapscript counterpart of `decode_p2wsh_addr`): bech32 structure
+    and checksum, HRP `bc`, witness version 1, program exactly 32
+    bytes, and the bech32m checksum constant (BIP-350 rule 2). v0
+    programs and 20-byte programs raise `SegWitUnsupportedProgram` --
+    this decoder is P2TR-only by contract."""
+    from yubtc.bech32 import BECH32M, Bech32Error, five_bit_to_bytes, decode
+    try:
+        hrp, encoding, data = decode(s=address)
+    except Bech32Error as e:
+        raise _map_bech32_error(e) from e
+    if hrp != HRP_MAINNET:
+        raise SegWitInvalidHrp(f'invalid bech32 human-readable part {hrp!r} '
+                               f'(mainnet "bc" only)')
+    if not data:
+        raise SegWitInvalidStructure('malformed bech32 address structure')
+    version = data[0]
+    program = five_bit_to_bytes(data=bytes(data[1:]))
+    if program is None:
+        raise SegWitInvalidStructure('malformed bech32 address structure')
+    if version != 1:
+        raise SegWitUnsupportedProgram('P2TR addresses (witness v1, 32-byte '
+                                       'program) are out of scope')
+    if len(program) != 32:
+        raise SegWitUnsupportedProgram('P2TR addresses (witness v1, 32-byte '
+                                       'program) are out of scope')
+    if encoding != BECH32M:
         raise SegWitInvalidChecksum('bech32 checksum mismatch')
     return WitnessProgram(version=version, program=program)
 

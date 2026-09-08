@@ -159,17 +159,35 @@ PSBT_SIGHASH_DEFAULT: int = 0x0000_0000
 # 15, not the consensus 20-key cap: an N = 16 redeem script is
 # 34·16 + 4 = 548 bytes > the 520-byte MAX_SCRIPT_ELEMENT_SIZE push
 # limit, so such a P2SH output is fundamentally unspendable. v0.3
-# keeps the bound for both quorum forms: the same `(N, M, keys)`
+# keeps the bound for all three quorum forms: the same `(N, M, keys)`
 # tuple must produce consistent quorums across forms (spec.md
-# «P2WSH (v0.3)» -- cross-form parity decision).
+# «P2WSH (v0.3)» -- cross-form parity decision; R-MS-9: for p2tr the
+# same 15 bound is the *physical* limit of the BIP-342 idiom -- the
+# tapscript leaf rides the witness as an initial-stack item, and
+# 34·15 + 2 = 512 ≤ 520 < 546 = 34·16 + 2).
 MS_MAX_PUBKEYS: int = 15
+
+# Internal key of every Tapscript quorum tree (v0.3, R-MS-8; mirrors
+# `fwd.rs::MS_TAPSCRIPT_INTERNAL_KEY`): the BIP-341 NUMS point `H` --
+# x-only `50929b74…03ac0`, i.e. SHA-256 of the *uncompressed*
+# encoding of the generator point G (the value printed in BIP-341's
+# own text; its discrete logarithm is unknown by construction, ОВ-15).
+# The single-leaf tree has no key path physically: `Q = lift_x(H) +
+# t·G` is spendable only through the revealed tapscript, and even a
+# hypothetical key-path spend of `Q` would require dlog(H). yubtc
+# never produces signatures under `Q`.
+MS_TAPSCRIPT_INTERNAL_KEY: bytes = bytes.fromhex(
+    '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0')
 
 
 class MsForm(object):
     """The quorum address form (v0.3, mirrors
-    `wallet.rs::MsForm`): the same canonical redeem script addressed
-    either as P2SH (`3...`, hash160 commitment, legacy spend) or as
-    native P2WSH (`bc1q...`, SHA-256 commitment, witness spend).
+    `wallet.rs::MsForm`): the same `(N, M, keys)` quorum addressed
+    as P2SH (`3...`, hash160 commitment, legacy spend), native P2WSH
+    (`bc1q...`, SHA-256 commitment, witness spend) or P2TR script
+    path (`bc1p...`, tweaked NUMS output key, Tapscript witness
+    spend -- the "redeem" of that form is a *different* script, the
+    R-MS-7 CHECKSIGADD idiom).
 
     No default exists at the library level -- every call passes the
     choice explicitly (the CLI flag defaults to `p2sh` at the parser
@@ -177,6 +195,7 @@ class MsForm(object):
 
     P2SH = 'p2sh'
     P2WSH = 'p2wsh'
+    P2TR = 'p2tr'
 
 
-MS_FORMS = (MsForm.P2SH, MsForm.P2WSH)
+MS_FORMS = (MsForm.P2SH, MsForm.P2WSH, MsForm.P2TR)

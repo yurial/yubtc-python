@@ -518,8 +518,23 @@ def _taproot_keypath_sighash_in_range(tx: 'CTransaction', input_index: int,
     Contract: `len(spend) == len(tx.vin)` and
     `input_index < len(tx.vin)` -- both checked by the public wrapper
     and guaranteed inside `sign_segwit`."""
+    from yubtc.hash import tagged_hash
+    # sighash = tagged_hash("TapSighash", 0x00 (epoch) || SigMsg);
+    # spend_type 0x00 = ext_flag 0 (key path), no annex.
+    sig_msg = _taproot_sig_msg(tx=tx, input_index=input_index,
+                               spend=spend, spend_type=0x00)
+    return tagged_hash(b'TapSighash', b'\x00' + sig_msg)
+
+
+def _taproot_sha_fields(tx: 'CTransaction', spend: list) -> list:
+    """The five BIP-341 `sha_*` midstate fields shared by every
+    Taproot digest: `sha_prevouts`, `sha_amounts`,
+    `sha_scriptpubkeys`, `sha_sequences`, `sha_outputs` (single
+    SHA-256 of the concatenated per-input data; the context's
+    `script_pubkey` values are authoritative). Mirrors
+    `transaction.rs::taproot_sha_fields`."""
     from struct import pack
-    from yubtc.hash import sha256, tagged_hash
+    from yubtc.hash import sha256
 
     buf = b''.join(i.txhash + pack(b'<L', i.n) for i in tx.vin)
     sha_prevouts = sha256(buf)
@@ -537,21 +552,68 @@ def _taproot_keypath_sighash_in_range(tx: 'CTransaction', input_index: int,
     buf = b''.join(o.serialize() for o in tx.vout)
     sha_outputs = sha256(buf)
 
-    # SigMsg = hash_type || nVersion || nLockTime || sha_prevouts
-    #        || sha_amounts || sha_scriptpubkeys || sha_sequences
-    #        || sha_outputs || spend_type || input_index.
-    sig_msg = (bytes([_SIGHASH_DEFAULT])
-               + pack(b'<l', tx.version)
-               + pack(b'<L', tx.locktime)
-               + sha_prevouts
-               + sha_amounts
-               + sha_scriptpubkeys
-               + sha_sequences
-               + sha_outputs
-               + b'\x00'  # spend_type: ext_flag = 0 (key path), no annex
-               + pack(b'<L', input_index))
+    return [sha_prevouts, sha_amounts, sha_scriptpubkeys, sha_sequences,
+            sha_outputs]
 
-    # sighash = tagged_hash("TapSighash", 0x00 (epoch) || SigMsg).
+
+def _taproot_sig_msg(tx: 'CTransaction', input_index: int, spend: list,
+                     spend_type: int) -> bytes:
+    """The BIP-341 `SigMsg` (174 bytes) with `SIGHASH_DEFAULT` and no
+    annex: `0x00 ‖ nVersion ‖ nLockTime ‖ sha_prevouts ‖ sha_amounts
+    ‖ sha_scriptpubkeys ‖ sha_sequences ‖ sha_outputs ‖ spend_type ‖
+    input_index`. `spend_type` carries `ext_flag` in its low bit
+    (0x00 key path, 0x02 script path with the BIP-342 extension) and
+    annex-absence in bit 1. Mirrors `transaction.rs::taproot_sig_msg`
+    (the shared SigMsg assembly the key-path and script-path digests
+    reuse, so the two cannot drift)."""
+    from struct import pack
+    sha_prevouts, sha_amounts, sha_scriptpubkeys, sha_sequences, \
+        sha_outputs = _taproot_sha_fields(tx=tx, spend=spend)
+    return (bytes([_SIGHASH_DEFAULT])
+            + pack(b'<l', tx.version)
+            + pack(b'<L', tx.locktime)
+            + sha_prevouts
+            + sha_amounts
+            + sha_scriptpubkeys
+            + sha_sequences
+            + sha_outputs
+            + bytes([spend_type])
+            + pack(b'<L', input_index))
+
+
+@require_kwargs_only
+def taproot_scriptpath_sighash(tx: 'CTransaction' = NotNone,
+                               input_index: int = NotNone,
+                               spend: list = NotNone,
+                               leaf_hash: bytes = NotNone) -> bytes:
+    """BIP-341 **script-path** signature digest for a P2TR spend of a
+    Tapscript leaf with `SIGHASH_DEFAULT` (0x00) and no annex (v0.3,
+    spec.md «Дайджест — BIP-341 script-path + расширение BIP-342»;
+    mirrors `transaction.rs::taproot_scriptpath_sighash`):
+
+    ```
+    SigMsg = 0x00 ‖ … (as the key path, spend_type = 0x02) …
+    ext    = leaf_hash (32) ‖ 0x00 (key_version) ‖ 0xFFFFFFFF
+             (codesep_pos, 4 LE)
+    sighash = tagged_hash("TapSighash", 0x00 (epoch) ‖ SigMsg ‖ ext)
+    ```
+
+    `spend` must carry one `SpendInput` per transaction input (the
+    script-path digest commits to all inputs exactly like the key-path
+    one); `leaf_hash` is the spent leaf's `hashTapLeaf`. Raises
+    `ValueError` when the context does not cover every input or when
+    `input_index` is invalid."""
+    from struct import pack
+    from yubtc.hash import tagged_hash
+    if len(spend) != len(tx.vin):
+        raise ValueError(_MSG_MISSING_SPEND_CONTEXT)
+    if input_index >= len(tx.vin):
+        raise ValueError(f'input index {input_index} out of range ({len(tx.vin)} inputs)')
+    sig_msg = (_taproot_sig_msg(tx=tx, input_index=input_index,
+                                spend=spend, spend_type=0x02)
+               + bytes(leaf_hash)
+               + b'\x00'  # key_version: 0 (the only defined value)
+               + pack(b'<L', 0xffff_ffff))  # codesep_pos: none in the canonical leaf
     return tagged_hash(b'TapSighash', b'\x00' + sig_msg)
 
 
@@ -605,3 +667,27 @@ def taproot_sign_sighash(privkey=NotNone, sighash: bytes = NotNone) -> bytes:
     tweaked = taproot_tweaked_scalar(privkey=privkey)
     tweaked_key = PrivateKey(tweaked.to_bytes(32, 'big'))
     return tweaked_key.sign_schnorr(bytes(sighash), aux_randomness=b'\x00' * 32)
+
+
+@require_kwargs_only
+def taproot_sign_sighash_untweaked(privkey=NotNone,
+                                   sighash: bytes = NotNone) -> bytes:
+    """Sign a sighash with **untweaked** BIP-340 Schnorr -- the
+    Tapscript script-path rule (v0.3, R-MS-10/ОВ-10; mirrors
+    `transaction.rs::taproot_sign_sighash_untweaked`): the signature
+    commits under the key lying in the script itself, and the key-path
+    tweak scalar is *not* applied (the tweak is key-path mechanics
+    only -- a script path never signs under `Q`).
+
+    The BIP-340 even-Y normalization applies: the signing scalar is
+    the internal scalar normalized to the even-Y representative, so
+    the signature verifies under the x-only key `x(d·G)` -- exactly
+    the 32 bytes the tapscript push carries (bytes `1..33` of the
+    compressed encoding, parity-free). `aux_rand = 0x00 * 32` (ОВ-3),
+    like every yubtc Schnorr signature; the primitive is
+    `coincurve.PrivateKey.sign_schnorr`, byte-identical to the Rust
+    port's k256 signer because BIP-340 is deterministic.
+
+    A zero internal scalar is unreachable for real keys (~2^-128) and
+    is rejected outright by coincurve."""
+    return privkey.sign_schnorr(bytes(sighash), aux_randomness=b'\x00' * 32)
