@@ -51,7 +51,8 @@ from yubtc.net import BlockchainInfoBackend
 from yubtc.psbt import (PsbtTransaction, PsbtTxIn, PsbtTxOut,
                         extract_transaction, finalize_psbt, from_base64,
                         psbt_summary, sign_psbt_input, to_base64)
-from yubtc.script import (extract_multisig_quorum, make_p2sh_lock_script,
+from yubtc.script import (TAPSCRIPT_LEAF_VERSION, extract_multisig_quorum,
+                          make_p2sh_lock_script,
                           make_p2wsh_lock_script)
 from yubtc.wallet import ms_create_address, ms_create_psbt
 
@@ -65,12 +66,16 @@ from yubtc.wallet import ms_create_address, ms_create_psbt
 def _default_rust_cli_bin_candidates() -> list:
     """Binary locations, best first.
 
-    1. The sibling Rust worktree carrying the Phase 15 `ms` group
-       (`wt/<rust-repo>/issue-multisig` next to this checkout).
-    2. The side-by-side main checkouts (the old convention).
+    1. The sibling Rust worktree carrying the v0.3 Tapscript `ms`
+       surface (`wt/<rust-repo>/issue-tapscript-ms` next to this
+       checkout).
+    2. The Phase 15 `ms` group worktree (`issue-multisig`).
+    3. The side-by-side main checkouts (the old convention).
     """
     here = Path(__file__).resolve()
     return [
+        here.parents[3] / 'yubtc' / 'issue-tapscript-ms' / 'target'
+        / 'release' / 'yubtc',
         here.parents[3] / 'yubtc' / 'issue-multisig' / 'target' / 'release'
         / 'yubtc',
         here.parents[2] / 'yubtc' / 'target' / 'release' / 'yubtc',
@@ -552,3 +557,198 @@ def test_ms_cli_send_p2wsh_and_chain_match_python(ms_cli):
     assert len(tx.vin[0].witness) == 4
     assert tx.vin[0].witness[0] == b''
     assert tx.vin[0].witness[-1] == redeem
+
+
+# ---------------------------------------------------------------------------
+# v0.3: the P2TR script-path form of the quorum through the same
+# harness (`ms create --form p2tr` / `ms send --form p2tr` + the
+# Phase 14 chain). The "redeem" of the form is the R-MS-7
+# CHECKSIGADD tapscript -- different bytes than the p2sh/p2wsh
+# redeem -- and the key arguments switch to the x-only encoding
+# (64 hex chars, R-MS-10).
+# ---------------------------------------------------------------------------
+
+
+def _p2tr_xonly_pub(nonce: int, seed: str = XC_SEED) -> str:
+    """The x-only hex encoding the p2tr CLI arguments take."""
+    return _xc_pub(nonce, seed)[1:33].hex()
+
+
+def _mock_prev_tx_p2tr(tapscript: bytes) -> tuple:
+    """Prev tx paying 60_000 sat to the quorum's tweaked-NUMS P2TR
+    lock script; (PsbtTransaction, wire hex, txid hex)."""
+    from yubtc.crypto import tapscript_output_key
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+    from yubtc.script import (make_p2tr_lock_script,
+                              tapscript_leaf_hash)
+    leaf_hash = tapscript_leaf_hash(script=tapscript)
+    output_key = tapscript_output_key(
+        internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY, leaf_hash=leaf_hash)
+    spk = bytes(make_p2tr_lock_script(output_key=output_key))
+    prev = PsbtTransaction(
+        version=2,
+        vin=(PsbtTxIn(txhash=b'\x77' * 32, n=0, script=b'',
+                      sequence=0xffffffff, witness=()),),
+        vout=(PsbtTxOut(amount=_MOCK_VALUE, script=spk),), locktime=0)
+    return prev, prev.serialize_wire().hex(), prev.id().hex()
+
+
+@contextmanager
+def mock_ms_server_p2tr(tapscript: bytes):
+    """Serve the fixture UTXO (the P2TR form) while yielding the base
+    URL -- same shape as `mock_ms_server`, p2tr scriptPubKey."""
+    from yubtc.crypto import tapscript_output_key
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+    from yubtc.script import (make_p2tr_lock_script,
+                              tapscript_leaf_hash)
+    addr, _tapscript = ms_create_address(n=3, m=2,
+                                         keys=_xc_quorum_pubkeys(),
+                                         form=MsForm.P2TR)
+    prev, raw_hex, txid_hex = _mock_prev_tx_p2tr(tapscript)
+    leaf_hash = tapscript_leaf_hash(script=tapscript)
+    output_key = tapscript_output_key(
+        internal_xonly=MS_TAPSCRIPT_INTERNAL_KEY, leaf_hash=leaf_hash)
+    _MockMsHandler.unspent_address = addr
+    _MockMsHandler.utxo_txid = txid_hex
+    _MockMsHandler.utxo_script_hex = bytes(
+        make_p2tr_lock_script(output_key=output_key)).hex()
+    _MockMsHandler.raw_hex = raw_hex
+    server = HTTPServer(('127.0.0.1', 0), _MockMsHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f'http://127.0.0.1:{server.server_address[1]}'
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_ms_cli_create_p2tr_matches_python(ms_cli):
+    """`ms create 3 2 --form p2tr` prints the five-line block
+    (m-of-n/address/redeem/internal/control) and must match the
+    Python `ms_create_address` p2tr derivation exactly."""
+    args = ['create', '3', '2', '--form', 'p2tr',
+            '--key', _p2tr_xonly_pub(0, XC_SEED_B),
+            '--key', _p2tr_xonly_pub(1, XC_SEED_B),
+            '-n', '0']
+    rc, out, err = _run_ms(ms_cli, args, stdin=_seed_stdin())
+    assert rc == 0, f'ms create failed: rc={rc} err={err!r}'
+    lines = out.strip().splitlines()
+    assert len(lines) == 5, out
+    assert lines[0] == 'm-of-n: 2-of-3'
+    cli = {'address': lines[1][len('address: '):],
+           'redeem_hex': lines[2][len('redeem: '):],
+           'internal_hex': lines[3][len('internal: '):],
+           'control_hex': lines[4][len('control: '):]}
+    addr, tapscript = ms_create_address(
+        n=3, m=2, keys=_xc_quorum_pubkeys(), form=MsForm.P2TR)
+    assert cli['address'] == addr
+    assert cli['address'].startswith('bc1p')
+    assert cli['redeem_hex'] == tapscript.hex()
+    # The internal key is the NUMS point; the control block is 33
+    # bytes (leaf version + parity ‖ NUMS) with 0xc0 in the high bits.
+    from yubtc.fwd import MS_TAPSCRIPT_INTERNAL_KEY
+    assert cli['internal_hex'] == MS_TAPSCRIPT_INTERNAL_KEY.hex()
+    assert len(cli['control_hex']) == 66
+    assert int(cli['control_hex'][:2], 16) & 0xfe == 0xc0
+    assert cli['control_hex'][2:] == MS_TAPSCRIPT_INTERNAL_KEY.hex()
+    # One quorum, three addresses: the tapscript bytes differ from the
+    # p2sh/p2wsh redeem for the same key set.
+    _p2sh_addr, redeem = ms_create_address(n=3, m=2,
+                                           keys=_xc_quorum_pubkeys(),
+                                           form=MsForm.P2SH)
+    assert redeem != tapscript
+
+
+def test_ms_cli_create_p2tr_rejects_compressed_keys(ms_cli):
+    """R-MS-10 through the CLI: a 66-hex compressed key on a p2tr
+    quorum is an InvalidKeyEncoding refusal, not a silent fixup."""
+    args = ['create', '3', '2', '--form', 'p2tr',
+            '--key', _xc_pub(0, XC_SEED_B).hex(),
+            '--key', _p2tr_xonly_pub(1, XC_SEED_B),
+            '-n', '0']
+    rc, out, err = _run_ms(ms_cli, args, stdin=_seed_stdin())
+    assert rc != 0
+    assert 'key encoding does not match the form' in err
+
+
+def _ms_send_args_p2tr(dst: str) -> list:
+    return ['send', dst, '0.0005', '3', '2', '--form', 'p2tr',
+            '--key', _p2tr_xonly_pub(0, XC_SEED_B),
+            '--key', _p2tr_xonly_pub(1, XC_SEED_B),
+            '-n', '0', '-c', '6', '-f', '0', '-k', '1000',
+            '--provider', 'mock']
+
+
+def test_ms_cli_send_p2tr_and_chain_match_python(ms_cli):
+    """`ms send --form p2tr` (mock) must emit byte-for-byte the PSBT
+    the Python `ms_create_psbt` builds: same fee loop (the R-MS-11
+    sized witness), same WITNESS_UTXO / TAP_LEAF_SCRIPT /
+    TAP_INTERNAL_KEY fields, same own `TAP_SCRIPT_SIG` -- and the
+    full chain (CLI `psbt sign` cosigner -> finalize -> extract) must
+    agree stage-by-stage down to the witness wire hex."""
+    from yubtc.wallet import ms_create_psbt
+    _addr, tapscript = ms_create_address(n=3, m=2,
+                                         keys=_xc_quorum_pubkeys(),
+                                         form=MsForm.P2TR)
+    dst = _dst_address()
+    with mock_ms_server_p2tr(tapscript) as mock_url:
+        rc, out, err = _run_ms(ms_cli, _ms_send_args_p2tr(dst),
+                               stdin=_seed_stdin(), mock_url=mock_url)
+        assert rc == 0, f'ms send failed: rc={rc} err={err!r}'
+        cli_b64 = out.strip().splitlines()[-1]
+
+        backend = BlockchainInfoBackend(base_url=mock_url)
+        outcome = ms_create_psbt(seed=XC_SEED, passphrase='',
+                                 backend=backend, dst=dst, amount=50_000,
+                                 n=3, m=2,
+                                 keys=[_xc_pub(0, XC_SEED_B),
+                                       _xc_pub(1, XC_SEED_B)],
+                                 own_nonce=0, confirmations=6, feekb=1000,
+                                 fee=0, form=MsForm.P2TR)
+    assert cli_b64 == outcome.psbt_b64
+
+    # The Creator container carries the p2tr-form fields.
+    psbt = from_base64(s=cli_b64)
+    assert psbt.inputs[0].non_witness_utxo is None
+    assert psbt.inputs[0].witness_utxo is not None
+    assert psbt.inputs[0].redeem_script is None
+    assert psbt.inputs[0].witness_script is None
+    (leaf,) = psbt.inputs[0].tap_leaf_scripts
+    assert leaf.script_with_version \
+        == tapscript + bytes([TAPSCRIPT_LEAF_VERSION])
+    assert len(leaf.control_block) == 33
+    assert [s.x_only for s in psbt.inputs[0].tap_script_sigs] \
+        == [_xc_pub(0)[1:33]]
+
+    # Full chain: the CLI cosigner signs (membership), then finalize +
+    # extract; the Python mirror replays the same stages.
+    rc, signed, err = _run_psbt(ms_cli, ['sign'],
+                                _seed_stdin(seed=XC_SEED_B) + cli_b64
+                                + '\n')
+    assert rc == 0, f'psbt sign failed: rc={rc} err={err!r}'
+    signed = signed.strip().splitlines()[-1]
+    rc, finalized, err = _run_psbt(ms_cli, ['finalize'], signed + '\n')
+    assert rc == 0, f'psbt finalize failed: rc={rc} err={err!r}'
+    finalized = finalized.strip()
+    rc, hexed, err = _run_psbt(ms_cli, ['extract'], finalized + '\n')
+    assert rc == 0, f'psbt extract failed: rc={rc} err={err!r}'
+    hexed = hexed.strip()
+
+    py = from_base64(s=cli_b64)
+    assert sign_psbt_input(psbt=py, index=0,
+                           privkey=_xc_key(0, XC_SEED_B)) is True
+    assert to_base64(psbt=py) == signed
+    finalize_psbt(psbt=py)
+    assert to_base64(psbt=py) == finalized
+    wire = extract_transaction(psbt=py).serialize_wire().hex()
+    assert wire == hexed
+    # The extracted spend is the R-MS-11 script-path witness: empty
+    # scriptSig, N + 2 items, two non-empty 64-byte slots, the
+    # tapscript and the 33-byte control block on top.
+    tx = extract_transaction(psbt=py)
+    assert tx.vin[0].script == b''
+    assert len(tx.vin[0].witness) == 5
+    assert sum(1 for item in tx.vin[0].witness[:3] if item) == 2
+    assert tx.vin[0].witness[3] == tapscript
+    assert len(tx.vin[0].witness[4]) == 33
