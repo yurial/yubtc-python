@@ -240,7 +240,8 @@ def _rust_address_output(seed: str, passphrase: str, kdf: str, addr_type: str,
     Raises `AssertionError` on non-zero exit, capturing both streams
     for the failure message.
     """
-    stdin_payload = f'{seed}\n{passphrase}\n'.encode()
+    # Rust CLI prompts passphrase first, then seed.
+    stdin_payload = f'{passphrase}\n{seed}\n'.encode()
     env = os.environ.copy()
     env['YUBTC_MOCK_BACKEND_URL'] = mock_url
     proc = subprocess.run(
@@ -354,11 +355,11 @@ def _rust_dumpprivkey_output(seed: str, passphrase: str, kdf: str, addr_type: st
     """
     env = os.environ.copy()
     env['YUBTC_MOCK_BACKEND_URL'] = mock_url
-    # Rust CLI prompts seed first, then passphrase.
+    # Rust CLI prompts passphrase first, then seed.
     rust_proc = subprocess.run(
         [bin_path, 'dumpprivkey', '--provider', 'mock',
          '--kdf', kdf, '--addr-type', addr_type, '-n', '0'],
-        input=f'{seed}\n{passphrase}\n'.encode(),
+        input=f'{passphrase}\n{seed}\n'.encode(),
         capture_output=True, env=env, timeout=30,
     )
     assert rust_proc.returncode == 0, (
