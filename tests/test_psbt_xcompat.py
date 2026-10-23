@@ -26,7 +26,7 @@ Interface assumptions (spec CLI section, `yubtc psbt ...`)
   base64, `extract` emits raw-tx hex, `decode` a human-readable dump;
   `combine` reads >= 2 PSBT lines.
 - `sign` and `create` need the wallet seed: the same non-tty prompt
-  order as the other commands is assumed (seed line, passphrase line;
+  order as the other commands is assumed (passphrase line, seed line;
   the PSBT lines follow).
 - If the landed stage-2 surface deviates (prompt order, flags), the
   helpers below are the place to adapt.
@@ -136,8 +136,8 @@ def _run_psbt_ok(bin_path: str, args: list, stdin: str,
 
 
 def _sign_stdin(psbt_b64: str, seed: str = SEED, passphrase: str = '') -> str:
-    """The assumed `psbt sign` stdin: seed, passphrase, PSBT line."""
-    return f'{seed}\n{passphrase}\n{psbt_b64}\n'
+    """The assumed `psbt sign` stdin: passphrase, seed, PSBT line."""
+    return f'{passphrase}\n{seed}\n{psbt_b64}\n'
 
 
 # Each KAT row is pinned at its own (seed, passphrase) tuple (test_psbt

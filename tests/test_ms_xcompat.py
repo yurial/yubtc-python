@@ -25,8 +25,8 @@ Interface assumptions (spec CLI section, `yubtc ms ...`)
 
 - `ms create N M [--key HEX|WIF ...] [-n NONCE]` -- stdout is the
   pinned three-line block `m-of-n: M-of-N` / `address:` / `redeem:`;
-  the seed prompt goes to stderr and the stdin carries the seed line
-  then the passphrase line (the shared prompt convention). Watch-only
+  the seed prompt goes to stderr and the stdin carries the passphrase
+  line then the seed line (the shared prompt convention). Watch-only
   invocations read no stdin.
 - `ms send ADDR AMOUNT N M ... -n NONCE --provider mock` -- stdout is
   exactly one line, the base64 PSBT (the fee line goes to stderr).
@@ -145,8 +145,8 @@ def _run_ms(bin_path: str, args: list, stdin: str = '',
 
 
 def _seed_stdin(seed: str = XC_SEED, passphrase: str = '') -> str:
-    """The assumed stdin convention: seed line, passphrase line."""
-    return f'{seed}\n{passphrase}\n'
+    """The assumed stdin convention: passphrase line, seed line."""
+    return f'{passphrase}\n{seed}\n'
 
 
 def _parse_create_output(out: str) -> dict:
